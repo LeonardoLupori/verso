@@ -467,8 +467,7 @@ class MainWindow(QMainWindow):
         project = self._state.project
         if project is None:
             return
-        from verso.engine.registration import interpolate_anchorings
-        interpolate_anchorings(project.sections)
+        self._initialize_quicknii_anchorings(project.sections)
         self._sync_ap_mm(project.sections)
         self._rot_base_anchoring = None
         self._align.update_overlay()
