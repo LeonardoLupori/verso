@@ -356,15 +356,17 @@ def quicknii_coronal_series_anchorings(
     elif len(stored_indices) == 1:
         idx = stored_indices[0]
         stored = unpacked_by_index[idx]
+        first_ap = 0.0 if reverse_ap else float(ap_dim - 1)
+        last_ap = float(ap_dim - 1) if reverse_ap else 0.0
         if idx != 0:
             first = list(stored)
-            first[1] = float(ap_dim - 1)
+            first[1] = first_ap
             unpacked_by_index[0] = first
             controls.append(0)
         controls.append(idx)
         if idx != len(image_sizes) - 1:
             last = list(stored)
-            last[1] = 0.0
+            last[1] = last_ap
             unpacked_by_index[len(image_sizes) - 1] = last
             controls.append(len(image_sizes) - 1)
     else:
