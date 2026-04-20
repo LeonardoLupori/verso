@@ -25,6 +25,8 @@ if TYPE_CHECKING:
 
 # Scale increment per button click (2 %, matching QuickNII)
 _SCALE_STEP = 1.02
+# Translation per click in atlas voxels (~625 µm for Allen 25 µm atlas)
+_MOVE_STEP = 5
 
 
 class AlignView(QWidget):
@@ -176,6 +178,31 @@ class AlignView(QWidget):
             h.addWidget(btn)
             self._scale_btns.append(btn)
 
+        h.addSpacing(8)
+
+        # Translation buttons: ±AP (axis 1), ±DV (axis 2), ±LR (axis 0)
+        move_specs = [
+            ("AP\u2212", "Move posterior (AP\u2212)", 1, -_MOVE_STEP),
+            ("AP+",      "Move anterior (AP+)",      1, +_MOVE_STEP),
+            ("DV\u2212", "Move dorsal (DV\u2212)",   2, -_MOVE_STEP),
+            ("DV+",      "Move ventral (DV+)",       2, +_MOVE_STEP),
+            ("LR\u2212", "Move left (LR\u2212)",     0, -_MOVE_STEP),
+            ("LR+",      "Move right (LR+)",         0, +_MOVE_STEP),
+        ]
+        self._move_btns: list[QPushButton] = []
+        for i, (sym, tip, axis, step) in enumerate(move_specs):
+            if i % 2 == 0 and i > 0:
+                h.addSpacing(4)  # gap between axis pairs
+            btn = QPushButton(sym)
+            btn.setFixedHeight(28)
+            btn.setFixedWidth(46)
+            btn.setToolTip(tip)
+            btn.setStyleSheet(_scale_css)
+            btn.setEnabled(False)
+            btn.clicked.connect(lambda _, a=axis, s=step: self._move_plane(a, s))
+            h.addWidget(btn)
+            self._move_btns.append(btn)
+
         h.addStretch()
 
         # Series / Store / Clear
@@ -245,8 +272,6 @@ class AlignView(QWidget):
         self._cp_hovered = -1
         self._cp_dragging = -1
         is_align = (mode == "align")
-        for btn in self._scale_btns:
-            btn.setVisible(is_align)
         self._reverse_btn.setVisible(is_align)
         self._store_btn.setVisible(is_align)
         self._clear_btn.setVisible(is_align)
@@ -285,7 +310,7 @@ class AlignView(QWidget):
         self._store_btn.setEnabled(False)
         self._clear_btn.setEnabled(False)
         self._region_bar.setText("")
-        for btn in self._scale_btns:
+        for btn in self._scale_btns + self._move_btns:
             btn.setEnabled(False)
         if section is None:
             self._status_label.setText("No section loaded")
@@ -311,7 +336,7 @@ class AlignView(QWidget):
             v != 0.0 for v in section.alignment.anchoring
         )
         self._clear_btn.setEnabled(has_anchoring)
-        for btn in self._scale_btns:
+        for btn in self._scale_btns + self._move_btns:
             btn.setEnabled(True)
 
     def _display_image(self) -> None:
@@ -462,6 +487,25 @@ class AlignView(QWidget):
             return
         from verso.engine.registration import scale_anchoring
         new_anchoring = scale_anchoring(anchoring, scale_u, scale_v)
+        self._section.alignment.anchoring = new_anchoring
+        if self._atlas is not None:
+            self._section.alignment.ap_position_mm = self._atlas.ap_voxel_to_mm(new_anchoring[1])
+        self._update_overlay()
+        self.anchoring_changed.emit(new_anchoring)
+
+    def _move_plane(self, axis: int, delta: float) -> None:
+        """Translate the cut-plane origin along one atlas axis by delta voxels.
+
+        Axis convention (atlas voxel space):
+            0 = LR (left→right), 1 = AP (posterior→anterior), 2 = DV (dorsal→ventral)
+        """
+        if self._section is None or self._raw_image is None:
+            return
+        anchoring = self._section.alignment.anchoring
+        if not anchoring or all(v == 0.0 for v in anchoring):
+            return
+        new_anchoring = list(anchoring)
+        new_anchoring[axis] += delta
         self._section.alignment.anchoring = new_anchoring
         if self._atlas is not None:
             self._section.alignment.ap_position_mm = self._atlas.ap_voxel_to_mm(new_anchoring[1])

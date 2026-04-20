@@ -234,8 +234,9 @@ class MainWindow(QMainWindow):
         for i, btn in enumerate(self._view_buttons):
             btn.setChecked(i == index)
 
-        # Show filmstrip only outside Overview
+        # Show filmstrip only outside Overview; enable stored-alignment badges in align view
         self._bottom_dock.setVisible(index != _VIEW_OVERVIEW)
+        self._filmstrip.set_align_mode(index == _VIEW_ALIGN)
         self._props.set_mode(self._current_mode)
 
         # Sync the newly visible view with the current section
@@ -480,6 +481,7 @@ class MainWindow(QMainWindow):
         self._align.update_overlay()
         for i in range(len(project.sections)):
             self._overview.refresh_row(i)
+        self._filmstrip.refresh_stored()
         self._update_ap_plot()
         self._update_reverse_order_enabled()
 
