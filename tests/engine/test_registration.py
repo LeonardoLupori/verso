@@ -10,14 +10,17 @@ from verso.engine.registration import (
     atlas_to_normalized,
     make_atlas_sample_grid,
     normalized_to_atlas,
-    pixel_to_normalized,
     normalized_to_pixel,
+    pixel_to_normalized,
+    quicknii_coronal_default_anchoring,
+    quicknii_coronal_series_anchorings,
+    quicknii_pack_anchoring,
+    quicknii_unpack_anchoring,
     rotate_anchoring,
     scale_anchoring,
     set_ap_position,
     vectors_to_anchoring,
 )
-
 
 # Coronal anchoring for Allen Mouse 25 µm atlas (illustrative — not exact).
 # Represents a mid-brain coronal section.
@@ -144,6 +147,68 @@ def test_scale_preserves_pivot():
     pivot_after = so + pivot_s * su + pivot_t * sv
 
     np.testing.assert_allclose(pivot_after, pivot_before, atol=1e-9)
+
+
+# ---------------------------------------------------------------------------
+# quicknii_coronal_default_anchoring
+# ---------------------------------------------------------------------------
+
+def test_quicknii_default_anchoring_uses_series_stretch():
+    anchoring = quicknii_coronal_default_anchoring(
+        image_width=500,
+        image_height=400,
+        max_width=1000,
+        max_height=800,
+        atlas_shape=(528, 320, 456),
+    )
+
+    o, u, v = anchoring_to_vectors(anchoring)
+    np.testing.assert_allclose(u, [228.0, 0.0, 0.0])
+    np.testing.assert_allclose(v, [0.0, 0.0, 160.0])
+    np.testing.assert_allclose(o, [114.0, 264.0, 80.0])
+
+
+def test_quicknii_pack_unpack_round_trip():
+    unpacked = [456, 527, 160, 1, 0, 0, 0, 0, -1, 0.456, 0.4]
+    anchoring = quicknii_pack_anchoring(unpacked, image_width=1000, image_height=800)
+    restored = quicknii_unpack_anchoring(anchoring, image_width=1000, image_height=800)
+
+    np.testing.assert_allclose(restored, unpacked)
+
+
+def test_quicknii_coronal_series_initializes_ap_endpoints():
+    anchorings = quicknii_coronal_series_anchorings(
+        image_sizes=[(1000, 800), (1000, 800), (1000, 800)],
+        serial_numbers=[1, 2, 3],
+        atlas_shape=(528, 320, 456),
+    )
+
+    centers = []
+    vectors = []
+    for anchoring in anchorings:
+        o, u, v = anchoring_to_vectors(anchoring)
+        centers.append(o + u / 2 + v / 2)
+        vectors.append((u, v))
+    np.testing.assert_allclose([c[1] for c in centers], [527.0, 263.5, 0.0])
+    np.testing.assert_allclose([c[0] for c in centers], [228.0, 228.0, 228.0])
+    np.testing.assert_allclose([c[2] for c in centers], [160.0, 160.0, 160.0])
+    np.testing.assert_allclose(vectors[0][0], [456.0, 0.0, 0.0])
+    np.testing.assert_allclose(vectors[0][1], [0.0, 0.0, 320.0])
+
+
+def test_quicknii_coronal_series_can_reverse_ap_proposal():
+    anchorings = quicknii_coronal_series_anchorings(
+        image_sizes=[(1000, 800), (1000, 800), (1000, 800)],
+        serial_numbers=[1, 2, 3],
+        atlas_shape=(528, 320, 456),
+        reverse_ap=True,
+    )
+
+    centers = []
+    for anchoring in anchorings:
+        o, u, v = anchoring_to_vectors(anchoring)
+        centers.append(o + u / 2 + v / 2)
+    np.testing.assert_allclose([c[1] for c in centers], [0.0, 263.5, 527.0])
 
 
 # ---------------------------------------------------------------------------

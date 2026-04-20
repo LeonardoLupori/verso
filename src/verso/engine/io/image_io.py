@@ -4,10 +4,16 @@ Resolution tiers
 ----------------
 Full resolution   Original file on disk (e.g. 20000×15000). Never loaded
                   for interactive use; only for final export.
-Working           Longest side clamped to WORKING_MAX_SIDE (1200 px).
-                  Saved to project thumbnails/ folder. Used in all views.
+Working           Downscaled by WORKING_SCALE (default 0.2) from the original.
+                  This preserves the pixel-to-atlas-voxel ratio across all
+                  sections — matching the QuickNII strategy of keeping a
+                  constant scale so the anchoring "width"/"height" fields
+                  remain meaningful. Saved to project thumbnails/ folder.
 Filmstrip         Longest side clamped to FILMSTRIP_MAX_SIDE (150 px).
                   Generated from the working copy on demand; not persisted.
+
+The working scale is settable: change WORKING_SCALE before creating thumbnails
+or pass an explicit ``scale`` argument to :func:`ensure_working_copy`.
 """
 
 from __future__ import annotations
@@ -16,7 +22,11 @@ from pathlib import Path
 
 import numpy as np
 
-WORKING_MAX_SIDE = 1200
+# Default scale factor for working copies (fraction of original resolution).
+# A value of 0.2 preserves the pixel:atlas-voxel ratio for typical mouse-brain
+# slides scanned at ~1 µm/px with a 25 µm atlas (25 × 0.2 = 5 px/voxel).
+# Change this constant or pass an explicit scale to ensure_working_copy().
+WORKING_SCALE: float = 0.2
 FILMSTRIP_MAX_SIDE = 150
 
 
@@ -36,6 +46,30 @@ def load_image(path: str | Path) -> np.ndarray:
         return tifffile.imread(str(path))
     from PIL import Image
     return np.asarray(Image.open(str(path)))
+
+
+def image_dimensions(path: str | Path) -> tuple[int, int]:
+    """Return image dimensions as ``(width, height)`` without full decoding."""
+    path = Path(path)
+    if path.suffix.lower() in (".tif", ".tiff"):
+        try:
+            import tifffile
+            with tifffile.TiffFile(str(path)) as tif:
+                series = tif.series[0]
+                shape = series.shape
+                axes = series.axes
+            if "X" in axes and "Y" in axes:
+                return int(shape[axes.index("X")]), int(shape[axes.index("Y")])
+            if len(shape) >= 3 and shape[-1] <= 4:
+                return int(shape[-2]), int(shape[-3])
+            if len(shape) >= 2:
+                return int(shape[-1]), int(shape[-2])
+        except Exception:
+            pass
+
+    from PIL import Image
+    with Image.open(str(path)) as im:
+        return im.size
 
 
 def normalize_to_uint8(image: np.ndarray) -> np.ndarray:
@@ -140,38 +174,88 @@ def resize_to_max_side(
     return np.array(pil), scale
 
 
+def resize_by_scale(
+    image: np.ndarray, scale: float
+) -> tuple[np.ndarray, float]:
+    """Resize image by a fixed scale factor (Lanczos).
+
+    Unlike :func:`resize_to_max_side`, this preserves the pixel-to-voxel ratio
+    consistently across all sections (QuickNII strategy).
+
+    Args:
+        image: uint8 H×W or H×W×3 array.
+        scale: Scale factor in (0, 1]. Values > 1 upscale (unusual).
+
+    Returns:
+        Tuple (resized_image, scale_factor) where scale_factor == scale.
+    """
+    from PIL import Image as PILImage
+
+    if scale == 1.0:
+        return image, 1.0
+
+    h, w = image.shape[:2]
+    new_w = max(1, round(w * scale))
+    new_h = max(1, round(h * scale))
+
+    if image.ndim == 2:
+        pil = PILImage.fromarray(image, mode="L")
+        pil = pil.resize((new_w, new_h), PILImage.LANCZOS)
+        return np.array(pil), scale
+
+    pil = PILImage.fromarray(image[:, :, :3])
+    pil = pil.resize((new_w, new_h), PILImage.LANCZOS)
+    return np.array(pil), scale
+
+
 # ---------------------------------------------------------------------------
 # High-level helpers used by the GUI
 # ---------------------------------------------------------------------------
 
 def load_for_display(
     path: str | Path,
-    max_side: int = WORKING_MAX_SIDE,
+    max_side: int = FILMSTRIP_MAX_SIDE,
     channel: int | None = None,
 ) -> tuple[np.ndarray, float]:
-    """Load a file and return a display-ready uint8 RGB array at working res.
+    """Load a file and return a display-ready uint8 RGB array capped at max_side.
 
     Returns:
-        (rgb_image, scale_factor)  — scale = working_long_side / original_long_side
+        (rgb_image, scale_factor)  — scale = output_long_side / original_long_side
     """
     raw = load_image(path)
     rgb = to_rgb(raw, channel)
     return resize_to_max_side(rgb, max_side)
 
 
-def ensure_working_copy(section) -> np.ndarray | None:
+def ensure_working_copy(
+    section,
+    scale: float | None = None,
+) -> np.ndarray | None:
     """Return the working-resolution RGB image for a section.
 
-    Loads the existing thumbnail if present; otherwise generates it from the
-    original, saves it to thumbnail_path, and updates section.scale.
+    Uses a fixed *scale* factor (QuickNII strategy) so the pixel-to-atlas-voxel
+    ratio stays constant across sections.  Defaults to :data:`WORKING_SCALE`.
 
-    Returns None if neither file exists.
+    If the thumbnail already exists on disk it is loaded directly (no
+    re-scaling — the persisted file is assumed to be at the correct resolution).
+    Otherwise the original is loaded, scaled, saved to ``thumbnail_path``, and
+    ``section.scale`` is updated.
+
+    Args:
+        section: A :class:`~verso.engine.model.project.Section` instance.
+        scale: Override the global :data:`WORKING_SCALE`. Pass ``None`` to use
+            the module default.
+
+    Returns:
+        uint8 H×W×3 array, or ``None`` if no source image is available.
     """
+    working_scale = scale if scale is not None else WORKING_SCALE
+
     thumb = Path(section.thumbnail_path)
     if thumb.exists():
         try:
-            rgb, _ = load_for_display(thumb, max_side=WORKING_MAX_SIDE)
-            return rgb
+            raw = load_image(thumb)
+            return to_rgb(raw)
         except Exception:
             pass  # fall through to original
 
@@ -180,14 +264,16 @@ def ensure_working_copy(section) -> np.ndarray | None:
         return None
 
     try:
-        rgb, scale = load_for_display(orig, max_side=WORKING_MAX_SIDE)
+        raw = load_image(orig)
+        rgb = to_rgb(raw)
     except Exception as exc:
         raise RuntimeError(
             f"Cannot load image '{orig.name}': {exc}\n\n"
             "If this is a compressed TIFF, make sure 'imagecodecs' is installed."
         ) from exc
 
-    section.scale = scale
+    rgb, actual_scale = resize_by_scale(rgb, working_scale)
+    section.scale = actual_scale
 
     # Persist as PNG for fast future loads
     try:
@@ -197,6 +283,19 @@ def ensure_working_copy(section) -> np.ndarray | None:
         pass  # Can't write thumbnail — that's OK, just won't cache
 
     return rgb
+
+
+def registration_dimensions(section) -> tuple[int, int]:
+    """Return dimensions of the image used for interactive registration.
+
+    VERSO registers against the working copy when it exists. Falling back to
+    the original keeps imported QuickNII/VisuAlign JSON usable even when there
+    is no VERSO thumbnail cache.
+    """
+    thumb = Path(section.thumbnail_path)
+    if thumb.exists():
+        return image_dimensions(thumb)
+    return image_dimensions(section.original_path)
 
 
 def load_filmstrip_thumbnail(section) -> np.ndarray | None:

@@ -38,7 +38,6 @@ from typing import Any
 from verso.engine.model.alignment import Alignment, AlignmentStatus, ControlPoint, WarpState
 from verso.engine.model.project import AtlasRef, Project, Section
 
-
 # ---------------------------------------------------------------------------
 # Low-level format helpers
 # ---------------------------------------------------------------------------
@@ -54,56 +53,54 @@ def _parse_section_quicknii(raw: dict[str, Any]) -> dict[str, Any]:
 
 def _markers_to_control_points(
     markers: list[dict[str, float]],
-    overlay_width: int,
-    overlay_height: int,
 ) -> list[ControlPoint]:
-    """Convert VisuAlign normalised markers to VERSO pixel-space control points.
+    """Convert VisuAlign normalised markers to VERSO control points.
+
+    VisuAlign marker format (normalised [0, 1]):
+        x, y   — atlas overlay position (src in VERSO terms)
+        dx, dy — displacement to matching section position: dst = (x+dx, y+dy)
+
+    VERSO ControlPoint stores both src and dst as normalised [0, 1] coords,
+    so this is a direct pass-through with no scaling.
 
     Args:
         markers: List of ``{"x", "y", "dx", "dy"}`` dicts in normalised coords.
-        overlay_width: Width of the atlas overlay in working-resolution pixels.
-        overlay_height: Height of the atlas overlay in working-resolution pixels.
 
     Returns:
-        List of :class:`ControlPoint` in pixel coordinates.
+        List of :class:`ControlPoint` with normalised [0, 1] coordinates.
     """
     cps: list[ControlPoint] = []
     for m in markers:
         x, y = float(m["x"]), float(m["y"])
         dx, dy = float(m["dx"]), float(m["dy"])
-        cps.append(
-            ControlPoint(
-                src_x=x * overlay_width,
-                src_y=y * overlay_height,
-                dst_x=(x + dx) * overlay_width,
-                dst_y=(y + dy) * overlay_height,
-            )
-        )
+        cps.append(ControlPoint(src_x=x, src_y=y, dst_x=x + dx, dst_y=y + dy))
     return cps
 
 
 def _control_points_to_markers(
     control_points: list[ControlPoint],
-    overlay_width: int,
-    overlay_height: int,
 ) -> list[dict[str, float]]:
-    """Convert VERSO pixel-space control points to VisuAlign normalised markers.
+    """Convert VERSO control points to VisuAlign normalised markers.
+
+    VERSO ControlPoint stores normalised [0, 1] coords; the VisuAlign format
+    stores the atlas position (x, y) and the section displacement (dx, dy).
 
     Args:
-        control_points: List of :class:`ControlPoint` in pixel coordinates.
-        overlay_width: Width of the atlas overlay in working-resolution pixels.
-        overlay_height: Height of the atlas overlay in working-resolution pixels.
+        control_points: List of :class:`ControlPoint` with normalised coords.
 
     Returns:
-        List of ``{"x", "y", "dx", "dy"}`` dicts in normalised coords.
+        List of ``{"x", "y", "dx", "dy"}`` dicts in normalised [0, 1] coords.
     """
     markers: list[dict[str, float]] = []
     for cp in control_points:
-        x = cp.src_x / overlay_width
-        y = cp.src_y / overlay_height
-        dx = (cp.dst_x - cp.src_x) / overlay_width
-        dy = (cp.dst_y - cp.src_y) / overlay_height
-        markers.append({"x": round(x, 6), "y": round(y, 6), "dx": round(dx, 6), "dy": round(dy, 6)})
+        dx = cp.dst_x - cp.src_x
+        dy = cp.dst_y - cp.src_y
+        markers.append({
+            "x": round(cp.src_x, 6),
+            "y": round(cp.src_y, 6),
+            "dx": round(dx, 6),
+            "dy": round(dy, 6),
+        })
     return markers
 
 
@@ -134,9 +131,14 @@ def load_quicknii(path: Path, atlas_name: str = "allen_mouse_25um") -> Project:
     sections: list[Section] = []
     for i, raw in enumerate(raw_sections):
         parsed = _parse_section_quicknii(raw)
+        status = (
+            AlignmentStatus.COMPLETE
+            if any(parsed["anchoring"])
+            else AlignmentStatus.NOT_STARTED
+        )
         alignment = Alignment(
             anchoring=parsed["anchoring"],
-            status=AlignmentStatus.COMPLETE if any(parsed["anchoring"]) else AlignmentStatus.NOT_STARTED,
+            status=status,
         )
         section = Section(
             id=f"s{i + 1:03d}",
@@ -156,18 +158,15 @@ def load_quicknii(path: Path, atlas_name: str = "allen_mouse_25um") -> Project:
 
 def load_visualign(
     path: Path,
-    overlay_width: int = 456,
-    overlay_height: int = 320,
     atlas_name: str = "allen_mouse_25um",
 ) -> Project:
     """Load a VisuAlign JSON file (with control points) into a VERSO :class:`Project`.
 
+    Marker coordinates are normalised [0, 1] in both atlas and section space,
+    matching the VisuAlign JSON format directly.
+
     Args:
         path: Path to the VisuAlign ``*.json`` file.
-        overlay_width: Width of the atlas overlay in pixels, used to convert
-            normalised marker coords to pixel coords.  Should match the working
-            resolution overlay dimensions used when the file was created.
-        overlay_height: Height of the atlas overlay in pixels.
         atlas_name: Fallback atlas name if not present in the JSON.
 
     Returns:
@@ -180,7 +179,7 @@ def load_visualign(
     for section, raw in zip(project.sections, raw_sections):
         markers = raw.get("markers", [])
         if markers:
-            cps = _markers_to_control_points(markers, overlay_width, overlay_height)
+            cps = _markers_to_control_points(markers)
             section.warp = WarpState(
                 control_points=cps,
                 status=AlignmentStatus.COMPLETE,
@@ -204,6 +203,26 @@ def load_deepslice(path: Path, atlas_name: str = "allen_mouse_25um") -> Project:
 
 
 # ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+def _registration_dims(section) -> tuple[int, int]:
+    """Return registration image dimensions (width, height) in pixels.
+
+    QuickNII's ``width`` and ``height`` are part of the anchoring scale:
+    ``HStretch = len(u) / width`` and ``VStretch = len(v) / height``.  VERSO
+    aligns against the working thumbnail when present, so exports must report
+    that image size instead of reconstructing full-resolution dimensions from
+    ``section.scale``.
+    """
+    try:
+        from verso.engine.io.image_io import registration_dimensions
+        return registration_dimensions(section)
+    except Exception:
+        return 0, 0
+
+
+# ---------------------------------------------------------------------------
 # Public save functions
 # ---------------------------------------------------------------------------
 
@@ -217,18 +236,13 @@ def save_quicknii(project: Project, path: Path) -> None:
     """
     slices_out: list[dict[str, Any]] = []
     for section in project.sections:
+        w, h = _registration_dims(section)
         entry: dict[str, Any] = {
             "filename": section.original_path,
             "nr": section.serial_number,
+            "width": w,
+            "height": h,
         }
-        # width/height in original pixels if available; fall back to 0
-        from PIL import Image as PILImage
-        try:
-            with PILImage.open(section.original_path) as im:
-                entry["width"], entry["height"] = im.size
-        except Exception:
-            entry["width"] = 0
-            entry["height"] = 0
         if section.alignment.anchoring and any(section.alignment.anchoring):
             entry["anchoring"] = [round(v, 4) for v in section.alignment.anchoring]
         slices_out.append(entry)
@@ -244,37 +258,31 @@ def save_quicknii(project: Project, path: Path) -> None:
 def save_visualign(
     project: Project,
     path: Path,
-    overlay_width: int = 456,
-    overlay_height: int = 320,
 ) -> None:
     """Write alignment + warp data in VisuAlign-compatible JSON format.
+
+    Control point coordinates are stored as normalised [0, 1] values,
+    matching the VisuAlign ``{"x", "y", "dx", "dy"}`` marker format directly.
+    Width/height describe the registration image used by VERSO, matching
+    QuickNII's stretch calculation.
 
     Args:
         project: VERSO project to export.
         path: Destination ``*.json`` path.
-        overlay_width: Width of the atlas overlay used for normalising control
-            point pixel coordinates.
-        overlay_height: Height of the atlas overlay.
     """
     slices_out: list[dict[str, Any]] = []
     for section in project.sections:
+        w, h = _registration_dims(section)
         entry: dict[str, Any] = {
             "filename": section.original_path,
             "nr": section.serial_number,
+            "width": w,
+            "height": h,
         }
-        from PIL import Image as PILImage
-        try:
-            with PILImage.open(section.original_path) as im:
-                entry["width"], entry["height"] = im.size
-        except Exception:
-            entry["width"] = 0
-            entry["height"] = 0
         if section.alignment.anchoring and any(section.alignment.anchoring):
             entry["anchoring"] = [round(v, 4) for v in section.alignment.anchoring]
         if section.warp.control_points:
-            entry["markers"] = _control_points_to_markers(
-                section.warp.control_points, overlay_width, overlay_height
-            )
+            entry["markers"] = _control_points_to_markers(section.warp.control_points)
         slices_out.append(entry)
 
     data: dict[str, Any] = {

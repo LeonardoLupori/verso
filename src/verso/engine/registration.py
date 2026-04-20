@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import numpy as np
 
-
 # ---------------------------------------------------------------------------
 # Anchoring vector decomposition
 # ---------------------------------------------------------------------------
@@ -187,6 +186,249 @@ def scale_anchoring(
 # ---------------------------------------------------------------------------
 # Pixel ↔ Normalised (convenience wrappers for the GUI)
 # ---------------------------------------------------------------------------
+
+def quicknii_coronal_default_anchoring(
+    image_width: int,
+    image_height: int,
+    max_width: int,
+    max_height: int,
+    atlas_shape: tuple[int, int, int],
+    ap_voxel: float | None = None,
+) -> list[float]:
+    """Create a centered coronal anchoring using QuickNII stretch semantics.
+
+    QuickNII initializes the atlas-plane scale from image dimensions, not from
+    display aspect ratio alone. For coronal Allen-style data it uses a common
+    horizontal stretch ``atlas_lr / max_image_width`` and vertical stretch
+    ``atlas_dv / max_image_height`` across the series. Each section then gets
+    plane vectors proportional to its own registration image size.
+    """
+    if image_width <= 0 or image_height <= 0:
+        raise ValueError("image dimensions must be positive")
+    if max_width <= 0 or max_height <= 0:
+        raise ValueError("maximum image dimensions must be positive")
+
+    ap_dim, dv_dim, lr_dim = atlas_shape
+    ap = float(ap_dim) / 2.0 if ap_voxel is None else float(ap_voxel)
+
+    h_stretch = float(lr_dim) / float(max_width)
+    v_stretch = float(dv_dim) / float(max_height)
+    lr_span = h_stretch * float(image_width)
+    dv_span = v_stretch * float(image_height)
+
+    ox = (float(lr_dim) - lr_span) / 2.0
+    oz = (float(dv_dim) - dv_span) / 2.0
+
+    return [ox, ap, oz, lr_span, 0.0, 0.0, 0.0, 0.0, dv_span]
+
+
+def quicknii_unpack_anchoring(
+    anchoring: list[float],
+    image_width: int,
+    image_height: int,
+) -> list[float]:
+    """Unpack a QuickNII anchoring into midpoint, unit vectors, and stretches."""
+    if image_width <= 0 or image_height <= 0:
+        raise ValueError("image dimensions must be positive")
+
+    o, u, v = anchoring_to_vectors(anchoring)
+    midpoint = o + (u + v) / 2.0
+
+    u_len = float(np.linalg.norm(u))
+    v_len = float(np.linalg.norm(v))
+    if u_len <= 0 or v_len <= 0:
+        raise ValueError("anchoring vectors must be non-zero")
+
+    u_unit = u / u_len
+    v_unit = v / v_len
+
+    # Match QuickNII's orthonormalization step.
+    u_unit = u_unit / np.linalg.norm(u_unit)
+    v_unit = v_unit - u_unit * float(np.dot(u_unit, v_unit))
+    v_unit = v_unit / np.linalg.norm(v_unit)
+
+    return [
+        float(midpoint[0]),
+        float(midpoint[1]),
+        float(midpoint[2]),
+        float(u_unit[0]),
+        float(u_unit[1]),
+        float(u_unit[2]),
+        float(v_unit[0]),
+        float(v_unit[1]),
+        float(v_unit[2]),
+        u_len / float(image_width),
+        v_len / float(image_height),
+    ]
+
+
+def quicknii_pack_anchoring(
+    unpacked: list[float],
+    image_width: int,
+    image_height: int,
+) -> list[float]:
+    """Pack QuickNII midpoint/unit-vector/stretch values into anchoring."""
+    if len(unpacked) != 11:
+        raise ValueError(f"unpacked anchoring must have 11 elements, got {len(unpacked)}")
+    if image_width <= 0 or image_height <= 0:
+        raise ValueError("image dimensions must be positive")
+
+    midpoint = np.asarray(unpacked[0:3], dtype=np.float64)
+    u_unit = np.asarray(unpacked[3:6], dtype=np.float64)
+    v_unit = np.asarray(unpacked[6:9], dtype=np.float64)
+    u = u_unit * float(unpacked[9]) * float(image_width)
+    v = v_unit * float(unpacked[10]) * float(image_height)
+    o = midpoint - (u + v) / 2.0
+    return vectors_to_anchoring(o, u, v)
+
+
+def quicknii_coronal_series_anchorings(
+    image_sizes: list[tuple[int, int]],
+    serial_numbers: list[int],
+    atlas_shape: tuple[int, int, int],
+    stored_anchorings: list[list[float] | None] | None = None,
+    reverse_ap: bool = False,
+) -> list[list[float]]:
+    """Propagate coronal anchorings using QuickNII's series interpolation logic.
+
+    Args:
+        image_sizes: Per-section registration image ``(width, height)``.
+        serial_numbers: Per-section serial numbers used for interpolation.
+        atlas_shape: BrainGlobe annotation shape ``(AP, DV, LR)``.
+        stored_anchorings: Optional stored/user anchorings. ``None`` entries
+            receive propagated anchorings.
+        reverse_ap: If true, reverse the initial AP proposal direction while
+            leaving section order unchanged.
+
+    Returns:
+        One packed QuickNII anchoring per section.
+    """
+    if len(image_sizes) != len(serial_numbers):
+        raise ValueError("image_sizes and serial_numbers must have the same length")
+    if stored_anchorings is not None and len(stored_anchorings) != len(image_sizes):
+        raise ValueError("stored_anchorings must match image_sizes length")
+    if not image_sizes:
+        return []
+
+    ap_dim, dv_dim, lr_dim = atlas_shape
+    max_w = max(w for w, _ in image_sizes)
+    max_h = max(h for _, h in image_sizes)
+    if max_w <= 0 or max_h <= 0:
+        raise ValueError("image dimensions must be positive")
+
+    stored_anchorings = stored_anchorings or [None] * len(image_sizes)
+    stored_indices = [
+        i for i, anchoring in enumerate(stored_anchorings)
+        if anchoring is not None and any(v != 0.0 for v in anchoring)
+    ]
+
+    def default_unpacked(ap_voxel: float) -> list[float]:
+        return [
+            float(lr_dim) / 2.0,
+            float(ap_voxel),
+            float(dv_dim) / 2.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            float(lr_dim) / float(max_w),
+            float(dv_dim) / float(max_h),
+        ]
+
+    unpacked_by_index: dict[int, list[float]] = {}
+    for i in stored_indices:
+        anchoring = stored_anchorings[i]
+        assert anchoring is not None
+        w, h = image_sizes[i]
+        unpacked_by_index[i] = quicknii_unpack_anchoring(anchoring, w, h)
+
+    controls: list[int] = []
+    if not stored_indices:
+        first_ap = 0.0 if reverse_ap else float(ap_dim - 1)
+        last_ap = float(ap_dim - 1) if reverse_ap else 0.0
+        unpacked_by_index[0] = default_unpacked(first_ap)
+        controls.append(0)
+        if len(image_sizes) > 1:
+            unpacked_by_index[len(image_sizes) - 1] = default_unpacked(last_ap)
+            controls.append(len(image_sizes) - 1)
+    elif len(stored_indices) == 1:
+        idx = stored_indices[0]
+        stored = unpacked_by_index[idx]
+        if idx != 0:
+            first = list(stored)
+            first[1] = float(ap_dim - 1)
+            unpacked_by_index[0] = first
+            controls.append(0)
+        controls.append(idx)
+        if idx != len(image_sizes) - 1:
+            last = list(stored)
+            last[1] = 0.0
+            unpacked_by_index[len(image_sizes) - 1] = last
+            controls.append(len(image_sizes) - 1)
+    else:
+        controls.extend(stored_indices)
+        if stored_indices[0] != 0:
+            unpacked_by_index[0] = _quicknii_regressed_unpacked(
+                stored_indices, unpacked_by_index, serial_numbers, serial_numbers[0]
+            )
+            controls.insert(0, 0)
+        if stored_indices[-1] != len(image_sizes) - 1:
+            last_idx = len(image_sizes) - 1
+            unpacked_by_index[last_idx] = _quicknii_regressed_unpacked(
+                stored_indices, unpacked_by_index, serial_numbers, serial_numbers[last_idx]
+            )
+            controls.append(last_idx)
+
+    controls = sorted(set(controls))
+    propagated = [None] * len(image_sizes)
+
+    for i in controls:
+        propagated[i] = unpacked_by_index[i]
+
+    if len(controls) == 1:
+        propagated = [list(unpacked_by_index[controls[0]]) for _ in image_sizes]
+    else:
+        for left, right in zip(controls, controls[1:]):
+            left_sno = serial_numbers[left]
+            right_sno = serial_numbers[right]
+            left_u = unpacked_by_index[left]
+            right_u = unpacked_by_index[right]
+            for i in range(left, right + 1):
+                denom = right_sno - left_sno
+                t = 0.0 if denom == 0 else (serial_numbers[i] - left_sno) / denom
+                propagated[i] = [
+                    a + t * (b - a)
+                    for a, b in zip(left_u, right_u)
+                ]
+
+    packed: list[list[float]] = []
+    for unpacked, (w, h) in zip(propagated, image_sizes):
+        if unpacked is None:
+            raise RuntimeError("QuickNII propagation left a section without anchoring")
+        packed.append(quicknii_pack_anchoring(unpacked, w, h))
+    return packed
+
+
+def _quicknii_regressed_unpacked(
+    stored_indices: list[int],
+    unpacked_by_index: dict[int, list[float]],
+    serial_numbers: list[int],
+    target_serial: int,
+) -> list[float]:
+    """Linear-regression endpoint estimate matching QuickNII's fallback path."""
+    xs = np.asarray([serial_numbers[i] for i in stored_indices], dtype=np.float64)
+    out: list[float] = []
+    for component in range(11):
+        ys = np.asarray([unpacked_by_index[i][component] for i in stored_indices])
+        x_mean = float(xs.mean())
+        y_mean = float(ys.mean())
+        denom = float(((xs - x_mean) ** 2).sum())
+        slope = 0.0 if denom == 0.0 else float(((xs - x_mean) * (ys - y_mean)).sum() / denom)
+        out.append(y_mean + slope * (float(target_serial) - x_mean))
+    return out
+
 
 def pixel_to_normalized(
     px: float, py: float, width: int, height: int
