@@ -16,7 +16,6 @@ import pyqtgraph as pg
 from PyQt6.QtCore import QEvent, QObject, Qt, pyqtSignal
 from PyQt6.QtWidgets import QApplication, QSizePolicy, QVBoxLayout, QWidget
 
-
 # ---------------------------------------------------------------------------
 # Application-level space-key tracker (singleton, installed once)
 # ---------------------------------------------------------------------------

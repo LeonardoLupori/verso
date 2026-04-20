@@ -1,15 +1,11 @@
 """Tests for engine/model — JSON serialisation round-trips."""
 
 import json
-import tempfile
 from pathlib import Path
-
-import pytest
 
 from verso.engine.model.alignment import Alignment, AlignmentStatus, ControlPoint, WarpState
 from verso.engine.model.mask import Mask, MaskType
 from verso.engine.model.project import AtlasRef, Preprocessing, Project, Section
-
 
 # ---------------------------------------------------------------------------
 # ControlPoint

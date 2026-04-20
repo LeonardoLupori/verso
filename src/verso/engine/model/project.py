@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any
 
 from verso.engine.model.alignment import Alignment, WarpState
-from verso.engine.model.mask import Mask
 
 
 @dataclass

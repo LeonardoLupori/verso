@@ -32,6 +32,7 @@ conversion functions here handle the normalisation/denormalisation.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -232,10 +233,45 @@ def _flip_anchoring(anchoring: list[float]) -> list[float]:
     The equivalent anchoring for the unflipped image is:
         o' = o + u,  u' = -u,  v' = v
     """
+    from verso.engine.registration import flip_anchoring_horizontal
+
+    return flip_anchoring_horizontal(anchoring)
+
+
+def _to_quicknii_convention(
+    anchoring: list[float],
+    atlas_shape: tuple[int, int, int],
+) -> list[float]:
+    """Convert anchoring from VERSO/brainglobe to QuickNII atlas convention.
+
+    VERSO stores cut planes in BrainGlobe array order, where AP and DV indices
+    increase in the opposite anatomical direction to QuickNII's display
+    convention. LR is shared.
+
+    The conventions are related by:
+        oy_qn  = ap_max - oy_bg
+        oz_qn  = dv_max - oz_bg
+        uy_qn  = -uy_bg
+        uz_qn  = -uz_bg
+        vy_qn  = -vy_bg
+        vz_qn  = -vz_bg
+
+    This mirrors both the AP and DV axes while preserving LR.
+
+    This function is its own inverse (applying it twice restores the original).
+
+    Args:
+        anchoring: 9-element anchoring in brainglobe (VERSO internal) convention.
+        atlas_shape: BrainGlobe annotation shape ``(AP, DV, LR)``.
+
+    Returns:
+        9-element anchoring in QuickNII convention, ready to write to file.
+    """
+    ap_max, dv_max, _lr_max = atlas_shape
     ox, oy, oz = anchoring[0], anchoring[1], anchoring[2]
     ux, uy, uz = anchoring[3], anchoring[4], anchoring[5]
     vx, vy, vz = anchoring[6], anchoring[7], anchoring[8]
-    return [ox + ux, oy + uy, oz + uz, -ux, -uy, -uz, vx, vy, vz]
+    return [ox, ap_max - oy, dv_max - oz, ux, -uy, -uz, vx, -vy, -vz]
 
 
 def _flip_control_points(
@@ -254,6 +290,29 @@ def _flip_control_points(
         )
         for cp in cps
     ]
+
+
+def _export_image_filename(section, output_path: Path) -> str:
+    """Return the image filename QuickNII/VisuAlign should load for a section.
+
+    QuickNII resolves image filenames relative to the XML/JSON file location by
+    concatenating the series folder and the stored filename.  VERSO aligns
+    against the registration thumbnail when present, and the exported
+    ``width``/``height`` fields describe that same image, so the filename must
+    point to the thumbnail rather than the original high-resolution source.
+
+    If the chosen image is on the same drive as the export, write a relative
+    path.  If it is on a different drive, fall back to the native absolute path:
+    QuickNII can still load it as a file path, while a bare basename would
+    almost certainly point at a non-existent file beside the export.
+    """
+    thumbnail = Path(section.thumbnail_path)
+    src = thumbnail if thumbnail.exists() else Path(section.original_path)
+    out_dir = Path(output_path).resolve().parent
+    try:
+        return Path(os.path.relpath(src.resolve(), out_dir)).as_posix()
+    except ValueError:
+        return str(src)
 
 
 def _registration_dims(section) -> tuple[int, int]:
@@ -276,6 +335,34 @@ def _registration_dims(section) -> tuple[int, int]:
 # Public save functions
 # ---------------------------------------------------------------------------
 
+def _export_anchoring(
+    anchoring: list[float],
+    flip_horizontal: bool,
+    atlas_shape: tuple[int, int, int] | None,
+) -> list[float]:
+    """Apply all export-time anchoring transforms.
+
+    1. Horizontal-flip correction (if the section was displayed flipped).
+    2. Atlas-axis convention conversion from brainglobe/VERSO to QuickNII,
+       which requires knowing the atlas dimensions.
+
+    Args:
+        anchoring: Internal VERSO anchoring in brainglobe convention.
+        flip_horizontal: Whether the section was displayed horizontally flipped.
+        atlas_shape: Atlas dimensions ``(AP, DV, LR)``. Pass ``None`` to skip
+            atlas convention conversion.
+
+    Returns:
+        Anchoring ready to write into a QuickNII/VisuAlign file.
+    """
+    a = anchoring
+    if flip_horizontal:
+        a = _flip_anchoring(a)
+    if atlas_shape is not None:
+        a = _to_quicknii_convention(a, atlas_shape)
+    return a
+
+
 def save_quicknii_xml(
     project: Project,
     path: Path,
@@ -283,14 +370,16 @@ def save_quicknii_xml(
 ) -> None:
     """Write alignment data in QuickNII native XML format.
 
-    Produces the same ``<series>/<slice>`` structure that QuickNII writes,
-    with anchoring encoded as ``ox=...&oy=...&oz=...&ux=...&uy=...&uz=...&vx=...&vy=...&vz=...``.
+    Only sections with a stored (COMPLETE) alignment receive an anchoring.
+    Un-stored sections appear as bare ``<slice>`` entries so that QuickNII
+    will interpolate them itself.
 
     Args:
         project: VERSO project to export.
         path: Destination ``*.xml`` path.
-        atlas_shape: ``(AP, DV, LR)`` voxel dimensions for the ``target-resolution``
-            attribute. If *None*, the attribute is omitted.
+        atlas_shape: ``(AP, DV, LR)`` voxel dimensions used for the
+            ``target-resolution`` attribute and the DV-convention conversion.
+            If *None*, the DV conversion is skipped (non-standard output).
     """
     lines: list[str] = ["<?xml version='1.0' encoding='UTF-8'?>"]
     res_attr = ""
@@ -304,17 +393,21 @@ def save_quicknii_xml(
                 "&amp;uy=", "&amp;uz=", "&amp;vx=", "&amp;vy=", "&amp;vz="]
     for section in project.sections:
         w, h = _registration_dims(section)
+        filename = _export_image_filename(section, path)
         line = (
-            f"    <slice filename='{section.original_path}'"
+            f"    <slice filename='{filename}'"
             f" nr='{section.serial_number}'"
             f" width='{w}' height='{h}"
         )
-        if section.alignment.anchoring and any(section.alignment.anchoring):
-            anchoring = section.alignment.anchoring
-            if section.preprocessing.flip_horizontal:
-                anchoring = _flip_anchoring(anchoring)
-            a = [round(v, 4) for v in anchoring]
-            for prefix, val in zip(prefixes, a):
+        if (section.alignment.status == AlignmentStatus.COMPLETE
+                and section.alignment.anchoring
+                and any(section.alignment.anchoring)):
+            a = _export_anchoring(
+                section.alignment.anchoring,
+                section.preprocessing.flip_horizontal,
+                atlas_shape,
+            )
+            for prefix, val in zip(prefixes, [round(v, 4) for v in a]):
                 line += f"{prefix}{val}"
         line += "'/>"
         lines.append(line)
@@ -323,28 +416,39 @@ def save_quicknii_xml(
     Path(path).write_text("\r\n".join(lines) + "\r\n", encoding="utf-8")
 
 
-def save_quicknii(project: Project, path: Path) -> None:
+def save_quicknii(
+    project: Project,
+    path: Path,
+    atlas_shape: tuple[int, int, int] | None = None,
+) -> None:
     """Write alignment data in QuickNII-compatible JSON format.
 
-    Uses the ``"slices"`` key and includes ``"width"``, ``"height"``, and
-    ``"target-resolution"`` fields to match the native QuickNII format.
+    Only sections with a stored (COMPLETE) alignment receive an anchoring.
 
-    Only the affine alignment (anchoring) is written.
+    Args:
+        project: VERSO project to export.
+        path: Destination ``*.json`` path.
+        atlas_shape: ``(AP, DV, LR)`` voxel dimensions used for the DV-convention
+            conversion. Pass *None* to skip conversion (non-standard output).
     """
     slices_out: list[dict[str, Any]] = []
     for section in project.sections:
         w, h = _registration_dims(section)
         entry: dict[str, Any] = {
-            "filename": section.original_path,
+            "filename": _export_image_filename(section, path),
             "nr": section.serial_number,
             "width": w,
             "height": h,
         }
-        if section.alignment.anchoring and any(section.alignment.anchoring):
-            anchoring = section.alignment.anchoring
-            if section.preprocessing.flip_horizontal:
-                anchoring = _flip_anchoring(anchoring)
-            entry["anchoring"] = [round(v, 4) for v in anchoring]
+        if (section.alignment.status == AlignmentStatus.COMPLETE
+                and section.alignment.anchoring
+                and any(section.alignment.anchoring)):
+            a = _export_anchoring(
+                section.alignment.anchoring,
+                section.preprocessing.flip_horizontal,
+                atlas_shape,
+            )
+            entry["anchoring"] = [round(v, 4) for v in a]
         slices_out.append(entry)
 
     data: dict[str, Any] = {
@@ -358,36 +462,41 @@ def save_quicknii(project: Project, path: Path) -> None:
 def save_visualign(
     project: Project,
     path: Path,
+    atlas_shape: tuple[int, int, int] | None = None,
 ) -> None:
     """Write alignment + warp data in VisuAlign-compatible JSON format.
 
-    Control point coordinates are stored as normalised [0, 1] values,
-    matching the VisuAlign ``{"x", "y", "dx", "dy"}`` marker format directly.
-    Width/height describe the registration image used by VERSO, matching
-    QuickNII's stretch calculation.
+    Only sections with a stored (COMPLETE) alignment receive an anchoring.
+    Control point y-coordinates do not need conversion — the normalised t
+    coordinate has the same meaning (0=top, 1=bottom) in both conventions.
 
     Args:
         project: VERSO project to export.
         path: Destination ``*.json`` path.
+        atlas_shape: ``(AP, DV, LR)`` voxel dimensions used for the DV-convention
+            conversion. Pass *None* to skip conversion (non-standard output).
     """
     slices_out: list[dict[str, Any]] = []
     for section in project.sections:
         w, h = _registration_dims(section)
         entry: dict[str, Any] = {
-            "filename": section.original_path,
+            "filename": _export_image_filename(section, path),
             "nr": section.serial_number,
             "width": w,
             "height": h,
         }
-        flipped = section.preprocessing.flip_horizontal
-        if section.alignment.anchoring and any(section.alignment.anchoring):
-            anchoring = section.alignment.anchoring
-            if flipped:
-                anchoring = _flip_anchoring(anchoring)
-            entry["anchoring"] = [round(v, 4) for v in anchoring]
+        if (section.alignment.status == AlignmentStatus.COMPLETE
+                and section.alignment.anchoring
+                and any(section.alignment.anchoring)):
+            a = _export_anchoring(
+                section.alignment.anchoring,
+                section.preprocessing.flip_horizontal,
+                atlas_shape,
+            )
+            entry["anchoring"] = [round(v, 4) for v in a]
         if section.warp.control_points:
             cps = section.warp.control_points
-            if flipped:
+            if section.preprocessing.flip_horizontal:
                 cps = _flip_control_points(cps)
             entry["markers"] = _control_points_to_markers(cps)
         slices_out.append(entry)

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 
-class MaskType(str, Enum):
+class MaskType(StrEnum):
     SLICE = "slice"
     LEFT_RIGHT = "lr"
 

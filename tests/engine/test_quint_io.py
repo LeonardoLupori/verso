@@ -6,6 +6,7 @@ from pathlib import Path
 from verso.engine.io.quint_io import (
     _control_points_to_markers,
     _markers_to_control_points,
+    _to_quicknii_convention,
     load_quicknii,
     load_visualign,
     save_quicknii,
@@ -187,6 +188,61 @@ def test_save_quicknii_uses_registration_thumbnail_dimensions(tmp_path: Path):
     data = json.loads(dst.read_text())
     assert data["slices"][0]["width"] == 200
     assert data["slices"][0]["height"] == 160
+    assert data["slices"][0]["filename"] == "thumbnail.png"
+
+
+def test_save_quicknii_writes_relative_thumbnail_path(tmp_path: Path):
+    from PIL import Image
+
+    project_dir = tmp_path / "project"
+    thumbnails = project_dir / "thumbnails"
+    exports = project_dir / "exports"
+    raw_dir = tmp_path / "raw"
+    thumbnails.mkdir(parents=True)
+    exports.mkdir()
+    raw_dir.mkdir()
+
+    original = raw_dir / "section.tif"
+    thumbnail = thumbnails / "s001.png"
+    Image.new("RGB", (1000, 800)).save(original)
+    Image.new("RGB", (200, 160)).save(thumbnail)
+
+    project = Project(
+        name="path_test",
+        atlas=AtlasRef(name="allen_mouse_25um"),
+        sections=[
+            Section(
+                id="s001",
+                serial_number=1,
+                original_path=str(original),
+                thumbnail_path=str(thumbnail),
+                scale=0.2,
+            )
+        ],
+    )
+
+    dst = exports / "quicknii.json"
+    save_quicknii(project, dst)
+
+    data = json.loads(dst.read_text())
+    assert data["slices"][0]["filename"] == "../thumbnails/s001.png"
+
+
+def test_quicknii_export_convention_flips_ap_and_dv_axes():
+    anchoring = [
+        10.0, 100.0, 40.0,
+        20.0, 3.0, 4.0,
+        5.0, 6.0, 7.0,
+    ]
+
+    converted = _to_quicknii_convention(anchoring, atlas_shape=(528, 320, 456))
+
+    assert converted == [
+        10.0, 428.0, 280.0,
+        20.0, -3.0, -4.0,
+        5.0, -6.0, -7.0,
+    ]
+    assert _to_quicknii_convention(converted, atlas_shape=(528, 320, 456)) == anchoring
 
 
 # ---------------------------------------------------------------------------

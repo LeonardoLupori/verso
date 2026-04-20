@@ -8,6 +8,7 @@ import pytest
 from verso.engine.registration import (
     anchoring_to_vectors,
     atlas_to_normalized,
+    flip_anchoring_horizontal,
     make_atlas_sample_grid,
     normalized_to_atlas,
     normalized_to_pixel,
@@ -147,6 +148,19 @@ def test_scale_preserves_pivot():
     pivot_after = so + pivot_s * su + pivot_t * sv
 
     np.testing.assert_allclose(pivot_after, pivot_before, atol=1e-9)
+
+
+def test_flip_anchoring_horizontal_is_involutive():
+    flipped = flip_anchoring_horizontal(SAMPLE_ANCHORING)
+    restored = flip_anchoring_horizontal(flipped)
+
+    o, u, v = anchoring_to_vectors(SAMPLE_ANCHORING)
+    fo, fu, fv = anchoring_to_vectors(flipped)
+
+    np.testing.assert_allclose(fo, o + u)
+    np.testing.assert_allclose(fu, -u)
+    np.testing.assert_allclose(fv, v)
+    np.testing.assert_allclose(restored, SAMPLE_ANCHORING)
 
 
 # ---------------------------------------------------------------------------

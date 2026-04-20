@@ -413,12 +413,30 @@ class MainWindow(QMainWindow):
         section = self._state.current_section
         if section is None:
             return
+        was_flipped = section.preprocessing.flip_horizontal
+        if value == was_flipped:
+            return
         section.preprocessing.flip_horizontal = value
+        if (
+            section.alignment.status == AlignmentStatus.COMPLETE
+            and section.alignment.anchoring
+            and any(section.alignment.anchoring)
+        ):
+            from verso.engine.registration import flip_anchoring_horizontal
+
+            section.alignment.anchoring = flip_anchoring_horizontal(
+                section.alignment.anchoring
+            )
+            if self._state.atlas is not None:
+                section.alignment.ap_position_mm = self._state.atlas.ap_voxel_to_mm(
+                    section.alignment.anchoring[1]
+                )
         if self._current_mode == "prep":
             self._prep.refresh_display()
         elif self._current_mode == "align":
             self._align.refresh_display()
         self._overview.refresh_row(self._state.section_index)
+        self._update_ap_plot()
 
     def _on_opacity_changed(self, opacity: float) -> None:
         self._align.canvas.set_overlay_opacity(opacity)
@@ -603,8 +621,9 @@ class MainWindow(QMainWindow):
             self, "Export QuickNII JSON", "quicknii.json", "JSON files (*.json)"
         )
         if path:
+            atlas_shape = self._state.atlas.shape if self._state.atlas else None
             from verso.engine.io.quint_io import save_quicknii
-            save_quicknii(self._state.project, Path(path))
+            save_quicknii(self._state.project, Path(path), atlas_shape=atlas_shape)
 
     def _export_visualign(self) -> None:
         if self._state.project is None:
@@ -614,5 +633,6 @@ class MainWindow(QMainWindow):
             self, "Export VisuAlign JSON", "visualign.json", "JSON files (*.json)"
         )
         if path:
+            atlas_shape = self._state.atlas.shape if self._state.atlas else None
             from verso.engine.io.quint_io import save_visualign
-            save_visualign(self._state.project, Path(path))
+            save_visualign(self._state.project, Path(path), atlas_shape=atlas_shape)

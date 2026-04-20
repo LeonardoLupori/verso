@@ -26,7 +26,7 @@ from PyQt6.QtGui import (
     QPixmap,
     QPolygonF,
 )
-from PyQt6.QtWidgets import QLabel, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QLabel, QScrollArea, QVBoxLayout, QWidget
 
 if TYPE_CHECKING:
     from verso.engine.atlas import AtlasVolume
@@ -354,7 +354,7 @@ class NavigatorPanel(QWidget):
 
         layout.addStretch()
 
-    def set_atlas(self, atlas: "AtlasVolume | None") -> None:
+    def set_atlas(self, atlas: AtlasVolume | None) -> None:
         self._atlas = atlas
         if atlas is not None:
             dims = atlas.shape  # (AP, DV, LR)

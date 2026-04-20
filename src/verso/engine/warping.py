@@ -97,13 +97,17 @@ def warp_overlay(
     Returns:
         Warped overlay, same shape and dtype as ``overlay``.
     """
+    h, w = overlay.shape[:2]
+    src_norm = np.asarray(src_norm, dtype=np.float64).reshape(-1, 2)
+    dst_norm = np.asarray(dst_norm, dtype=np.float64).reshape(-1, 2)
+    if len(src_norm) == 0 or np.allclose(src_norm, dst_norm):
+        return overlay.copy()
+
     src_all = _with_corners(src_norm) if len(src_norm) else _CORNERS.copy()
     dst_all = _with_corners(dst_norm) if len(dst_norm) else _CORNERS.copy()
 
     # Triangulate in DST (section) normalised space
     tri = Delaunay(dst_all)
-
-    h, w = overlay.shape[:2]
 
     # Normalised coords for each output pixel (overlay resolution)
     xs = (np.arange(w, dtype=np.float64) + 0.5) / w

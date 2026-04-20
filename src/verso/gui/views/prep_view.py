@@ -6,8 +6,6 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QHBoxLayout,
-    QLabel,
-    QToolBar,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -112,8 +110,10 @@ class PrepView(QWidget):
         self._canvas.clear()
         if section is None:
             return
-        from verso.engine.io.image_io import ensure_working_copy
         from PyQt6.QtWidgets import QMessageBox
+
+        from verso.engine.io.image_io import ensure_working_copy
+
         try:
             self._raw_image = ensure_working_copy(section)
         except RuntimeError as exc:
