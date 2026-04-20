@@ -105,6 +105,10 @@ class MainWindow(QMainWindow):
 
         file_menu.addSeparator()
 
+        act_export_qn_xml = QAction("Export QuickNII &XML…", self)
+        act_export_qn_xml.triggered.connect(self._export_quicknii_xml)
+        file_menu.addAction(act_export_qn_xml)
+
         act_export_qn = QAction("Export &QuickNII JSON…", self)
         act_export_qn.triggered.connect(self._export_quicknii)
         file_menu.addAction(act_export_qn)
@@ -593,6 +597,17 @@ class MainWindow(QMainWindow):
         if project is None:
             return
         self._props.update_ap_plot(project.sections, self._state.section_index)
+
+    def _export_quicknii_xml(self) -> None:
+        if self._state.project is None:
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export QuickNII XML", "quicknii.xml", "XML files (*.xml)"
+        )
+        if path:
+            from verso.engine.io.quint_io import save_quicknii_xml
+            atlas_shape = self._state.atlas.shape if self._state.atlas else None
+            save_quicknii_xml(self._state.project, Path(path), atlas_shape=atlas_shape)
 
     def _export_quicknii(self) -> None:
         if self._state.project is None:

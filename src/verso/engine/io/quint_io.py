@@ -226,6 +226,50 @@ def _registration_dims(section) -> tuple[int, int]:
 # Public save functions
 # ---------------------------------------------------------------------------
 
+def save_quicknii_xml(
+    project: Project,
+    path: Path,
+    atlas_shape: tuple[int, int, int] | None = None,
+) -> None:
+    """Write alignment data in QuickNII native XML format.
+
+    Produces the same ``<series>/<slice>`` structure that QuickNII writes,
+    with anchoring encoded as ``ox=...&oy=...&oz=...&ux=...&uy=...&uz=...&vx=...&vy=...&vz=...``.
+
+    Args:
+        project: VERSO project to export.
+        path: Destination ``*.xml`` path.
+        atlas_shape: ``(AP, DV, LR)`` voxel dimensions for the ``target-resolution``
+            attribute. If *None*, the attribute is omitted.
+    """
+    lines: list[str] = ["<?xml version='1.0' encoding='UTF-8'?>"]
+    res_attr = ""
+    if atlas_shape is not None:
+        ap, dv, lr = atlas_shape
+        res_attr = f" target-resolution='{ap} {dv} {lr}'"
+    atlas_name = project.atlas.name if project.atlas else ""
+    lines.append(f"<series name='{project.name}' target='{atlas_name}'{res_attr}>")
+
+    prefixes = ["' anchoring='ox=", "&amp;oy=", "&amp;oz=", "&amp;ux=",
+                "&amp;uy=", "&amp;uz=", "&amp;vx=", "&amp;vy=", "&amp;vz="]
+    for section in project.sections:
+        w, h = _registration_dims(section)
+        line = (
+            f"    <slice filename='{section.original_path}'"
+            f" nr='{section.serial_number}'"
+            f" width='{w}' height='{h}"
+        )
+        if section.alignment.anchoring and any(section.alignment.anchoring):
+            a = [round(v, 4) for v in section.alignment.anchoring]
+            for prefix, val in zip(prefixes, a):
+                line += f"{prefix}{val}"
+        line += "'/>"
+        lines.append(line)
+
+    lines.append("</series>")
+    Path(path).write_text("\r\n".join(lines) + "\r\n", encoding="utf-8")
+
+
 def save_quicknii(project: Project, path: Path) -> None:
     """Write alignment data in QuickNII-compatible JSON format.
 
