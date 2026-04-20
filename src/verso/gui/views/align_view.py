@@ -83,10 +83,11 @@ class AlignView(QWidget):
 
         # Region label bar
         self._region_bar = QLabel("")
-        self._region_bar.setFixedHeight(28)
+        self._region_bar.setFixedHeight(38)
+        self._region_bar.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._region_bar.setStyleSheet(
             "background: #1a1a1a; color: #fff; font-size: 12px; font-weight: bold;"
-            " padding-left: 8px; border-top: 1px solid #333;"
+            " border-top: 1px solid #333;"
         )
         canvas_col.addWidget(self._region_bar)
 
@@ -408,7 +409,7 @@ class AlignView(QWidget):
             self._region_bar.setText("")
             self._region_bar.setStyleSheet(
                 "background: #1a1a1a; color: #fff; font-size: 12px; font-weight: bold;"
-                " padding-left: 8px; border-top: 1px solid #333;"
+                " border-top: 1px solid #333;"
             )
             return
         s, t = x / w_bg, y / h_bg
@@ -419,8 +420,8 @@ class AlignView(QWidget):
         bb = int(b * 0.55)
         self._region_bar.setText(name)
         self._region_bar.setStyleSheet(
-            f"background: rgb({br},{bg},{bb}); color: #fff; font-size: 12px;"
-            " font-weight: bold; padding-left: 8px; border-top: 1px solid #333;"
+            f"background: rgb({br},{bg},{bb}); color: #fff; font-size: 20px;"
+            " font-weight: bold; border-top: 1px solid #333;"
         )
 
     def _scale_overlay(self, scale_u: float, scale_v: float) -> None:
