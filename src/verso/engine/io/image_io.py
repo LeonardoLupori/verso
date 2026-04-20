@@ -18,6 +18,7 @@ or pass an explicit ``scale`` argument to :func:`ensure_working_copy`.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import numpy as np
@@ -28,6 +29,23 @@ import numpy as np
 # Change this constant or pass an explicit scale to ensure_working_copy().
 WORKING_SCALE: float = 0.2
 FILMSTRIP_MAX_SIDE = 150
+
+
+def parse_section_serial_number(path: str | Path, fallback: int) -> int:
+    """Extract the absolute section number from a microscopy filename.
+
+    VERSO expects names such as ``MOUSE_123_CODEs.tif`` where the section number
+    is the first underscore-delimited numeric field. If no such field exists,
+    callers can fall back to list order.
+    """
+    stem = Path(path).stem
+    match = re.match(r"^[^_]+_(\d+)(?:_|$)", stem)
+    if match:
+        return int(match.group(1))
+    match = re.search(r"(?:^|_)(\d+)(?:_|$)", stem)
+    if match:
+        return int(match.group(1))
+    return fallback
 
 
 # ---------------------------------------------------------------------------

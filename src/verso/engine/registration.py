@@ -324,6 +324,24 @@ def quicknii_coronal_series_anchorings(
     if not image_sizes:
         return []
 
+    order = sorted(range(len(serial_numbers)), key=lambda i: (serial_numbers[i], i))
+    if order != list(range(len(serial_numbers))):
+        sorted_anchorings = quicknii_coronal_series_anchorings(
+            image_sizes=[image_sizes[i] for i in order],
+            serial_numbers=[serial_numbers[i] for i in order],
+            atlas_shape=atlas_shape,
+            stored_anchorings=(
+                [stored_anchorings[i] for i in order]
+                if stored_anchorings is not None
+                else None
+            ),
+            reverse_ap=reverse_ap,
+        )
+        restored: list[list[float] | None] = [None] * len(serial_numbers)
+        for sorted_idx, original_idx in enumerate(order):
+            restored[original_idx] = sorted_anchorings[sorted_idx]
+        return [anchoring for anchoring in restored if anchoring is not None]
+
     ap_dim, dv_dim, lr_dim = atlas_shape
     max_w = max(w for w, _ in image_sizes)
     max_h = max(h for _, h in image_sizes)

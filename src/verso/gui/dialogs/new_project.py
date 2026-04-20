@@ -34,6 +34,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from verso.engine.io.image_io import parse_section_serial_number
 from verso.engine.model.alignment import Alignment, AlignmentStatus, WarpState
 from verso.engine.model.project import AtlasRef, Project, Section
 
@@ -198,7 +199,7 @@ class NewProjectDialog(QDialog):
             sections.append(
                 Section(
                     id=section_id,
-                    serial_number=i + 1,
+                    serial_number=parse_section_serial_number(orig_path, fallback=i + 1),
                     original_path=orig_path,
                     thumbnail_path=str(folder_path / "thumbnails" / f"{section_id}.png"),
                     alignment=Alignment(status=AlignmentStatus.NOT_STARTED),

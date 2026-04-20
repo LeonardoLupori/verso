@@ -225,6 +225,24 @@ def test_quicknii_coronal_series_can_reverse_ap_proposal():
     np.testing.assert_allclose([c[1] for c in centers], [0.0, 263.5, 527.0])
 
 
+def test_quicknii_coronal_series_uses_serial_numbers_not_list_indices():
+    anchorings = quicknii_coronal_series_anchorings(
+        image_sizes=[(1000, 800), (1000, 800), (1000, 800)],
+        serial_numbers=[30, 10, 20],
+        atlas_shape=(528, 320, 456),
+    )
+
+    centers_by_serial = {}
+    for serial, anchoring in zip([30, 10, 20], anchorings):
+        o, u, v = anchoring_to_vectors(anchoring)
+        centers_by_serial[serial] = o + u / 2 + v / 2
+
+    np.testing.assert_allclose(
+        [centers_by_serial[n][1] for n in [10, 20, 30]],
+        [527.0, 263.5, 0.0],
+    )
+
+
 # ---------------------------------------------------------------------------
 # make_atlas_sample_grid
 # ---------------------------------------------------------------------------

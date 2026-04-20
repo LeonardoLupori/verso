@@ -329,12 +329,6 @@ class AlignView(QWidget):
         self._reverse_btn.setEnabled(enabled)
 
     def load_section(self, section: Section | None) -> None:
-        # Discard any un-stored adjustments from the outgoing section so they
-        # don't accumulate across navigation events (matches QuickNII behaviour).
-        if (self._section is not None
-                and self._section.alignment.status != AlignmentStatus.COMPLETE):
-            self._section.alignment.anchoring = [0.0] * 9
-
         self._section = section
         self._raw_image = None
         self._canvas.clear()
