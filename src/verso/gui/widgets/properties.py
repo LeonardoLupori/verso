@@ -15,10 +15,9 @@ from PyQt6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QLabel,
-    QPushButton,
     QScrollArea,
-    QSlider,
     QSizePolicy,
+    QSlider,
     QSpinBox,
     QStackedWidget,
     QVBoxLayout,
@@ -143,7 +142,6 @@ class _AlignProperties(QWidget):
 
     opacity_changed = pyqtSignal(float)
     ap_changed = pyqtSignal(float)
-    rotation_changed = pyqtSignal(float, float, float)
     cp_style_changed = pyqtSignal(int, str, str)  # size, shape, color
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -219,27 +217,6 @@ class _AlignProperties(QWidget):
         ap_box_layout.addWidget(self._ap_plot)
         align_layout.addWidget(ap_box)
 
-        # Rotation
-        rot_box = QGroupBox("Rotation (deg)")
-        rot_layout = QFormLayout(rot_box)
-        self._roll_spin = QDoubleSpinBox()
-        self._tilt_dv_spin = QDoubleSpinBox()
-        self._tilt_ap_spin = QDoubleSpinBox()
-        for spin, label in [
-            (self._roll_spin, "Roll:"),
-            (self._tilt_dv_spin, "Tilt DV:"),
-            (self._tilt_ap_spin, "Tilt AP:"),
-        ]:
-            spin.setRange(-180.0, 180.0)
-            spin.setSingleStep(0.1)
-            spin.setSuffix("\u00b0")
-            spin.setDecimals(2)
-            rot_layout.addRow(label, spin)
-        self._roll_spin.valueChanged.connect(self._emit_rotation)
-        self._tilt_dv_spin.valueChanged.connect(self._emit_rotation)
-        self._tilt_ap_spin.valueChanged.connect(self._emit_rotation)
-        align_layout.addWidget(rot_box)
-
         layout.addWidget(self._align_widget)
 
         # ── Warp sub-mode widgets ─────────────────────────────────────
@@ -273,13 +250,6 @@ class _AlignProperties(QWidget):
         self._warp_widget.setVisible(False)
 
         layout.addStretch()
-
-    def _emit_rotation(self) -> None:
-        self.rotation_changed.emit(
-            self._roll_spin.value(),
-            self._tilt_dv_spin.value(),
-            self._tilt_ap_spin.value(),
-        )
 
     def _emit_cp_style(self) -> None:
         self.cp_style_changed.emit(
@@ -341,18 +311,24 @@ class _AlignProperties(QWidget):
                 continue
             s = section.alignment.status
             if s == AlignmentStatus.COMPLETE:
-                x_complete.append(ap); y_complete.append(i)
+                x_complete.append(ap)
+                y_complete.append(i)
             elif s == AlignmentStatus.IN_PROGRESS:
-                x_progress.append(ap); y_progress.append(i)
+                x_progress.append(ap)
+                y_progress.append(i)
             else:
-                x_none.append(ap); y_none.append(i)
+                x_none.append(ap)
+                y_none.append(i)
 
-        _add_scatter = lambda xs, ys, color, size=6: pi.addItem(
-            pg.ScatterPlotItem(
-                x=xs, y=ys, symbol="o", size=size,
-                brush=pg.mkBrush(*color), pen=pg.mkPen(None),
+        def _add_scatter(xs, ys, color, size=6) -> None:
+            if not xs:
+                return
+            pi.addItem(
+                pg.ScatterPlotItem(
+                    x=xs, y=ys, symbol="o", size=size,
+                    brush=pg.mkBrush(*color), pen=pg.mkPen(None),
+                )
             )
-        ) if xs else None
 
         _add_scatter(x_none,     y_none,     (130, 130, 130, 180))
         _add_scatter(x_progress, y_progress, (255, 193,   7, 220))
@@ -375,7 +351,6 @@ class PropertiesPanel(QWidget):
     flip_h_changed = pyqtSignal(bool)
     opacity_changed = pyqtSignal(float)
     ap_changed = pyqtSignal(float)
-    rotation_changed = pyqtSignal(float, float, float)
     cp_style_changed = pyqtSignal(int, str, str)  # size, shape, color
 
     _MODES = ("overview", "prep", "align")
@@ -399,7 +374,6 @@ class PropertiesPanel(QWidget):
         self._prep_page.flip_h_changed.connect(self.flip_h_changed)
         self._align_page.opacity_changed.connect(self.opacity_changed)
         self._align_page.ap_changed.connect(self.ap_changed)
-        self._align_page.rotation_changed.connect(self.rotation_changed)
         self._align_page.cp_style_changed.connect(self.cp_style_changed)
 
         layout.addWidget(self._stack)

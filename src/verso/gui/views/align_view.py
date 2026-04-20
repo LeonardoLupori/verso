@@ -27,6 +27,8 @@ if TYPE_CHECKING:
 _SCALE_STEP = 1.02
 # Translation per click in atlas voxels (~625 µm for Allen 25 µm atlas)
 _MOVE_STEP = 5
+# In-plane rotation per click, in degrees.
+_ROTATE_STEP_DEG = 1.0
 
 
 class AlignView(QWidget):
@@ -203,6 +205,31 @@ class AlignView(QWidget):
             h.addWidget(btn)
             self._move_btns.append(btn)
 
+        h.addSpacing(8)
+
+        # Rotation buttons for the three atlas-plane axes.
+        rotate_specs = [
+            ("⟲R", "Roll clockwise (1°)", "roll", -_ROTATE_STEP_DEG),
+            ("R⟳", "Roll counter-clockwise (1°)", "roll", +_ROTATE_STEP_DEG),
+            ("⟲DV", "Tilt DV negative (1°)", "tilt_dv", -_ROTATE_STEP_DEG),
+            ("DV⟳", "Tilt DV positive (1°)", "tilt_dv", +_ROTATE_STEP_DEG),
+            ("⟲AP", "Tilt AP negative (1°)", "tilt_ap", -_ROTATE_STEP_DEG),
+            ("AP⟳", "Tilt AP positive (1°)", "tilt_ap", +_ROTATE_STEP_DEG),
+        ]
+        self._rotate_btns: list[QPushButton] = []
+        for i, (sym, tip, axis, step) in enumerate(rotate_specs):
+            if i % 2 == 0 and i > 0:
+                h.addSpacing(4)
+            btn = QPushButton(sym)
+            btn.setFixedHeight(28)
+            btn.setFixedWidth(48)
+            btn.setToolTip(tip)
+            btn.setStyleSheet(_scale_css)
+            btn.setEnabled(False)
+            btn.clicked.connect(lambda _, a=axis, s=step: self._rotate_plane(a, s))
+            h.addWidget(btn)
+            self._rotate_btns.append(btn)
+
         h.addStretch()
 
         # Series / Store / Clear
@@ -310,7 +337,7 @@ class AlignView(QWidget):
         self._store_btn.setEnabled(False)
         self._clear_btn.setEnabled(False)
         self._region_bar.setText("")
-        for btn in self._scale_btns + self._move_btns:
+        for btn in self._scale_btns + self._move_btns + self._rotate_btns:
             btn.setEnabled(False)
         if section is None:
             self._status_label.setText("No section loaded")
@@ -336,7 +363,7 @@ class AlignView(QWidget):
             v != 0.0 for v in section.alignment.anchoring
         )
         self._clear_btn.setEnabled(has_anchoring)
-        for btn in self._scale_btns + self._move_btns:
+        for btn in self._scale_btns + self._move_btns + self._rotate_btns:
             btn.setEnabled(True)
 
     def _display_image(self) -> None:
@@ -506,6 +533,52 @@ class AlignView(QWidget):
             return
         new_anchoring = list(anchoring)
         new_anchoring[axis] += delta
+        self._section.alignment.anchoring = new_anchoring
+        if self._atlas is not None:
+            self._section.alignment.ap_position_mm = self._atlas.ap_voxel_to_mm(new_anchoring[1])
+        self._update_overlay()
+        self.anchoring_changed.emit(new_anchoring)
+
+    def _rotate_plane(self, axis: str, degrees: float) -> None:
+        """Rotate the atlas plane around one of the toolbar rotation axes."""
+        if self._section is None or self._raw_image is None:
+            return
+        anchoring = self._section.alignment.anchoring
+        if not anchoring or all(v == 0.0 for v in anchoring):
+            return
+
+        import math
+
+        import numpy as np
+
+        from verso.engine.registration import anchoring_to_vectors, vectors_to_anchoring
+
+        def rot_around(vec, rot_axis, deg):
+            angle = math.radians(deg)
+            c, s = math.cos(angle), math.sin(angle)
+            k = rot_axis / np.linalg.norm(rot_axis)
+            return c * vec + s * np.cross(k, vec) + (1.0 - c) * np.dot(k, vec) * k
+
+        o, u, v = anchoring_to_vectors(anchoring)
+        center = o + u / 2.0 + v / 2.0
+        u_n = u / np.linalg.norm(u)
+        v_n = v / np.linalg.norm(v)
+        n = np.cross(u_n, v_n)
+
+        if axis == "roll":
+            u_new = rot_around(u, n, degrees)
+            v_new = rot_around(v, n, degrees)
+        elif axis == "tilt_dv":
+            u_new = u
+            v_new = rot_around(v, u_n, degrees)
+        elif axis == "tilt_ap":
+            u_new = rot_around(u, v_n, degrees)
+            v_new = v
+        else:
+            return
+
+        new_o = center - u_new / 2.0 - v_new / 2.0
+        new_anchoring = vectors_to_anchoring(new_o, u_new, v_new)
         self._section.alignment.anchoring = new_anchoring
         if self._atlas is not None:
             self._section.alignment.ap_position_mm = self._atlas.ap_voxel_to_mm(new_anchoring[1])

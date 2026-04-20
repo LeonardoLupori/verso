@@ -56,7 +56,6 @@ class MainWindow(QMainWindow):
 
         self._state = AppState(self)
         self._current_mode = "overview"
-        self._rot_base_anchoring: list[float] | None = None
         self._reverse_ap_proposal = False
 
         self._build_menu()
@@ -211,7 +210,6 @@ class MainWindow(QMainWindow):
         self._props.flip_h_changed.connect(self._on_flip_h_changed)
         self._props.opacity_changed.connect(self._on_opacity_changed)
         self._props.ap_changed.connect(self._on_ap_changed)
-        self._props.rotation_changed.connect(self._on_rotation_changed)
 
         # AlignView navigator + store/clear + sub-mode
         self._align.anchoring_changed.connect(self._on_anchoring_changed)
@@ -358,7 +356,6 @@ class MainWindow(QMainWindow):
     def _on_section_changed(self, index: int) -> None:
         section = self._state.current_section
         self._filmstrip.set_current(index)
-        self._rot_base_anchoring = None
 
         if self._current_mode == "prep":
             self._prep.load_section(section)
@@ -400,7 +397,6 @@ class MainWindow(QMainWindow):
         atlas = self._state.atlas
         if section is None:
             return
-        self._rot_base_anchoring = None  # AP position change resets rotation baseline
         section.alignment.ap_position_mm = ap_mm
         if atlas is not None:
             from verso.engine.registration import set_ap_position
@@ -416,50 +412,8 @@ class MainWindow(QMainWindow):
         self._update_ap_plot()
         self._update_reverse_order_enabled()
 
-    def _on_rotation_changed(self, roll_deg: float, tilt_dv_deg: float, tilt_ap_deg: float) -> None:
-        section = self._state.current_section
-        atlas = self._state.atlas
-        if section is None or atlas is None:
-            return
-        import math
-
-        import numpy as np
-
-        from verso.engine.registration import anchoring_to_vectors, vectors_to_anchoring
-
-        # Work from the stored pre-rotation anchoring so spinbox values are absolute angles
-        if not hasattr(self, "_rot_base_anchoring") or self._rot_base_anchoring is None:
-            anchoring = section.alignment.anchoring
-            if not anchoring or all(v == 0.0 for v in anchoring):
-                raw_img = self._align._raw_image
-                aspect = (raw_img.shape[1] / raw_img.shape[0]) if raw_img is not None else 1.0
-                anchoring = atlas.default_anchoring(aspect_ratio=aspect)
-            self._rot_base_anchoring = list(anchoring)
-
-        o, u, v = anchoring_to_vectors(self._rot_base_anchoring)
-        center = o + u / 2.0 + v / 2.0
-
-        def rot_around(vec, axis, deg):
-            a = math.radians(deg)
-            c, s = math.cos(a), math.sin(a)
-            k = axis / np.linalg.norm(axis)
-            return c * vec + s * np.cross(k, vec) + (1 - c) * np.dot(k, vec) * k
-
-        u_n = u / np.linalg.norm(u)
-        v_n = v / np.linalg.norm(v)
-        n = np.cross(u_n, v_n)
-        # Roll around plane normal, then tilt around the (original) u and v axes
-        u_new = rot_around(rot_around(u, n, roll_deg), v_n, tilt_ap_deg)
-        v_new = rot_around(rot_around(v, n, roll_deg), u_n, tilt_dv_deg)
-        # Pivot around center so the cut center stays fixed
-        new_o = center - u_new / 2.0 - v_new / 2.0
-        section.alignment.anchoring = vectors_to_anchoring(new_o, u_new, v_new)
-        self._align.update_overlay()
-        self._overview.refresh_row(self._state.section_index)
-
     def _on_anchoring_changed(self, anchoring: list[float]) -> None:
         """Navigator panel changed the cut origin — sync AP spinbox."""
-        self._rot_base_anchoring = None
         atlas = self._state.atlas
         if atlas is not None:
             ap_mm = atlas.ap_voxel_to_mm(anchoring[1])
@@ -477,7 +431,6 @@ class MainWindow(QMainWindow):
             return
         self._initialize_quicknii_anchorings(project.sections)
         self._sync_ap_mm(project.sections)
-        self._rot_base_anchoring = None
         self._align.update_overlay()
         for i in range(len(project.sections)):
             self._overview.refresh_row(i)
