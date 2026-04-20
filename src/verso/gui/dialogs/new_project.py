@@ -54,6 +54,7 @@ class NewProjectDialog(QDialog):
         self.setWindowTitle("New Project")
         self.setMinimumWidth(560)
         self._project: Project | None = None
+        self._project_path: Path | None = None
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -210,11 +211,12 @@ class NewProjectDialog(QDialog):
             atlas=AtlasRef(name=atlas),
             sections=sections,
         )
-        self._project.save(folder_path / "project.json")
+        self._project_path = folder_path / "project.json"
+        self._project.save(self._project_path)
 
         # Generate working-resolution thumbnails now so all views load quickly.
         self._generate_thumbnails(self._project.sections)
-        self._project.save(folder_path / "project.json")
+        self._project.save(self._project_path)
 
         self.accept()
 
@@ -254,3 +256,6 @@ class NewProjectDialog(QDialog):
 
     def result_project(self) -> Project | None:
         return self._project
+
+    def result_project_path(self) -> Path | None:
+        return self._project_path

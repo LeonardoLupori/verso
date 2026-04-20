@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
@@ -37,9 +38,10 @@ class AppState(QObject):
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
-        self._project: "Project | None" = None
+        self._project: Project | None = None
+        self._project_path: Path | None = None
         self._section_index: int = 0
-        self._atlas: "AtlasVolume | None" = None
+        self._atlas: AtlasVolume | None = None
         self._atlas_thread: QThread | None = None
 
     # ------------------------------------------------------------------
@@ -47,14 +49,22 @@ class AppState(QObject):
     # ------------------------------------------------------------------
 
     @property
-    def project(self) -> "Project | None":
+    def project(self) -> Project | None:
         return self._project
 
-    def load_project(self, project: "Project") -> None:
+    @property
+    def project_path(self) -> Path | None:
+        return self._project_path
+
+    def load_project(self, project: Project, path: Path | None = None) -> None:
         self._project = project
+        self._project_path = path
         self._section_index = 0
         self.project_changed.emit()
         self.section_changed.emit(0)
+
+    def set_project_path(self, path: Path | None) -> None:
+        self._project_path = path
 
     # ------------------------------------------------------------------
     # Section selection
@@ -65,7 +75,7 @@ class AppState(QObject):
         return self._section_index
 
     @property
-    def current_section(self) -> "Section | None":
+    def current_section(self) -> Section | None:
         if self._project is None or not self._project.sections:
             return None
         return self._project.sections[self._section_index]
@@ -83,7 +93,7 @@ class AppState(QObject):
     # ------------------------------------------------------------------
 
     @property
-    def atlas(self) -> "AtlasVolume | None":
+    def atlas(self) -> AtlasVolume | None:
         return self._atlas
 
     def load_atlas(self, atlas_name: str) -> None:
@@ -109,6 +119,6 @@ class AppState(QObject):
         self._loader = loader   # keep reference alive
         thread.start()
 
-    def _on_atlas_loaded(self, atlas: "AtlasVolume") -> None:
+    def _on_atlas_loaded(self, atlas: AtlasVolume) -> None:
         self._atlas = atlas
         self.atlas_changed.emit()

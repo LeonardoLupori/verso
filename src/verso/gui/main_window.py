@@ -102,6 +102,11 @@ class MainWindow(QMainWindow):
         act_save.triggered.connect(self._save_project)
         file_menu.addAction(act_save)
 
+        act_save_as = QAction("Save project &as…", self)
+        act_save_as.setShortcut(QKeySequence.StandardKey.SaveAs)
+        act_save_as.triggered.connect(self._save_project_as)
+        file_menu.addAction(act_save_as)
+
         file_menu.addSeparator()
 
         act_export_qn_xml = QAction("Export QuickNII &XML…", self)
@@ -267,8 +272,9 @@ class MainWindow(QMainWindow):
         )
         if path:
             try:
-                project = Project.load(Path(path))
-                self._state.load_project(project)
+                project_path = Path(path)
+                project = Project.load(project_path)
+                self._state.load_project(project, project_path)
             except Exception as exc:
                 from PyQt6.QtWidgets import QMessageBox
                 QMessageBox.critical(self, "Cannot open project", str(exc))
@@ -278,7 +284,7 @@ class MainWindow(QMainWindow):
         if dlg.exec() == NewProjectDialog.DialogCode.Accepted:
             project = dlg.result_project()
             if project is not None:
-                self._state.load_project(project)
+                self._state.load_project(project, dlg.result_project_path())
 
     def _open_quicknii(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -299,11 +305,36 @@ class MainWindow(QMainWindow):
     def _save_project(self) -> None:
         if self._state.project is None:
             return
+        if self._state.project_path is None:
+            self._save_project_as()
+            return
+        self._write_project(self._state.project_path)
+
+    def _save_project_as(self) -> None:
+        if self._state.project is None:
+            return
+        current_path = self._state.project_path
+        suggested = str(current_path) if current_path is not None else "project.json"
         path, _ = QFileDialog.getSaveFileName(
-            self, "Save Project JSON", "project.json", "JSON files (*.json)"
+            self, "Save Project As", suggested, "JSON files (*.json)"
         )
         if path:
-            self._state.project.save(Path(path))
+            project_path = Path(path)
+            if project_path.suffix == "":
+                project_path = project_path.with_suffix(".json")
+            self._write_project(project_path)
+            self._state.set_project_path(project_path)
+
+    def _write_project(self, path: Path) -> None:
+        project = self._state.project
+        if project is None:
+            return
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            project.save(path)
+            self.statusBar().showMessage(f"Saved project to {path}", 3000)
+        except Exception as exc:
+            QMessageBox.critical(self, "Cannot save project", str(exc))
 
     # ------------------------------------------------------------------
     # Slots — state changes

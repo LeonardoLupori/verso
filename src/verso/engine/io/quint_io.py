@@ -108,6 +108,25 @@ def _control_points_to_markers(
 # Public load functions
 # ---------------------------------------------------------------------------
 
+# NOTE — flip correction on import (not yet implemented)
+# The three save functions apply _flip_anchoring / _flip_control_points when
+# section.preprocessing.flip_horizontal is True, so exported files always
+# contain coordinates in the original (unflipped) image space.
+#
+# The inverse is NOT yet applied on load.  This means that if a user:
+#   1. sets flip_horizontal=True on a section in VERSO,
+#   2. exports to QuickNII/VisuAlign JSON,
+#   3. re-imports that JSON into VERSO,
+# the loaded anchoring will be in original-image space while VERSO expects it in
+# flipped-display space, so the overlay will appear mirror-reversed.
+#
+# To fix this, load_quicknii / load_visualign would need to know which sections
+# are flipped (information not present in the QuickNII/VisuAlign JSON itself)
+# and call _flip_anchoring / _flip_control_points on load.  The natural place to
+# apply this is after the section's flip flag has been resolved — either by
+# carrying the flag in a VERSO-specific JSON field or by asking the user to
+# re-apply the flip after import.
+
 def load_quicknii(path: Path, atlas_name: str = "allen_mouse_25um") -> Project:
     """Load a QuickNII JSON file into a VERSO :class:`Project`.
 
@@ -206,6 +225,37 @@ def load_deepslice(path: Path, atlas_name: str = "allen_mouse_25um") -> Project:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+def _flip_anchoring(anchoring: list[float]) -> list[float]:
+    """Convert anchoring from horizontally-flipped display space to original image space.
+
+    When the section is displayed flipped, the user aligns against s_display = 1 - s_original.
+    The equivalent anchoring for the unflipped image is:
+        o' = o + u,  u' = -u,  v' = v
+    """
+    ox, oy, oz = anchoring[0], anchoring[1], anchoring[2]
+    ux, uy, uz = anchoring[3], anchoring[4], anchoring[5]
+    vx, vy, vz = anchoring[6], anchoring[7], anchoring[8]
+    return [ox + ux, oy + uy, oz + uz, -ux, -uy, -uz, vx, vy, vz]
+
+
+def _flip_control_points(
+    cps: list[ControlPoint],
+) -> list[ControlPoint]:
+    """Convert control points from flipped display space to original image space.
+
+    Both src and dst horizontal coordinates mirror: x' = 1 - x.
+    """
+    return [
+        ControlPoint(
+            src_x=1.0 - cp.src_x,
+            src_y=cp.src_y,
+            dst_x=1.0 - cp.dst_x,
+            dst_y=cp.dst_y,
+        )
+        for cp in cps
+    ]
+
+
 def _registration_dims(section) -> tuple[int, int]:
     """Return registration image dimensions (width, height) in pixels.
 
@@ -260,7 +310,10 @@ def save_quicknii_xml(
             f" width='{w}' height='{h}"
         )
         if section.alignment.anchoring and any(section.alignment.anchoring):
-            a = [round(v, 4) for v in section.alignment.anchoring]
+            anchoring = section.alignment.anchoring
+            if section.preprocessing.flip_horizontal:
+                anchoring = _flip_anchoring(anchoring)
+            a = [round(v, 4) for v in anchoring]
             for prefix, val in zip(prefixes, a):
                 line += f"{prefix}{val}"
         line += "'/>"
@@ -288,7 +341,10 @@ def save_quicknii(project: Project, path: Path) -> None:
             "height": h,
         }
         if section.alignment.anchoring and any(section.alignment.anchoring):
-            entry["anchoring"] = [round(v, 4) for v in section.alignment.anchoring]
+            anchoring = section.alignment.anchoring
+            if section.preprocessing.flip_horizontal:
+                anchoring = _flip_anchoring(anchoring)
+            entry["anchoring"] = [round(v, 4) for v in anchoring]
         slices_out.append(entry)
 
     data: dict[str, Any] = {
@@ -323,10 +379,17 @@ def save_visualign(
             "width": w,
             "height": h,
         }
+        flipped = section.preprocessing.flip_horizontal
         if section.alignment.anchoring and any(section.alignment.anchoring):
-            entry["anchoring"] = [round(v, 4) for v in section.alignment.anchoring]
+            anchoring = section.alignment.anchoring
+            if flipped:
+                anchoring = _flip_anchoring(anchoring)
+            entry["anchoring"] = [round(v, 4) for v in anchoring]
         if section.warp.control_points:
-            entry["markers"] = _control_points_to_markers(section.warp.control_points)
+            cps = section.warp.control_points
+            if flipped:
+                cps = _flip_control_points(cps)
+            entry["markers"] = _control_points_to_markers(cps)
         slices_out.append(entry)
 
     data: dict[str, Any] = {
