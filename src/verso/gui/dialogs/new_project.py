@@ -35,7 +35,7 @@ from PyQt6.QtWidgets import (
 )
 
 from verso.engine.model.alignment import Alignment, AlignmentStatus, WarpState
-from verso.engine.model.project import AtlasRef, Preprocessing, Project, Section
+from verso.engine.model.project import AtlasRef, Project, Section
 
 _KNOWN_ATLASES = [
     "allen_mouse_25um",
@@ -214,14 +214,15 @@ class NewProjectDialog(QDialog):
 
         # Generate working-resolution thumbnails now so all views load quickly.
         self._generate_thumbnails(self._project.sections)
+        self._project.save(folder_path / "project.json")
 
         self.accept()
 
     def _generate_thumbnails(self, sections: list[Section]) -> None:
         """Generate working-resolution PNG thumbnails for all sections."""
-        from PyQt6.QtWidgets import QProgressDialog
         from PyQt6.QtCore import Qt
-        from PyQt6.QtWidgets import QApplication
+        from PyQt6.QtWidgets import QApplication, QProgressDialog
+
         from verso.engine.io.image_io import ensure_working_copy
 
         n = len(sections)

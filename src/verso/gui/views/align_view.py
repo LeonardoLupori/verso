@@ -34,6 +34,7 @@ class AlignView(QWidget):
     anchoring_changed = pyqtSignal(list)
     alignments_updated = pyqtSignal()
     mode_changed = pyqtSignal(str)  # "align" or "warp"
+    reverse_requested = pyqtSignal()
 
     # Pixel distance threshold (in normalised units × display size) for
     # picking an existing control point
@@ -43,7 +44,7 @@ class AlignView(QWidget):
         super().__init__(parent)
         self._section: Section | None = None
         self._raw_image = None
-        self._atlas: "AtlasVolume | None" = None
+        self._atlas: AtlasVolume | None = None
         self._mode = "align"
         self._outline_mode = False
         # Warp interaction state
@@ -114,7 +115,8 @@ class AlignView(QWidget):
             btn.setCheckable(True)
             btn.setFixedHeight(28)
             btn.setStyleSheet(
-                "QPushButton { border-radius: 4px; padding: 2px 12px; color: #ccc; background: #333; }"
+                "QPushButton { border-radius: 4px; padding: 2px 12px; color: #ccc;"
+                " background: #333; }"
                 "QPushButton:checked { background: #1e5a8a; color: #fff; }"
                 "QPushButton:hover { background: #444; }"
             )
@@ -171,7 +173,22 @@ class AlignView(QWidget):
 
         h.addStretch()
 
-        # Store / Clear
+        # Series / Store / Clear
+        self._reverse_btn = QPushButton("Reverse proposal")
+        self._reverse_btn.setFixedHeight(28)
+        self._reverse_btn.setToolTip(
+            "Reverse the initial AP proposal before storing any alignment"
+        )
+        self._reverse_btn.setStyleSheet(
+            "QPushButton { border-radius: 4px; padding: 2px 10px; color: #ccc;"
+            " background: #383838; border: 1px solid #555; }"
+            "QPushButton:hover { background: #484848; }"
+            "QPushButton:disabled { color: #555; background: #2a2a2a; border-color: #333; }"
+        )
+        self._reverse_btn.setEnabled(False)
+        self._reverse_btn.clicked.connect(self.reverse_requested)
+        h.addWidget(self._reverse_btn)
+
         self._store_btn = QPushButton("Store")
         self._store_btn.setFixedHeight(28)
         self._store_btn.setToolTip("Lock current atlas plane to this section")
@@ -226,10 +243,14 @@ class AlignView(QWidget):
     def canvas(self) -> ImageCanvas:
         return self._canvas
 
-    def set_atlas(self, atlas: "AtlasVolume | None") -> None:
+    def set_atlas(self, atlas: AtlasVolume | None) -> None:
         self._atlas = atlas
         self._navigator.set_atlas(atlas)
         self._update_overlay()
+
+    def set_reverse_enabled(self, enabled: bool) -> None:
+        """Enable the series reverse command when no alignment is stored."""
+        self._reverse_btn.setEnabled(enabled)
 
     def load_section(self, section: Section | None) -> None:
         self._section = section
@@ -250,8 +271,9 @@ class AlignView(QWidget):
         import os
         self._status_label.setText(os.path.basename(section.original_path))
 
-        from verso.engine.io.image_io import ensure_working_copy
         from PyQt6.QtWidgets import QMessageBox
+
+        from verso.engine.io.image_io import ensure_working_copy
         try:
             self._raw_image = ensure_working_copy(section)
         except RuntimeError as exc:
@@ -298,7 +320,10 @@ class AlignView(QWidget):
         self._navigator.set_anchoring(anchoring)
 
         h_bg, w_bg = self._raw_image.shape[:2]
-        scale = min(1.0, 512 / max(w_bg, h_bg))
+        # Sample atlas at a capped resolution for speed; canvas stretches it to
+        # fill the background exactly via setRect (no visual quality loss).
+        ATLAS_MAX_SIDE = 512
+        scale = min(1.0, ATLAS_MAX_SIDE / max(w_bg, h_bg))
         out_w = max(1, round(w_bg * scale))
         out_h = max(1, round(h_bg * scale))
 

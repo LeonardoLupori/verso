@@ -6,11 +6,8 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QAbstractItemView,
-    QHBoxLayout,
     QHeaderView,
     QLabel,
-    QPushButton,
-    QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -44,7 +41,6 @@ class OverviewView(QWidget):
 
     section_activated = pyqtSignal(int)   # double-click → open in Prep
     section_selected = pyqtSignal(int)    # single click → update properties
-
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._project: Project | None = None
@@ -144,6 +140,7 @@ class OverviewView(QWidget):
             f"  {total} sections  ·  {complete} complete  ·  {in_progress} in progress"
         )
 
+
     def _fill_row(self, row: int, section: Section) -> None:
         t = self._table
 
@@ -154,15 +151,22 @@ class OverviewView(QWidget):
 
         import os
         t.setItem(row, _COL_SERIAL, cell(str(section.serial_number)))
-        t.setItem(row, _COL_FILE, cell(os.path.basename(section.original_path), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter))
+        file_align = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        t.setItem(
+            row,
+            _COL_FILE,
+            cell(os.path.basename(section.original_path), file_align),
+        )
         ap = section.alignment.ap_position_mm
         t.setItem(row, _COL_AP, cell(f"{ap:.2f}" if ap is not None else "—"))
 
         # Status columns
+        done = AlignmentStatus.COMPLETE
+        not_started = AlignmentStatus.NOT_STARTED
         statuses = [
-            AlignmentStatus.COMPLETE if section.preprocessing.flip_horizontal else AlignmentStatus.NOT_STARTED,
-            AlignmentStatus.COMPLETE if section.preprocessing.slice_mask_path else AlignmentStatus.NOT_STARTED,
-            AlignmentStatus.COMPLETE if section.preprocessing.lr_mask_path else AlignmentStatus.NOT_STARTED,
+            done if section.preprocessing.flip_horizontal else not_started,
+            done if section.preprocessing.slice_mask_path else not_started,
+            done if section.preprocessing.lr_mask_path else not_started,
             section.alignment.status,
             section.warp.status,
         ]
@@ -178,6 +182,9 @@ class OverviewView(QWidget):
             return
         section = self._project.sections[section_index]
         self._fill_row(section_index, section)
+
+    def refresh(self) -> None:
+        self._populate()
 
     def _on_double_click(self, row: int, _col: int) -> None:
         self.section_activated.emit(row)

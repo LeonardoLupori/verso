@@ -22,9 +22,9 @@ from PyQt6.QtGui import QAction, QKeySequence
 from PyQt6.QtWidgets import (
     QDockWidget,
     QFileDialog,
-    QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMessageBox,
     QPushButton,
     QSizePolicy,
     QStackedWidget,
@@ -33,6 +33,7 @@ from PyQt6.QtWidgets import (
 )
 
 from verso.engine.io.quint_io import load_quicknii, load_visualign
+from verso.engine.model.alignment import AlignmentStatus
 from verso.engine.model.project import Project
 from verso.gui.dialogs.new_project import NewProjectDialog
 from verso.gui.state import AppState
@@ -56,6 +57,7 @@ class MainWindow(QMainWindow):
         self._state = AppState(self)
         self._current_mode = "overview"
         self._rot_base_anchoring: list[float] | None = None
+        self._reverse_ap_proposal = False
 
         self._build_menu()
         self._build_toolbar()
@@ -123,12 +125,18 @@ class MainWindow(QMainWindow):
         tb.setMovable(False)
         tb.setFloatable(False)
         tb.setStyleSheet(
-            "QToolBar { background: #2a2a2a; border-bottom: 1px solid #444; spacing: 4px; padding: 4px; }"
+            "QToolBar { background: #2a2a2a; border-bottom: 1px solid #444; "
+            "spacing: 4px; padding: 4px; }"
         )
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, tb)
 
         self._view_buttons: list[QPushButton] = []
-        for label, idx in [("Overview", _VIEW_OVERVIEW), ("Prep", _VIEW_PREP), ("Align / Warp", _VIEW_ALIGN)]:
+        view_specs = [
+            ("Overview", _VIEW_OVERVIEW),
+            ("Prep", _VIEW_PREP),
+            ("Align / Warp", _VIEW_ALIGN),
+        ]
+        for label, idx in view_specs:
             btn = QPushButton(label)
             btn.setCheckable(True)
             btn.setFixedHeight(28)
@@ -205,6 +213,7 @@ class MainWindow(QMainWindow):
         self._align.anchoring_changed.connect(self._on_anchoring_changed)
         self._align.alignments_updated.connect(self._on_alignments_updated)
         self._align.mode_changed.connect(self._props.set_align_warp_mode)
+        self._align.reverse_requested.connect(self._reverse_section_order)
 
     # ------------------------------------------------------------------
     # View switching
@@ -225,12 +234,19 @@ class MainWindow(QMainWindow):
         # Sync the newly visible view with the current section
         section = self._state.current_section
         if self._current_mode == "prep":
-            self._prep.refresh_display() if self._prep._section is section else self._prep.load_section(section)
+            if self._prep._section is section:
+                self._prep.refresh_display()
+            else:
+                self._prep.load_section(section)
         elif self._current_mode == "align":
-            self._align.refresh_display() if self._align._section is section else self._align.load_section(section)
+            if self._align._section is section:
+                self._align.refresh_display()
+            else:
+                self._align.load_section(section)
 
         # Refresh properties with current section
         self._refresh_properties()
+        self._update_reverse_order_enabled()
 
     # ------------------------------------------------------------------
     # Project loading
@@ -238,7 +254,10 @@ class MainWindow(QMainWindow):
 
     def _open_project(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
-            self, "Open VERSO Project", "", "VERSO project (project.json);;JSON files (*.json);;All files (*)"
+            self,
+            "Open VERSO Project",
+            "",
+            "VERSO project (project.json);;JSON files (*.json);;All files (*)",
         )
         if path:
             try:
@@ -290,6 +309,8 @@ class MainWindow(QMainWindow):
             self._project_label.setText("")
             return
 
+        self._reverse_ap_proposal = False
+
         # Propagate any stored anchorings to neighbours on load
         from verso.engine.registration import interpolate_anchorings
         interpolate_anchorings(project.sections)
@@ -298,6 +319,7 @@ class MainWindow(QMainWindow):
         self._project_label.setText(project.name)
         self._overview.load_project(project)
         self._filmstrip.populate(project.sections)
+        self._update_reverse_order_enabled()
 
         if project.atlas:
             self._props.set_atlas_name(project.atlas.name)
@@ -314,8 +336,11 @@ class MainWindow(QMainWindow):
             self._props.set_ap_range(0.0, atlas.ap_extent_mm)
             project = self._state.project
             if project is not None:
+                self._initialize_quicknii_anchorings(project.sections)
                 self._sync_ap_mm(project.sections)
+                self._align.update_overlay()
                 self._update_ap_plot()
+                self._update_reverse_order_enabled()
 
     def _on_atlas_error(self, message: str) -> None:
         from PyQt6.QtWidgets import QMessageBox
@@ -381,6 +406,7 @@ class MainWindow(QMainWindow):
             self._align.update_overlay()
         self._overview.refresh_row(self._state.section_index)
         self._update_ap_plot()
+        self._update_reverse_order_enabled()
 
     def _on_rotation_changed(self, roll_deg: float, tilt_dv_deg: float, tilt_ap_deg: float) -> None:
         section = self._state.current_section
@@ -388,7 +414,9 @@ class MainWindow(QMainWindow):
         if section is None or atlas is None:
             return
         import math
+
         import numpy as np
+
         from verso.engine.registration import anchoring_to_vectors, vectors_to_anchoring
 
         # Work from the stored pre-rotation anchoring so spinbox values are absolute angles
@@ -447,6 +475,56 @@ class MainWindow(QMainWindow):
         for i in range(len(project.sections)):
             self._overview.refresh_row(i)
         self._update_ap_plot()
+        self._update_reverse_order_enabled()
+
+    def _reverse_section_order(self) -> None:
+        """Reverse the startup AP proposal before any alignment is stored."""
+        project = self._state.project
+        if project is None or len(project.sections) < 2:
+            return
+
+        has_stored_alignment = any(
+            section.alignment.status == AlignmentStatus.COMPLETE
+            for section in project.sections
+        )
+        if has_stored_alignment:
+            QMessageBox.information(
+                self,
+                "Cannot reverse proposal",
+                "The startup proposal can only be reversed before any alignment is stored.",
+            )
+            return
+
+        self._reverse_ap_proposal = not self._reverse_ap_proposal
+        for section in project.sections:
+            section.alignment.anchoring = [0.0] * 9
+            section.alignment.ap_position_mm = None
+            section.alignment.status = AlignmentStatus.NOT_STARTED
+            section.warp.control_points.clear()
+            section.warp.status = AlignmentStatus.NOT_STARTED
+
+        self._initialize_quicknii_anchorings(project.sections)
+        self._sync_ap_mm(project.sections)
+
+        self._overview.refresh()
+        self._on_section_changed(self._state.section_index)
+        self._update_ap_plot()
+        self._update_reverse_order_enabled()
+
+    def _update_reverse_order_enabled(self) -> None:
+        project = self._state.project
+        if project is None:
+            self._align.set_reverse_enabled(False)
+            return
+        has_stored_alignment = any(
+            section.alignment.status == AlignmentStatus.COMPLETE
+            for section in project.sections
+        )
+        self._align.set_reverse_enabled(
+            self._state.atlas is not None
+            and len(project.sections) > 1
+            and not has_stored_alignment
+        )
 
     def _sync_ap_mm(self, sections: list) -> None:
         """Populate ap_position_mm for every section that has a valid anchoring."""
@@ -460,6 +538,53 @@ class MainWindow(QMainWindow):
                 section.alignment.ap_position_mm = atlas.ap_voxel_to_mm(
                     section.alignment.anchoring[1]
                 )
+
+    def _initialize_quicknii_anchorings(self, sections: list) -> None:
+        """Initialize empty section planes with QuickNII-compatible stretch."""
+        atlas = self._state.atlas
+        if atlas is None:
+            return
+
+        from verso.engine.io.image_io import registration_dimensions
+        from verso.engine.model.alignment import AlignmentStatus
+        from verso.engine.registration import quicknii_coronal_series_anchorings
+
+        usable = []
+        for section in sections:
+            try:
+                w, h = registration_dimensions(section)
+            except Exception:
+                continue
+            if w > 0 and h > 0:
+                usable.append((section, w, h))
+
+        if not usable:
+            return
+
+        stored_anchorings = [
+            section.alignment.anchoring
+            if section.alignment.status == AlignmentStatus.COMPLETE
+            and section.alignment.anchoring
+            and any(v != 0.0 for v in section.alignment.anchoring)
+            else None
+            for section, _, _ in usable
+        ]
+        propagated = quicknii_coronal_series_anchorings(
+            image_sizes=[(w, h) for _, w, h in usable],
+            serial_numbers=[section.serial_number for section, _, _ in usable],
+            atlas_shape=atlas.shape,
+            stored_anchorings=stored_anchorings,
+            reverse_ap=self._reverse_ap_proposal,
+        )
+
+        for (section, _, _), anchoring, stored in zip(
+            usable, propagated, stored_anchorings
+        ):
+            if stored is not None:
+                continue
+            section.alignment.anchoring = anchoring
+            if section.alignment.status == AlignmentStatus.NOT_STARTED:
+                section.alignment.status = AlignmentStatus.IN_PROGRESS
 
     def _update_ap_plot(self) -> None:
         project = self._state.project

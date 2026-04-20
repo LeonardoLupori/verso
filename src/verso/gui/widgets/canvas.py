@@ -170,8 +170,12 @@ class ImageCanvas(QWidget):
     ) -> None:
         """Set the atlas overlay (H×W×4 RGBA uint8, or None to hide).
 
-        display_w / display_h: scene dimensions the overlay should fill.
-        When provided the overlay is stretched to cover the background exactly.
+        Args:
+            image: RGBA overlay array, or None to clear.
+            display_w / display_h: If provided, the overlay is scaled via
+                ``setRect`` to fill exactly this region in image-pixel coords
+                (allows the overlay to be sampled at a lower resolution for
+                performance while still covering the full background).
         """
         if image is None:
             self.overlay_item.clear()
