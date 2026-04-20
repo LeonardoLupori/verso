@@ -48,6 +48,11 @@ def parse_section_serial_number(path: str | Path, fallback: int) -> int:
     return fallback
 
 
+def thumbnail_filename(path: str | Path) -> str:
+    """Return the working-thumbnail filename for a source image path."""
+    return f"{Path(path).stem}-thumb.png"
+
+
 # ---------------------------------------------------------------------------
 # Low-level loaders
 # ---------------------------------------------------------------------------

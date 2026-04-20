@@ -1,3 +1,9 @@
 .venv/
 __pycache__/
 *.pyc
+.pytest_cache/
+.tmp/
+tmp_pytest/
+*.png
+QuickNII-master*
+Visualign-master*

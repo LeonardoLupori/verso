@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QPixmap
 from PyQt6.QtWidgets import (
     QHBoxLayout,
@@ -199,7 +199,17 @@ class Filmstrip(QWidget):
         self._highlight(index)
         self._current = index
         if 0 <= index < len(self._buttons):
-            self._scroll.ensureWidgetVisible(self._buttons[index])
+            QTimer.singleShot(0, lambda idx=index: self._center_on_index(idx))
+
+    def _center_on_index(self, index: int) -> None:
+        if not (0 <= index < len(self._buttons)):
+            return
+        btn = self._buttons[index]
+        bar = self._scroll.horizontalScrollBar()
+        viewport_w = self._scroll.viewport().width()
+        button_center = btn.x() + btn.width() // 2
+        target = button_center - viewport_w // 2
+        bar.setValue(max(bar.minimum(), min(bar.maximum(), target)))
 
     def _highlight(self, index: int) -> None:
         for i, btn in enumerate(self._buttons):
