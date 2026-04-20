@@ -50,6 +50,10 @@ class AlignView(QWidget):
         # Warp interaction state
         self._cp_hovered: int = -1    # index of CP under cursor (-1 = none)
         self._cp_dragging: int = -1   # index of CP currently being dragged
+        # CP style (synced from properties panel)
+        self._cp_size = 10
+        self._cp_shape = "Circle"
+        self._cp_color = "Orange"
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -216,6 +220,20 @@ class AlignView(QWidget):
         self._clear_btn.clicked.connect(self._clear_anchoring)
         h.addWidget(self._clear_btn)
 
+        self._clear_cps_btn = QPushButton("Clear CPs")
+        self._clear_cps_btn.setFixedHeight(28)
+        self._clear_cps_btn.setToolTip("Remove all warp control points from this section")
+        self._clear_cps_btn.setStyleSheet(
+            "QPushButton { border-radius: 4px; padding: 2px 10px; color: #ccc;"
+            " background: #5a2a2a; }"
+            "QPushButton:hover { background: #6a3a3a; }"
+            "QPushButton:disabled { color: #666; background: #333; }"
+        )
+        self._clear_cps_btn.setEnabled(False)
+        self._clear_cps_btn.setVisible(False)
+        self._clear_cps_btn.clicked.connect(self._clear_all_cps)
+        h.addWidget(self._clear_cps_btn)
+
         self._status_label = QLabel("No section loaded")
         self._status_label.setStyleSheet("color: #888; font-size: 11px; padding-left: 8px;")
         h.addWidget(self._status_label)
@@ -229,6 +247,11 @@ class AlignView(QWidget):
         is_align = (mode == "align")
         for btn in self._scale_btns:
             btn.setVisible(is_align)
+        self._reverse_btn.setVisible(is_align)
+        self._store_btn.setVisible(is_align)
+        self._clear_btn.setVisible(is_align)
+        self._clear_cps_btn.setVisible(not is_align)
+        self._update_clear_cps_enabled()
         self._update_overlay()
         self.mode_changed.emit(mode)
 
@@ -353,11 +376,18 @@ class AlignView(QWidget):
         # Draw control points in warp mode
         if self._mode == "warp":
             dst_pts = [(cp.dst_x, cp.dst_y) for cp in cps]
+            src_pts = [(cp.src_x, cp.src_y) for cp in cps]
             self._canvas.set_control_points(
-                dst_pts, w_bg, h_bg, self._cp_hovered
+                dst_pts, w_bg, h_bg, self._cp_hovered,
+                cp_size=self._cp_size,
+                cp_shape=self._cp_shape,
+                cp_color=self._cp_color,
+                src_pts=src_pts,
             )
         else:
             self._canvas.clear_control_points()
+
+        self._update_clear_cps_enabled()
 
     # ------------------------------------------------------------------
     # Event handlers
@@ -462,6 +492,31 @@ class AlignView(QWidget):
         self._section.alignment.status = AlignmentStatus.NOT_STARTED
         self._clear_btn.setEnabled(False)
         self.alignments_updated.emit()
+
+    def _clear_all_cps(self) -> None:
+        if self._section is None:
+            return
+        self._section.warp.control_points.clear()
+        self._cp_hovered = -1
+        self._cp_dragging = -1
+        self._update_clear_cps_enabled()
+        self._update_overlay()
+        self.section_modified.emit()
+
+    def _update_clear_cps_enabled(self) -> None:
+        has_cps = (
+            self._section is not None
+            and bool(self._section.warp.control_points)
+        )
+        self._clear_cps_btn.setEnabled(has_cps)
+
+    def set_cp_style(self, size: int, shape: str, color: str) -> None:
+        """Update control-point visual style and redraw."""
+        self._cp_size = size
+        self._cp_shape = shape
+        self._cp_color = color
+        if self._mode == "warp":
+            self._update_overlay()
 
     def apply_warp(self) -> None:
         if self._section is None or not self._section.warp.control_points:

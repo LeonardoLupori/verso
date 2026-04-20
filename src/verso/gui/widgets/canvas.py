@@ -133,12 +133,21 @@ class ImageCanvas(QWidget):
         self.overlay_item.setOpacity(0.5)
         self.overlay_item.setZValue(10)
 
+        # Control-point displacement lines (Warp mode) — drawn below the dots
+        self.disp_item = pg.PlotCurveItem(
+            pen=pg.mkPen((255, 255, 255, 160), width=1.5,
+                         style=Qt.PenStyle.DashLine),
+            connect="pairs",
+        )
+        self.disp_item.setZValue(15)
+
         # Control-point scatter (Warp mode)
         self.cp_item = pg.ScatterPlotItem(size=10, pxMode=True)
         self.cp_item.setZValue(20)
 
         self.plot.addItem(self.bg_item)
         self.plot.addItem(self.overlay_item)
+        self.plot.addItem(self.disp_item)
         self.plot.addItem(self.cp_item)
 
         # Forward scene mouse moves as image-pixel coordinates
@@ -189,42 +198,85 @@ class ImageCanvas(QWidget):
         vb_pos = self._vb.mapSceneToView(scene_pos)
         self.mouse_position_changed.emit(vb_pos.x(), vb_pos.y())
 
+    _CP_SYMBOLS: dict[str, str] = {
+        "Circle": "o", "Cross": "+", "Square": "s", "Diamond": "d",
+    }
+    _CP_COLOR_RGB: dict[str, tuple[int, int, int]] = {
+        "Orange": (255, 80, 0),
+        "Cyan": (0, 210, 210),
+        "Yellow": (255, 240, 0),
+        "Red": (220, 50, 50),
+        "White": (255, 255, 255),
+        "Magenta": (210, 0, 210),
+    }
+
     def set_control_points(
         self,
         dst_pts: list[tuple[float, float]],
         display_w: int,
         display_h: int,
         hovered_idx: int = -1,
+        cp_size: int = 10,
+        cp_shape: str = "Circle",
+        cp_color: str = "Orange",
+        src_pts: list[tuple[float, float]] | None = None,
     ) -> None:
-        """Draw warp control points as dots in image-pixel coordinates.
+        """Draw warp control points and their displacement vectors.
 
         Args:
-            dst_pts: List of (x, y) in normalised [0, 1] section coords.
+            dst_pts: List of (x, y) in normalised [0, 1] section coords (pin position).
             display_w / display_h: Section display dimensions in pixels.
-            hovered_idx: Index of the point under the cursor (-1 = none); shown larger/yellow.
+            hovered_idx: Index of the point under the cursor (-1 = none).
+            cp_size: Normal point diameter in pixels.
+            cp_shape: One of Circle / Cross / Square / Diamond.
+            cp_color: Named colour from the properties panel palette.
+            src_pts: Atlas-space normalised origins for each CP. When provided,
+                a dashed line is drawn from each src to its dst (the displacement
+                vector, matching VisuAlign's pin rendering).
         """
         if not dst_pts:
             self.cp_item.clear()
+            self.disp_item.clear()
             return
+
+        symbol = self._CP_SYMBOLS.get(cp_shape, "o")
+        r, g, b = self._CP_COLOR_RGB.get(cp_color, (255, 80, 0))
+        hov_size = cp_size + 4
+
+        # Displacement lines (src → dst)
+        if src_pts and len(src_pts) == len(dst_pts):
+            xs, ys = [], []
+            for (ss, st), (ds, dt) in zip(src_pts, dst_pts):
+                xs += [ss * display_w, ds * display_w]
+                ys += [st * display_h, dt * display_h]
+            self.disp_item.setPen(
+                pg.mkPen((r, g, b, 160), width=1.5,
+                         style=Qt.PenStyle.DashLine)
+            )
+            self.disp_item.setData(x=xs, y=ys)
+        else:
+            self.disp_item.clear()
+
         spots = []
         for i, (s, t) in enumerate(dst_pts):
             px, py = s * display_w, t * display_h
             if i == hovered_idx:
                 spots.append({
-                    "pos": (px, py), "size": 14,
+                    "pos": (px, py), "size": hov_size, "symbol": symbol,
                     "brush": pg.mkBrush(255, 240, 0, 240),
                     "pen": pg.mkPen("w", width=1.5),
                 })
             else:
                 spots.append({
-                    "pos": (px, py), "size": 10,
-                    "brush": pg.mkBrush(255, 80, 0, 200),
+                    "pos": (px, py), "size": cp_size, "symbol": symbol,
+                    "brush": pg.mkBrush(r, g, b, 200),
                     "pen": pg.mkPen("w", width=1),
                 })
         self.cp_item.setData(spots)
 
     def clear_control_points(self) -> None:
         self.cp_item.clear()
+        self.disp_item.clear()
 
     def set_overlay_opacity(self, opacity: float) -> None:
         """Set overlay opacity in [0, 1]."""
@@ -234,3 +286,4 @@ class ImageCanvas(QWidget):
         self.bg_item.clear()
         self.overlay_item.clear()
         self.cp_item.clear()
+        self.disp_item.clear()

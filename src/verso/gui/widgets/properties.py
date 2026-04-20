@@ -134,17 +134,21 @@ class _PrepProperties(QWidget):
         self._lbl_channels.setText(", ".join(section.channels) if section.channels else "—")
 
 
+_CP_SHAPES = ["Circle", "Cross", "Square", "Diamond"]
+_CP_COLORS = ["Orange", "Cyan", "Yellow", "Red", "White", "Magenta"]
+
+
 class _AlignProperties(QWidget):
     """Properties panel content for the Align/Warp view."""
 
     opacity_changed = pyqtSignal(float)
     ap_changed = pyqtSignal(float)
     rotation_changed = pyqtSignal(float, float, float)
+    cp_style_changed = pyqtSignal(int, str, str)  # size, shape, color
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
 
-        # Outer layout → scroll area so the AP plot is always reachable
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
 
@@ -160,14 +164,14 @@ class _AlignProperties(QWidget):
         layout.setSpacing(8)
         scroll.setWidget(content)
 
-        # Atlas info
+        # Atlas info — always visible
         atlas_box = QGroupBox("Atlas")
         atlas_layout = QFormLayout(atlas_box)
         self._atlas_label = QLabel("—")
         atlas_layout.addRow("Name:", self._atlas_label)
         layout.addWidget(atlas_box)
 
-        # Overlay opacity
+        # Overlay opacity — always visible
         overlay_box = QGroupBox("Overlay")
         overlay_layout = QFormLayout(overlay_box)
         self._opacity_slider = QSlider(Qt.Orientation.Horizontal)
@@ -179,17 +183,41 @@ class _AlignProperties(QWidget):
         overlay_layout.addRow("Opacity:", self._opacity_slider)
         layout.addWidget(overlay_box)
 
-        # AP position
+        # ── Align sub-mode widgets ────────────────────────────────────
+        self._align_widget = QWidget()
+        align_layout = QVBoxLayout(self._align_widget)
+        align_layout.setContentsMargins(0, 0, 0, 0)
+        align_layout.setSpacing(8)
+
+        # AP position: spinbox + plot in one group box
         ap_box = QGroupBox("AP position")
-        ap_layout = QFormLayout(ap_box)
+        ap_box_layout = QVBoxLayout(ap_box)
+        ap_box_layout.setSpacing(4)
+
+        ap_form = QFormLayout()
         self._ap_spin = QDoubleSpinBox()
         self._ap_spin.setRange(0.0, 20.0)
         self._ap_spin.setSingleStep(0.05)
         self._ap_spin.setSuffix(" mm")
         self._ap_spin.setDecimals(2)
         self._ap_spin.valueChanged.connect(self.ap_changed)
-        ap_layout.addRow("AP:", self._ap_spin)
-        layout.addWidget(ap_box)
+        ap_form.addRow("AP:", self._ap_spin)
+        ap_box_layout.addLayout(ap_form)
+
+        self._ap_plot = pg.PlotWidget(background="#1a1a1a")
+        self._ap_plot.setFixedHeight(200)
+        self._ap_plot.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        pi = self._ap_plot.getPlotItem()
+        pi.hideAxis("top")
+        pi.hideAxis("right")
+        pi.getAxis("bottom").setLabel("AP (mm)", color="#aaa")
+        pi.getAxis("left").setLabel("Section", color="#aaa")
+        pi.getAxis("bottom").setTextPen(pg.mkPen("#aaa"))
+        pi.getAxis("left").setTextPen(pg.mkPen("#aaa"))
+        pi.invertY(True)
+        pi.setMenuEnabled(False)
+        ap_box_layout.addWidget(self._ap_plot)
+        align_layout.addWidget(ap_box)
 
         # Rotation
         rot_box = QGroupBox("Rotation (deg)")
@@ -210,36 +238,39 @@ class _AlignProperties(QWidget):
         self._roll_spin.valueChanged.connect(self._emit_rotation)
         self._tilt_dv_spin.valueChanged.connect(self._emit_rotation)
         self._tilt_ap_spin.valueChanged.connect(self._emit_rotation)
-        layout.addWidget(rot_box)
+        align_layout.addWidget(rot_box)
 
-        # Warp control points (visible only in Warp sub-mode)
-        self._cp_box = QGroupBox("Warp control points")
-        cp_layout = QFormLayout(self._cp_box)
-        self._cp_count = QLabel("0")
-        cp_layout.addRow("Count:", self._cp_count)
-        self._cp_box.setVisible(False)
-        layout.addWidget(self._cp_box)
+        layout.addWidget(self._align_widget)
 
-        # AP position plot
-        ap_plot_box = QGroupBox("AP positions")
-        ap_plot_layout = QVBoxLayout(ap_plot_box)
-        ap_plot_layout.setContentsMargins(4, 4, 4, 4)
+        # ── Warp sub-mode widgets ─────────────────────────────────────
+        self._warp_widget = QWidget()
+        warp_layout = QVBoxLayout(self._warp_widget)
+        warp_layout.setContentsMargins(0, 0, 0, 0)
+        warp_layout.setSpacing(8)
 
-        self._ap_plot = pg.PlotWidget(background="#1a1a1a")
-        self._ap_plot.setFixedHeight(220)
-        self._ap_plot.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        pi = self._ap_plot.getPlotItem()
-        pi.hideAxis("top")
-        pi.hideAxis("right")
-        pi.getAxis("bottom").setLabel("AP (mm)", color="#aaa")
-        pi.getAxis("left").setLabel("Section", color="#aaa")
-        pi.getAxis("bottom").setTextPen(pg.mkPen("#aaa"))
-        pi.getAxis("left").setTextPen(pg.mkPen("#aaa"))
-        pi.invertY(True)   # section 0 at top
-        pi.setMenuEnabled(False)
+        cp_box = QGroupBox("Control points")
+        cp_form = QFormLayout(cp_box)
 
-        ap_plot_layout.addWidget(self._ap_plot)
-        layout.addWidget(ap_plot_box)
+        self._cp_size_spin = QSpinBox()
+        self._cp_size_spin.setRange(4, 30)
+        self._cp_size_spin.setValue(10)
+        self._cp_size_spin.setSuffix(" px")
+        self._cp_size_spin.valueChanged.connect(self._emit_cp_style)
+        cp_form.addRow("Size:", self._cp_size_spin)
+
+        self._cp_shape_combo = QComboBox()
+        self._cp_shape_combo.addItems(_CP_SHAPES)
+        self._cp_shape_combo.currentTextChanged.connect(self._emit_cp_style)
+        cp_form.addRow("Shape:", self._cp_shape_combo)
+
+        self._cp_color_combo = QComboBox()
+        self._cp_color_combo.addItems(_CP_COLORS)
+        self._cp_color_combo.currentTextChanged.connect(self._emit_cp_style)
+        cp_form.addRow("Color:", self._cp_color_combo)
+
+        warp_layout.addWidget(cp_box)
+        layout.addWidget(self._warp_widget)
+        self._warp_widget.setVisible(False)
 
         layout.addStretch()
 
@@ -250,18 +281,23 @@ class _AlignProperties(QWidget):
             self._tilt_ap_spin.value(),
         )
 
+    def _emit_cp_style(self) -> None:
+        self.cp_style_changed.emit(
+            self._cp_size_spin.value(),
+            self._cp_shape_combo.currentText(),
+            self._cp_color_combo.currentText(),
+        )
+
     def update_section(self, section: Section | None) -> None:
         if section is None:
             self._ap_spin.blockSignals(True)
             self._ap_spin.setValue(0.0)
             self._ap_spin.blockSignals(False)
-            self._cp_count.setText("0")
             return
         ap = section.alignment.ap_position_mm or 0.0
         self._ap_spin.blockSignals(True)
         self._ap_spin.setValue(ap)
         self._ap_spin.blockSignals(False)
-        self._cp_count.setText(str(len(section.warp.control_points)))
 
     def update_ap_from_anchoring(self, ap_mm: float) -> None:
         self._ap_spin.blockSignals(True)
@@ -276,8 +312,9 @@ class _AlignProperties(QWidget):
             self._atlas_label.setText(self._atlas_label.text() + " (loading...)")
 
     def set_align_warp_mode(self, mode: str) -> None:
-        """Show warp control points only in 'warp' sub-mode."""
-        self._cp_box.setVisible(mode == "warp")
+        is_align = mode == "align"
+        self._align_widget.setVisible(is_align)
+        self._warp_widget.setVisible(not is_align)
 
     def set_ap_range(self, min_mm: float, max_mm: float) -> None:
         self._ap_spin.blockSignals(True)
@@ -294,7 +331,6 @@ class _AlignProperties(QWidget):
         if not sections:
             return
 
-        # Separate into groups by status so we can batch-render them
         x_complete, y_complete = [], []
         x_progress, y_progress = [], []
         x_none, y_none = [], []
@@ -322,7 +358,6 @@ class _AlignProperties(QWidget):
         _add_scatter(x_progress, y_progress, (255, 193,   7, 220))
         _add_scatter(x_complete, y_complete, ( 76, 175,  80, 220))
 
-        # Highlight current section
         if 0 <= current_index < len(sections):
             s = sections[current_index]
             ap = s.alignment.ap_position_mm
@@ -341,6 +376,7 @@ class PropertiesPanel(QWidget):
     opacity_changed = pyqtSignal(float)
     ap_changed = pyqtSignal(float)
     rotation_changed = pyqtSignal(float, float, float)
+    cp_style_changed = pyqtSignal(int, str, str)  # size, shape, color
 
     _MODES = ("overview", "prep", "align")
 
@@ -364,6 +400,7 @@ class PropertiesPanel(QWidget):
         self._align_page.opacity_changed.connect(self.opacity_changed)
         self._align_page.ap_changed.connect(self.ap_changed)
         self._align_page.rotation_changed.connect(self.rotation_changed)
+        self._align_page.cp_style_changed.connect(self.cp_style_changed)
 
         layout.addWidget(self._stack)
 

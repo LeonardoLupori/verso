@@ -214,6 +214,9 @@ class MainWindow(QMainWindow):
         self._align.alignments_updated.connect(self._on_alignments_updated)
         self._align.mode_changed.connect(self._props.set_align_warp_mode)
         self._align.reverse_requested.connect(self._reverse_section_order)
+        self._props.cp_style_changed.connect(
+            lambda size, shape, color: self._align.set_cp_style(size, shape, color)
+        )
 
     # ------------------------------------------------------------------
     # View switching
