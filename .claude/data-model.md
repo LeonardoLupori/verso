@@ -49,13 +49,13 @@ Original high-resolution images are **not copied** into the project folder. `pro
       },
       "alignment": {
         "ap_position_mm": -1.2,
-        "anchoring": ["QuickNII-compatible anchoring matrix"],
+        "anchoring": [ox, oy, oz, ux, uy, uz, vx, vy, vz],
         "status": "complete"
       },
       "warp": {
         "control_points": [
-          {"x": 120, "y": 85, "dx": 3.2, "dy": -1.5},
-          {"x": 340, "y": 200, "dx": -2.1, "dy": 4.0}
+          {"src_x": 0.52, "src_y": 0.31, "dst_x": 0.54, "dst_y": 0.30},
+          {"src_x": 0.18, "src_y": 0.70, "dst_x": 0.17, "dst_y": 0.72}
         ],
         "status": "complete"
       }
@@ -64,16 +64,48 @@ Original high-resolution images are **not copied** into the project folder. `pro
 }
 ```
 
+### Anchoring format
+
+`anchoring` is a 9-element flat array matching the QuickNII JSON format:
+
+```
+[ox, oy, oz,  ux, uy, uz,  vx, vy, vz]
+```
+
+All values are in **atlas voxel coordinates**. For a normalised section point `(s, t)` where both are in `[0, 1]` (s = horizontal, t = vertical), the corresponding atlas voxel is:
+
+```
+atlas_voxel = [ox, oy, oz] + s * [ux, uy, uz] + t * [vx, vy, vz]
+```
+
+- `(ox, oy, oz)` — origin: atlas voxel at the section's top-left corner
+- `(ux, uy, uz)` — u-vector: atlas displacement across the full section width
+- `(vx, vy, vz)` — v-vector: atlas displacement across the full section height
+
+This is identical to the QuickNII `anchoring` field and can be written directly into QuickNII/VisuAlign JSON without conversion.
+
+### Control point format
+
+Control points are stored in **normalised section coordinates** `[0, 1]` in both source (atlas) and destination (section) spaces. This matches VisuAlign's internal representation and is resolution-independent.
+
+| Field | Meaning |
+|---|---|
+| `src_x`, `src_y` | Atlas-space origin of the pin, normalised to `[0, 1]` |
+| `dst_x`, `dst_y` | Section-space destination of the pin, normalised to `[0, 1]` |
+
+The displacement in VisuAlign's export JSON is `dx = dst_x - src_x`, `dy = dst_y - src_y` (see [quint-compat.md](quint-compat.md)).
+
 ## Python data model
 
 Use `@dataclass` for all model types. These live in `engine/model/`.
 
-### Core types (to be finalized)
+### Core types
 
 - `Project` — top-level container: name, atlas reference, list of sections
 - `Section` — one histological section: paths, channel info, preprocessing state, alignment, warp
-- `Alignment` — affine registration: AP position, anchoring matrix, status
-- `WarpState` — nonlinear refinement: list of control points, status
+- `Alignment` — affine registration: AP position, 9-float anchoring array, status
+- `ControlPoint` — one warp pin: `src_x, src_y, dst_x, dst_y` in normalised `[0, 1]`
+- `WarpState` — nonlinear refinement: list of `ControlPoint`, status
 - `Mask` — mask metadata: path, type (slice or L/R)
 
 ### Serialization
@@ -106,23 +138,20 @@ Thumbnail at 1200px on the long side. All interactive operations (control points
 
 ### 3. Atlas space
 
-3D voxel coordinates of the reference atlas volume (e.g., Allen Mouse 25µm → 528×320×456 voxels). The alignment anchoring matrix maps between working resolution space and atlas space.
+3D voxel coordinates of the reference atlas volume (e.g., Allen Mouse 25µm → 528×320×456 voxels). The anchoring matrix maps between normalised section coordinates and atlas voxel space.
 
 ### Transform chain
 
 ```
-full resolution ←→ working resolution ←→ atlas space
-         (scale factor)         (anchoring matrix)
+full resolution ←→ working resolution ←→ normalised [0,1] ←→ atlas voxel space
+         (scale factor)          (pixel / dimension)       (anchoring matrix)
 ```
 
-When exporting full-resolution results, working-resolution transforms are scaled up by `1/scale`. The scaling is purely proportional (uniform in x and y).
+When exporting full-resolution results, working-resolution transforms are scaled up by `1/scale`. Control points in normalised space need no rescaling.
 
-## Open decisions
+## Settled decisions
 
-These must be finalized before implementing the model layer:
-
-1. **Exact Section fields**: required vs optional, defaults for new sections
-2. **Alignment anchoring format**: must match QuickNII JSON — study their spec first
-3. **Control point format**: `(x, y, dx, dy)` displacements or `(src_x, src_y, dst_x, dst_y)` pairs?
-4. **Undo/redo**: command pattern with per-section undo stacks. What granularity? One undo per control point move? Per mask stroke?
-5. **Mask format**: binary PNG (resolution-dependent) vs polygon vertices in JSON (resolution-independent)
+1. **Anchoring format**: 9-float array `[ox, oy, oz, ux, uy, uz, vx, vy, vz]` in atlas voxel space — identical to QuickNII JSON.
+2. **Control point format**: `(src_x, src_y, dst_x, dst_y)` in normalised `[0, 1]` — matches VisuAlign's internal representation; resolution-independent.
+3. **Undo/redo**: deferred; not in scope for initial implementation.
+4. **Mask format**: binary PNG at working resolution (1200px); path stored in `project.json`.
