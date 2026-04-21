@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
 
 from verso.engine.model.project import Section
 from verso.engine.preprocessing import (
+    apply_channel_luminance,
     apply_freehand_stroke,
     detect_foreground,
     load_mask,
@@ -44,6 +45,10 @@ class PrepView(QWidget):
         self._mask_opacity = 0.4
         self._negative_mask = False
         self._mask_visible = True
+        self._red_luminance = 1.0
+        self._green_luminance = 1.0
+        self._red_previous_luminance = 1.0
+        self._green_previous_luminance = 1.0
         self._undo_stack: list[np.ndarray] = []
         self._stroke_points: list[tuple[float, float]] = []
         self._stroke_active = False
@@ -134,6 +139,8 @@ class PrepView(QWidget):
             (Qt.Key.Key_M, lambda: self.set_mask_visible(not self._mask_visible)),
             (Qt.Key.Key_N, lambda: self.set_mask_negative(not self._negative_mask)),
             (Qt.Key.Key_Space, lambda: self.set_mask_negative(not self._negative_mask)),
+            (Qt.Key.Key_R, self.toggle_red_channel),
+            (Qt.Key.Key_G, self.toggle_green_channel),
             (QKeySequence.StandardKey.Undo, self.undo_mask_edit),
             (Qt.Key.Key_Return, self.save_current_mask),
             (Qt.Key.Key_Enter, self.save_current_mask),
@@ -195,6 +202,31 @@ class PrepView(QWidget):
         self._mask_opacity = min(max(opacity, 0.0), 1.0)
         self._update_mask_overlay()
 
+    def set_channel_luminance(self, red: float, green: float) -> None:
+        self._red_luminance = min(max(red, 0.0), 1.0)
+        self._green_luminance = min(max(green, 0.0), 1.0)
+        if self._red_luminance > 0:
+            self._red_previous_luminance = self._red_luminance
+        if self._green_luminance > 0:
+            self._green_previous_luminance = self._green_luminance
+        self._display_image()
+
+    def toggle_red_channel(self) -> None:
+        if self._red_luminance > 0:
+            self._red_previous_luminance = self._red_luminance
+            self._red_luminance = 0.0
+        else:
+            self._red_luminance = self._red_previous_luminance
+        self._display_image()
+
+    def toggle_green_channel(self) -> None:
+        if self._green_luminance > 0:
+            self._green_previous_luminance = self._green_luminance
+            self._green_luminance = 0.0
+        else:
+            self._green_luminance = self._green_previous_luminance
+        self._display_image()
+
     def autodetect_mask(self) -> None:
         if self._raw_image is None:
             return
@@ -220,11 +252,11 @@ class PrepView(QWidget):
         self._mask_dirty = True
         self._update_mask_overlay()
 
-    def save_current_mask(self) -> None:
-        self._save_current_mask(force=True)
+    def save_current_mask(self) -> bool:
+        return self._save_current_mask(force=True)
 
-    def save_current_mask_if_dirty(self) -> None:
-        self._save_current_mask(force=False)
+    def save_current_mask_if_dirty(self) -> bool:
+        return self._save_current_mask(force=False)
 
     # ------------------------------------------------------------------
     # Display / mask state
@@ -238,6 +270,11 @@ class PrepView(QWidget):
             img = np.fliplr(img)
         if self._section and self._section.preprocessing.flip_vertical:
             img = np.flipud(img)
+        img = apply_channel_luminance(
+            img,
+            red=self._red_luminance,
+            green=self._green_luminance,
+        )
         self._canvas.set_background(np.ascontiguousarray(img))
 
     def _load_or_init_mask(self) -> None:
@@ -291,17 +328,18 @@ class PrepView(QWidget):
         if len(self._undo_stack) > self._UNDO_LIMIT:
             self._undo_stack.pop(0)
 
-    def _save_current_mask(self, *, force: bool) -> None:
+    def _save_current_mask(self, *, force: bool) -> bool:
         if self._section is None or self._current_mask is None:
-            return
+            return False
         if not force and not self._mask_dirty:
-            return
+            return False
 
         mask_path = self._mask_path_for_section(self._section)
         save_mask(self._current_mask, mask_path)
         self._section.preprocessing.slice_mask_path = str(mask_path)
         self._mask_dirty = False
         self.section_modified.emit()
+        return True
 
     def _mask_path_for_section(self, section: Section) -> Path:
         masks_dir = Path(section.thumbnail_path).parent.parent / "masks"

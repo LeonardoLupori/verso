@@ -66,6 +66,10 @@ class MainWindow(QMainWindow):
 
         self._switch_view(_VIEW_OVERVIEW)
 
+    def closeEvent(self, event) -> None:
+        self._save_prep_mask_before_transition()
+        super().closeEvent(event)
+
     # ------------------------------------------------------------------
     # UI construction
     # ------------------------------------------------------------------
@@ -213,8 +217,19 @@ class MainWindow(QMainWindow):
 
         # Properties
         self._props.flip_h_changed.connect(self._on_flip_h_changed)
+        self._props.channel_changed.connect(self._on_prep_channel_changed)
+        self._props.channel_luminance_changed.connect(self._prep.set_channel_luminance)
+        self._props.mask_visibility_changed.connect(self._prep.set_mask_visible)
+        self._props.mask_opacity_changed.connect(self._prep.set_mask_opacity)
+        self._props.mask_negative_changed.connect(self._prep.set_mask_negative)
+        self._props.autodetect_requested.connect(self._on_prep_autodetect_requested)
+        self._props.save_mask_requested.connect(self._on_prep_save_mask_requested)
+        self._props.clear_mask_requested.connect(self._on_prep_clear_mask_requested)
         self._props.opacity_changed.connect(self._on_opacity_changed)
         self._props.ap_changed.connect(self._on_ap_changed)
+
+        # PrepView edits
+        self._prep.section_modified.connect(self._on_prep_modified)
 
         # AlignView navigator + store/clear + sub-mode
         self._align.anchoring_changed.connect(self._on_anchoring_changed)
@@ -230,6 +245,9 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _switch_view(self, index: int) -> None:
+        leaving_prep = self._current_mode == "prep" and index != _VIEW_PREP
+        if leaving_prep:
+            self._save_prep_mask_before_transition()
         self._stack.setCurrentIndex(index)
         modes = ("overview", "prep", "align")
         self._current_mode = modes[index]
@@ -264,6 +282,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _open_project(self) -> None:
+        self._save_prep_mask_before_transition()
         path, _ = QFileDialog.getOpenFileName(
             self,
             "Open VERSO Project",
@@ -280,6 +299,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Cannot open project", str(exc))
 
     def _new_project(self) -> None:
+        self._save_prep_mask_before_transition()
         dlg = NewProjectDialog(self)
         if dlg.exec() == NewProjectDialog.DialogCode.Accepted:
             project = dlg.result_project()
@@ -287,6 +307,7 @@ class MainWindow(QMainWindow):
                 self._state.load_project(project, dlg.result_project_path())
 
     def _open_quicknii(self) -> None:
+        self._save_prep_mask_before_transition()
         path, _ = QFileDialog.getOpenFileName(
             self, "Open QuickNII JSON", "", "JSON files (*.json);;All files (*)"
         )
@@ -295,6 +316,7 @@ class MainWindow(QMainWindow):
             self._state.load_project(project)
 
     def _open_visualign(self) -> None:
+        self._save_prep_mask_before_transition()
         path, _ = QFileDialog.getOpenFileName(
             self, "Open VisuAlign JSON", "", "JSON files (*.json);;All files (*)"
         )
@@ -303,6 +325,7 @@ class MainWindow(QMainWindow):
             self._state.load_project(project)
 
     def _save_project(self) -> None:
+        self._prep.save_current_mask_if_dirty()
         if self._state.project is None:
             return
         if self._state.project_path is None:
@@ -311,6 +334,7 @@ class MainWindow(QMainWindow):
         self._write_project(self._state.project_path)
 
     def _save_project_as(self) -> None:
+        self._prep.save_current_mask_if_dirty()
         if self._state.project is None:
             return
         current_path = self._state.project_path
@@ -335,6 +359,12 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Saved project to {path}", 3000)
         except Exception as exc:
             QMessageBox.critical(self, "Cannot save project", str(exc))
+
+    def _save_prep_mask_before_transition(self) -> None:
+        if not self._prep.save_current_mask_if_dirty():
+            return
+        if self._state.project is not None and self._state.project_path is not None:
+            self._write_project(self._state.project_path)
 
     # ------------------------------------------------------------------
     # Slots — state changes
@@ -440,6 +470,31 @@ class MainWindow(QMainWindow):
 
     def _on_opacity_changed(self, opacity: float) -> None:
         self._align.canvas.set_overlay_opacity(opacity)
+
+    def _on_prep_channel_changed(self, index: int) -> None:
+        section = self._state.current_section
+        if section is None:
+            return
+        if 0 <= index < len(section.channels):
+            section.registration_channel = section.channels[index]
+        else:
+            section.registration_channel = None
+        self._overview.refresh_row(self._state.section_index)
+
+    def _on_prep_autodetect_requested(self) -> None:
+        self._prep.autodetect_mask()
+        self._overview.refresh_row(self._state.section_index)
+
+    def _on_prep_save_mask_requested(self) -> None:
+        self._prep.save_current_mask()
+        self._overview.refresh_row(self._state.section_index)
+
+    def _on_prep_clear_mask_requested(self) -> None:
+        self._prep.clear_mask()
+        self._overview.refresh_row(self._state.section_index)
+
+    def _on_prep_modified(self) -> None:
+        self._overview.refresh_row(self._state.section_index)
 
     def _on_ap_changed(self, ap_mm: float) -> None:
         section = self._state.current_section
@@ -603,6 +658,7 @@ class MainWindow(QMainWindow):
         self._props.update_ap_plot(project.sections, self._state.section_index)
 
     def _export_quicknii_xml(self) -> None:
+        self._save_prep_mask_before_transition()
         if self._state.project is None:
             return
         path, _ = QFileDialog.getSaveFileName(
@@ -614,6 +670,7 @@ class MainWindow(QMainWindow):
             save_quicknii_xml(self._state.project, Path(path), atlas_shape=atlas_shape)
 
     def _export_quicknii(self) -> None:
+        self._save_prep_mask_before_transition()
         if self._state.project is None:
             return
         from PyQt6.QtWidgets import QFileDialog
@@ -626,6 +683,7 @@ class MainWindow(QMainWindow):
             save_quicknii(self._state.project, Path(path), atlas_shape=atlas_shape)
 
     def _export_visualign(self) -> None:
+        self._save_prep_mask_before_transition()
         if self._state.project is None:
             return
         from PyQt6.QtWidgets import QFileDialog
