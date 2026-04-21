@@ -78,7 +78,8 @@ class _OverlayViewBox(pg.ViewBox):
             ev.accept()
             pos = self.mapSceneToView(ev.scenePos())
             if ev.isStart():
-                self.canvas_drag_started.emit(pos.x(), pos.y())
+                down_pos = self.mapSceneToView(ev.buttonDownScenePos())
+                self.canvas_drag_started.emit(down_pos.x(), down_pos.y())
             elif ev.isFinish():
                 self.canvas_drag_ended.emit(pos.x(), pos.y())
             else:
@@ -134,8 +135,7 @@ class ImageCanvas(QWidget):
 
         # Control-point displacement lines (Warp mode) — drawn below the dots
         self.disp_item = pg.PlotCurveItem(
-            pen=pg.mkPen((255, 255, 255, 160), width=1.5,
-                         style=Qt.PenStyle.DashLine),
+            pen=pg.mkPen((255, 255, 255, 160), width=1.5),
             connect="pairs",
         )
         self.disp_item.setZValue(15)
@@ -249,8 +249,7 @@ class ImageCanvas(QWidget):
                 xs += [ss * display_w, ds * display_w]
                 ys += [st * display_h, dt * display_h]
             self.disp_item.setPen(
-                pg.mkPen((r, g, b, 160), width=1.5,
-                         style=Qt.PenStyle.DashLine)
+                pg.mkPen((r, g, b, 160), width=1.5)
             )
             self.disp_item.setData(x=xs, y=ys)
         else:

@@ -109,17 +109,15 @@ class AtlasVolume:
 
         edges = np.zeros((out_h2, out_w2), dtype=bool)
 
-        # Horizontal edges (between col i and i+1)
+        # Horizontal edges (between col i and i+1) — mark left pixel only (1px)
         diff_h = labels[:, :-1] != labels[:, 1:]
         keep_h = diff_h & (brain[:, :-1] | brain[:, 1:])
         edges[:, :-1] |= keep_h
-        edges[:, 1:] |= keep_h
 
-        # Vertical edges (between row i and i+1)
+        # Vertical edges (between row i and i+1) — mark top pixel only (1px)
         diff_v = labels[:-1, :] != labels[1:, :]
         keep_v = diff_v & (brain[:-1, :] | brain[1:, :])
         edges[:-1, :] |= keep_v
-        edges[1:, :] |= keep_v
 
         rgba = np.zeros((out_h2, out_w2, 4), dtype=np.uint8)
         rgba[edges & in_bounds] = [255, 255, 255, 220]

@@ -95,6 +95,21 @@ def image_dimensions(path: str | Path) -> tuple[int, int]:
         return im.size
 
 
+def imadjust(rgb: np.ndarray, low_pct: float = 2.0, high_pct: float = 98.0) -> np.ndarray:
+    """Percentile-based contrast stretch, similar to MATLAB imadjust.
+
+    Clips pixel values to [low_pct, high_pct] percentiles (computed across the
+    whole image, not per-channel, to preserve colour balance) and remaps to
+    [0, 255].  Input must be uint8 H×W×3.
+    """
+    lo = float(np.percentile(rgb, low_pct))
+    hi = float(np.percentile(rgb, high_pct))
+    if hi <= lo:
+        return rgb
+    out = (rgb.astype(np.float32) - lo) * (255.0 / (hi - lo))
+    return out.clip(0, 255).astype(np.uint8)
+
+
 def normalize_to_uint8(image: np.ndarray) -> np.ndarray:
     """Linearly scale any numeric dtype into [0, 255] uint8."""
     if image.dtype == np.uint8:
@@ -297,6 +312,7 @@ def ensure_working_copy(
 
     rgb, actual_scale = resize_by_scale(rgb, working_scale)
     section.scale = actual_scale
+    rgb = imadjust(rgb)
 
     # Persist as PNG for fast future loads
     try:

@@ -42,7 +42,7 @@ class AlignView(QWidget):
 
     # Pixel distance threshold (in normalised units × display size) for
     # picking an existing control point
-    _CP_PICK_RADIUS = 12  # px
+    _CP_PICK_RADIUS = 16  # px
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -54,10 +54,12 @@ class AlignView(QWidget):
         # Warp interaction state
         self._cp_hovered: int = -1    # index of CP under cursor (-1 = none)
         self._cp_dragging: int = -1   # index of CP currently being dragged
+        self._cp_drag_start_norm: tuple[float, float] | None = None
+        self._cp_drag_start_dst: tuple[float, float] | None = None
         # CP style (synced from properties panel)
         self._cp_size = 10
-        self._cp_shape = "Circle"
-        self._cp_color = "Orange"
+        self._cp_shape = "Cross"
+        self._cp_color = "Yellow"
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -334,6 +336,8 @@ class AlignView(QWidget):
         self._canvas.clear()
         self._cp_hovered = -1
         self._cp_dragging = -1
+        self._cp_drag_start_norm = None
+        self._cp_drag_start_dst = None
         self._store_btn.setEnabled(False)
         self._clear_btn.setEnabled(False)
         self._region_bar.setText("")
@@ -606,9 +610,10 @@ class AlignView(QWidget):
         if self._section is None:
             return
         self._section.alignment.anchoring = [0.0] * 9
+        self._section.alignment.ap_position_mm = None
         self._section.alignment.status = AlignmentStatus.NOT_STARTED
-        self._clear_btn.setEnabled(False)
         self.alignments_updated.emit()
+        self._clear_btn.setEnabled(True)
 
     def _clear_all_cps(self) -> None:
         if self._section is None:
@@ -616,6 +621,8 @@ class AlignView(QWidget):
         self._section.warp.control_points.clear()
         self._cp_hovered = -1
         self._cp_dragging = -1
+        self._cp_drag_start_norm = None
+        self._cp_drag_start_dst = None
         self._update_clear_cps_enabled()
         self._update_overlay()
         self.section_modified.emit()
@@ -653,6 +660,32 @@ class AlignView(QWidget):
             return None
         return x / w, y / h
 
+    def _clamped_norm_pos(self, x: float, y: float) -> tuple[float, float] | None:
+        """Convert image pixel coords to normalised [0,1], clamping at image edges."""
+        if self._raw_image is None:
+            return None
+        h, w = self._raw_image.shape[:2]
+        x = min(max(x, 0.0), float(w))
+        y = min(max(y, 0.0), float(h))
+        return x / w, y / h
+
+    def _move_dragged_cp_to(self, x: float, y: float) -> None:
+        """Move the dragged CP using VisuAlign-style press-to-current displacement."""
+        if self._section is None or self._cp_dragging < 0:
+            return
+        cur = self._clamped_norm_pos(x, y)
+        if cur is None:
+            return
+        cp = self._section.warp.control_points[self._cp_dragging]
+        if self._cp_drag_start_norm is None or self._cp_drag_start_dst is None:
+            cp.dst_x, cp.dst_y = cur
+            return
+
+        sx, sy = self._cp_drag_start_norm
+        bx, by = self._cp_drag_start_dst
+        cp.dst_x = min(max(bx + cur[0] - sx, 0.0), 1.0)
+        cp.dst_y = min(max(by + cur[1] - sy, 0.0), 1.0)
+
     def _pick_cp(self, x: float, y: float) -> int:
         """Return index of nearest CP within pick radius, or -1."""
         if self._section is None or self._raw_image is None:
@@ -678,6 +711,24 @@ class AlignView(QWidget):
         src = np.array([[cp.src_x, cp.src_y] for cp in cps])
         dst = np.array([[cp.dst_x, cp.dst_y] for cp in cps])
         return find_atlas_position(s, t, src, dst)
+
+    def _update_control_point_display(self) -> None:
+        """Redraw CP markers without resampling the atlas overlay."""
+        if self._mode != "warp" or self._section is None or self._raw_image is None:
+            self._canvas.clear_control_points()
+            return
+        h_bg, w_bg = self._raw_image.shape[:2]
+        cps = self._section.warp.control_points
+        self._canvas.set_control_points(
+            [(cp.dst_x, cp.dst_y) for cp in cps],
+            w_bg,
+            h_bg,
+            self._cp_hovered,
+            cp_size=self._cp_size,
+            cp_shape=self._cp_shape,
+            cp_color=self._cp_color,
+            src_pts=[(cp.src_x, cp.src_y) for cp in cps],
+        )
 
     # ------------------------------------------------------------------
     # Warp canvas event handlers
@@ -705,30 +756,30 @@ class AlignView(QWidget):
         if self._mode != "warp":
             return
         self._cp_dragging = self._pick_cp(x, y)
+        self._cp_drag_start_norm = self._clamped_norm_pos(x, y)
+        self._cp_drag_start_dst = None
+        if self._section is not None and self._cp_dragging >= 0:
+            cp = self._section.warp.control_points[self._cp_dragging]
+            self._cp_drag_start_dst = (cp.dst_x, cp.dst_y)
 
     def _on_canvas_dragged(self, x: float, y: float) -> None:
         """Drag update: move the dragged CP's dst position."""
         if self._mode != "warp" or self._cp_dragging < 0 or self._section is None:
             return
-        norm = self._norm_pos(x, y)
-        if norm is None:
-            return
-        cp = self._section.warp.control_points[self._cp_dragging]
-        cp.dst_x, cp.dst_y = norm
+        self._move_dragged_cp_to(x, y)
         self._cp_hovered = self._cp_dragging
-        self._update_overlay()
+        self._update_control_point_display()
 
     def _on_canvas_drag_ended(self, x: float, y: float) -> None:
         """Drag end: finalise CP position."""
         if self._mode != "warp" or self._cp_dragging < 0 or self._section is None:
             self._cp_dragging = -1
             return
-        norm = self._norm_pos(x, y)
-        if norm is not None:
-            cp = self._section.warp.control_points[self._cp_dragging]
-            cp.dst_x, cp.dst_y = norm
+        self._move_dragged_cp_to(x, y)
         self._cp_hovered = self._cp_dragging
         self._cp_dragging = -1
+        self._cp_drag_start_norm = None
+        self._cp_drag_start_dst = None
         self._update_overlay()
         self.section_modified.emit()
 
