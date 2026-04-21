@@ -1,8 +1,7 @@
-# Prep View - Implementation Plan
+# Prep View — Implementation Plan
 
 Derived from `maskEditor.m` (MATLAB predecessor) and adapted to VERSO's
-architecture: PyQt6 / pyqtgraph, engine/GUI separation, and a non-destructive
-workflow.
+architecture (PyQt6 / pyqtgraph, engine/GUI separation, non-destructive workflow).
 
 ---
 
@@ -10,295 +9,202 @@ workflow.
 
 | MATLAB feature | VERSO equivalent |
 |---|---|
-| Channel luminance sliders (R, G per-channel `imadjust`) | Display-only channel luminance sliders in the right panel |
-| Toggle red / green channel visibility (R / G keys) | R/G keyboard shortcuts; toggled-off channels render as zero while preserving the previous slider value |
-| Mask transparency slider | Mask opacity slider in the right panel |
-| Freehand draw - add pixels (A key) | Freehand Draw tool on canvas |
-| Freehand erase - delete pixels (D key) | Erase tool on canvas |
-| Toggle mask visibility (M key) | Right-panel checkbox + keyboard shortcut |
-| Invert mask polarity (Spacebar) | Negative-mask checkbox + keyboard shortcut |
-| Navigation (left / right arrows) | Delegate to MainWindow/filmstrip section navigation |
-| Save mask (Enter, with confirmation) | Explicit Save mask button + Enter shortcut + automatic dirty-mask save on section/view/project transitions |
-| New VERSO addition | Auto-detect foreground/background segmentation, then manually refine with Draw/Erase |
+| Channel luminance sliders (R, G per-channel imadjust) | Display-only brightness sliders in right panel |
+| Toggle red / green channel visibility (R / G keys) | R/G keyboard shortcuts; sliders in right panel go to 0 when toggled off |
+| Mask transparency slider | Mask opacity slider in right panel |
+| Freehand draw — add pixels (A key) | Freehand draw tool on canvas |
+| Freehand erase — delete pixels (D key) | Eraser tool (or modifier key while drawing) |
+| Toggle mask visibility (M key) | Mask visibility button + keyboard shortcut |
+| Invert mask polarity (Spacebar) | "Negative" toggle button |
+| Navigation (← / →) | Already handled by filmstrip; keep arrow key shortcuts |
+| Save mask (Enter, with confirmation) | Auto-save on section change + explicit Save button |
 
 ---
 
 ## 2. Data model changes
 
-`Preprocessing` already has `slice_mask_path` and `lr_mask_path`. No new
-persisted model fields are needed for mask data.
+`Preprocessing` already has `slice_mask_path` and `lr_mask_path`. No new fields
+needed in the model for mask data.
 
-Add display-only fields only in `PrepView` state:
+Add display-only fields **only in PrepView state** (never persisted):
 
 ```python
-_red_luminance: float = 1.0
-_green_luminance: float = 1.0
-_red_previous_luminance: float = 1.0
-_green_previous_luminance: float = 1.0
-_mask_opacity: float = 0.4
+_red_scale: float = 1.0       # [0.01, 1]  multiplier for red channel
+_green_scale: float = 1.0     # [0.01, 1]  multiplier for green channel
+_mask_opacity: float = 0.4    # matches maskEditor default
 _negative_mask: bool = False
-_mask_visible: bool = True
-_current_mask: np.ndarray | None = None
-_mask_dirty: bool = False
-_undo_stack: list[np.ndarray] = []
+_mask_visible: bool = True    # mirrors _show_slice checkbox in _PrepProperties
+_current_mask: np.ndarray | None = None   # H×W bool, working-res
+_mask_dirty: bool = False                 # unsaved changes flag
 ```
 
-The R/G shortcuts should not destroy the user's slider value. When a channel is
-toggled off, store its last non-zero luminance value and render that channel as
-hidden. When toggled back on, restore the stored value.
+`_red_scale` / `_green_scale` drop to 0.0 when the R or G key shortcut
+toggles the channel off, then restore to the previous slider value when toggled
+back on.  No separate bool needed — zero scale means hidden.
 
 ---
 
-## 3. Engine additions (`engine/preprocessing.py`)
+## 3. Engine additions (`engine/`)
 
-New functions should be pure and headless-safe.
+### 3.1 `engine/preprocessing.py`
+
+New functions (pure, headless-safe):
 
 ```python
-def apply_channel_luminance(rgb: np.ndarray, red: float, green: float) -> np.ndarray:
-    """Apply maskEditor-style per-channel display luminance.
-
-    This is not a simple multiplier. MATLAB's
-    imadjust(channel, [0, scale], [0, 1]) maps input value `scale` to output
-    white. Lower scale values brighten/saturate the channel. A value of 0 means
-    hidden for VERSO's toggle behavior.
+def apply_channel_scale(rgb: np.ndarray, red: float, green: float) -> np.ndarray:
+    """Scale R and G channels independently; clip to uint8.
+    Equivalent to maskEditor's per-channel imadjust([0, scale], [0, 1]).
     """
 
 def load_mask(path: str | Path, shape: tuple[int, int]) -> np.ndarray:
     """Load a PNG mask and resize to working-resolution shape (H, W) bool."""
 
 def save_mask(mask: np.ndarray, path: str | Path) -> None:
-    """Write a bool HxW mask as a single-channel PNG."""
+    """Write a bool H×W mask as a single-channel PNG."""
 
-def mask_to_rgba(
-    mask: np.ndarray,
-    negative: bool,
-    opacity: float,
-    color: tuple[int, int, int] = (255, 255, 255),
-) -> np.ndarray:
-    """Convert bool mask to RGBA.
-
-    negative=False highlights True mask pixels.
-    negative=True highlights False mask pixels.
+def mask_to_rgba(mask: np.ndarray, negative: bool, opacity: float,
+                 color: tuple[int,int,int] = (255, 255, 255)) -> np.ndarray:
+    """Convert bool mask → RGBA overlay (H×W×4 uint8) for display.
+    negative=True → unmasked region is highlighted instead.
     """
 
-def apply_freehand_stroke(
-    mask: np.ndarray,
-    polygon_xy: np.ndarray,
-    add: bool,
-) -> np.ndarray:
-    """Fill a freehand polygon into a copy of the mask.
-
-    polygon_xy is an (N, 2) array of image-pixel coordinates.
-    add=True sets pixels to True; add=False sets pixels to False.
-    Use skimage.draw.polygon or cv2.fillPoly.
+def apply_freehand_stroke(mask: np.ndarray, polygon_xy: np.ndarray,
+                           add: bool) -> np.ndarray:
+    """Fill a freehand polygon into mask, adding or erasing.
+    polygon_xy: (N, 2) float array of image-pixel coordinates.
+    Returns updated mask (copy).
+    Uses skimage.draw.polygon or cv2.fillPoly.
     """
 
 def detect_foreground(rgb: np.ndarray) -> np.ndarray:
-    """Auto-segment tissue from background.
+    """Auto-segment tissue from background using Otsu threshold + largest
+    connected component.
 
-    Estimate background polarity from border luminance, not global mean:
-    bright border -> brightfield-like background, tissue tends darker;
-    dark border -> fluorescence-like background, tissue tends brighter.
+    Detects brightfield vs. fluorescence automatically from mean luminance
+    (dark mean → brightfield, invert before thresholding; bright mean →
+    fluorescence, threshold directly).  Applies morphological closing to fill
+    small holes inside the section.
 
-    Use Otsu thresholding, morphological cleanup, hole filling, and largest
-    connected-component selection. Return True=tissue. Always return a usable
-    bool HxW mask; if segmentation fails, fall back to an all-True mask.
+    Returns a bool H×W mask (True = tissue).  Always succeeds — falls back to
+    an all-True mask if thresholding produces nothing usable.
+    Uses only skimage (already a dependency).
     """
 ```
-
-Recommended tests in `tests/engine/test_preprocessing.py`:
-
-- `apply_channel_luminance()` lowers scale and brightens/saturates the channel.
-- zero scale hides a channel.
-- mask load/save round-trips bool masks and resizes with nearest-neighbor.
-- freehand add/erase changes only the polygon area.
-- `detect_foreground()` works for dark tissue on bright background and bright
-  tissue on dark background.
 
 ---
 
 ## 4. GUI changes
 
-### 4.1 Left toolbar
+### 4.1 Left toolbar (existing, extend)
 
-Replace the current placeholder buttons in `PrepView` with canvas-tool buttons:
+Replace current placeholder tool buttons with working ones:
 
-| Button | Icon/text | Keyboard | Action |
+| Button | Icon | Keyboard | Action |
 |---|---|---|---|
 | Draw | pencil | A | Freehand add-to-mask |
 | Erase | eraser | D | Freehand erase-from-mask |
-| Undo | undo arrow | Ctrl+Z | Undo last mask edit |
+| _(separator)_ | | | |
+| Undo | ↩ | Ctrl+Z | Undo last stroke |
 
-Remove Polygon and Fill for now. Mask visibility, negative mask, opacity, and
-channel controls belong in the right properties panel and keyboard shortcuts,
-not duplicated in the toolbar.
+Remove the Polygon and Fill placeholders for now (can be added later).
 
-Both auto-detect and manual drawing produce the same `_current_mask` bool array
-and push to the same undo stack. The user can run auto-detect, then refine with
-Draw/Erase, or skip auto-detect and draw from scratch.
+Mask visibility, negative toggle, and channel toggles are controlled via the
+right panel and keyboard shortcuts only — no duplicate toolbar buttons for them.
 
-### 4.2 Right panel - extend `_PrepProperties`
+Both paths — auto-detect and manual drawing — produce the same `_current_mask`
+boolean array and push to the same undo stack.  The user can freely mix them:
+run auto-detect, then refine with draw/erase, or skip auto-detect entirely and
+draw from scratch.
 
-`_PrepProperties` already exists in `widgets/properties.py` and is mounted
-inside `PropertiesPanel`. Extend that class; do not add a second properties
-widget.
+### 4.2 Right panel — extend `_PrepProperties` (already exists)
 
-Wrap `_PrepProperties` content in a `QScrollArea`, mirroring `_AlignProperties`,
-because the fixed-width 220 px panel will otherwise become cramped.
+`_PrepProperties` in `widgets/properties.py` already exists and is already
+mounted inside `PropertiesPanel` (a fixed-width 220 px `QWidget`, **not** a
+`QDockWidget`).  Do not create a new widget — extend the existing class.
 
-Already present, but needs wiring:
+**Already present — wiring needed**:
+- `_show_slice` / `_show_lr` checkboxes in a "Mask visibility" `QGroupBox` —
+  exist but are not yet connected to PrepView; add `mask_visibility_changed(bool)`
+  and `lr_visibility_changed(bool)` signals and wire them in PrepView
+- `_channel_combo` `QComboBox` — exists and emits `channel_changed(int)`;
+  already connected in `PropertiesPanel`; keep as-is
+- `_flip_h` checkbox; `flip_h_changed` wired through `PropertiesPanel` — keep as-is
+- Section info labels (dims, channels) — keep as-is
 
-- `_show_slice` / `_show_lr` checkboxes in "Mask visibility": add
-  `mask_visibility_changed(bool)` and `lr_visibility_changed(bool)`.
-- `_channel_combo`: forward existing `channel_changed(int)` through
-  `PropertiesPanel` and connect it in `MainWindow` if channel selection is meant
-  to affect the loaded working image.
-- `_flip_h`: keep the existing `flip_h_changed` forwarding.
-- Section info labels: keep as-is, but fill dimensions when available.
+**Add below "Channel" combo (or replace with a richer group)**:
+```
+Channel  [Default ▼]          ← existing combo, keep it
+Red      [━━━━━●━━━━] 1.00
+Green    [━━━━━━━━━●] 1.00
+```
+- Two `QSlider`s (range 1–100, mapped to 0.01–1.0); default 100
+- Sliders are display-only; never persisted
+- Emit `channel_scale_changed(red: float, green: float)` signal
 
-Add channel controls below the existing channel combo:
+**Add to "Mask visibility" `QGroupBox`** (existing group, extend):
+```
+[■ Show slice mask]     ← existing checkbox
+[■ Show L/R boundary]   ← existing checkbox
+[⊖ Negative mask]       ← new checkbox
+Opacity  [━━━●━━━━━━] 0.40   ← new slider
+```
+- Emit `mask_opacity_changed(float)` and `mask_negative_changed(bool)` signals
 
-```text
-Channel  [Default v]
-Red      [slider] 1.00
-Green    [slider] 1.00
+**Add a new "Mask editing" `QGroupBox`**:
+```
+[  Auto-detect  ]
+[  Save mask  ] [ Clear ]
+```
+- **Auto-detect**: emits `autodetect_requested` signal (PrepView calls engine)
+- **Save mask**: emits `save_mask_requested`
+- **Clear**: emits `clear_mask_requested`
+
+**Signal propagation**: all new signals must be forwarded through
+`PropertiesPanel` as top-level signals (same pattern as `flip_h_changed`,
+`opacity_changed`, etc.).  `PropertiesPanel.setFixedWidth(220)` stays as-is.
+
+### 4.3 Canvas interaction — freehand drawing
+
+The `_OverlayViewBox` already captures `canvas_drag_started`, `canvas_dragged`,
+`canvas_drag_ended`. Extend PrepView to intercept these when a draw/erase tool
+is active:
+
+```
+canvas_drag_started → begin stroke, collect first point
+canvas_dragged      → append point to stroke buffer
+canvas_drag_ended   → finalise polygon, call apply_freehand_stroke, push undo stack
 ```
 
-- Slider range: 1-100, mapped to 0.01-1.0.
-- Values are display-only and are not persisted.
-- Emit `channel_luminance_changed(red: float, green: float)`.
+The stroke is rendered live as a `pg.PlotCurveItem` (thin red/blue line) on top
+of the mask overlay while the user drags. On release it is baked into the mask.
 
-Extend "Mask visibility":
-
-```text
-[x] Show slice mask
-[x] Show L/R boundary
-[ ] Negative mask
-Opacity [slider] 0.40
-```
-
-- Emit `mask_opacity_changed(float)` and `mask_negative_changed(bool)`.
-- Negative mask changes display polarity only; the saved mask remains
-  True=tissue/foreground.
-
-Add "Mask editing":
-
-```text
-[ Auto-detect ]
-[ Save mask ] [ Clear ]
-```
-
-- `autodetect_requested`: PrepView calls `detect_foreground()`.
-- `save_mask_requested`: PrepView saves the current mask.
-- `clear_mask_requested`: PrepView clears the current mask after pushing undo.
-
-Forward all Prep signals through `PropertiesPanel`, following the existing
-pattern used for `flip_h_changed`, `opacity_changed`, `ap_changed`, and
-`cp_style_changed`.
-
-### 4.3 Canvas interaction
-
-`ImageCanvas` is shared by PrepView and AlignView, so it should not hard-code a
-single drag interpretation for every view. Add a small interaction mode API,
-for example:
-
-```python
-set_interaction_mode("align" | "prep" | "view")
-```
-
-Expected behavior:
-
-- Align mode keeps the current behavior: space+left-drag emits `overlay_panned`;
-  left-drag emits CP drag signals.
-- Prep mode lets PrepView consume left-drag for Draw/Erase strokes when a mask
-  tool is active.
-- View/default mode should allow pyqtgraph's normal pan/zoom behavior.
-
-PrepView should collect stroke points using the existing canvas drag signal
-shape, or stroke-specific signals if the canvas API is expanded:
-
-```text
-canvas_drag_started -> begin stroke, collect first point
-canvas_dragged      -> append point and update live preview
-canvas_drag_ended   -> finalize polygon, push undo, apply_freehand_stroke()
-```
-
-Render the live stroke as a `pg.PlotCurveItem` above the mask overlay. Use a
-blue-ish line for Draw and a red-ish line for Erase. Clear the preview item once
-the stroke is baked into `_current_mask`.
+> **Note**: space+drag is already taken by overlay panning in AlignView, but
+> PrepView doesn't use the atlas overlay so space+drag can be re-purposed as
+> pan (default pyqtgraph behaviour) without conflict.
 
 ### 4.4 Mask overlay display
 
-Use `canvas.overlay_item` to show the mask RGBA in PrepView. PrepView has its
-own `ImageCanvas` instance, so this does not conflict with AlignView's atlas
-overlay.
-
-Update the overlay whenever:
-
-- the mask changes,
-- opacity changes,
-- negative mode changes,
-- mask visibility changes,
-- a section is loaded or cleared.
-
-When hidden, set the overlay opacity to 0 or clear the overlay; keep
-`_current_mask` unchanged.
+Use `canvas.overlay_item` (already a `pg.ImageItem` at z=10) to show the mask
+RGBA.  PrepView has its own `ImageCanvas` instance separate from AlignView's,
+so reusing `overlay_item` for the mask does not conflict with the atlas overlay.
+Update it whenever:
+- the mask changes (after each stroke)
+- opacity slider moves
+- negative toggle changes
+- mask visibility is toggled (set opacity to 0 rather than hide the item)
 
 ### 4.5 Undo stack
 
-Use a simple list in PrepView:
+Simple Python list `_undo_stack: list[np.ndarray]` in PrepView. Push a copy of
+`_current_mask` before every stroke. Max depth: 20. Ctrl+Z pops and restores.
 
-```python
-_undo_stack: list[np.ndarray]
-_UNDO_LIMIT = 20
-```
+### 4.6 Auto-save / explicit save
 
-Push a copy of `_current_mask` before every destructive mask edit:
-
-- freehand Draw,
-- freehand Erase,
-- Auto-detect,
-- Clear.
-
-Ctrl+Z and the Undo toolbar button pop and restore the previous mask.
-
-### 4.6 Persistence and dirty-mask lifecycle
-
-Add a `PrepView.save_current_mask_if_dirty()` method. It should:
-
-1. Return immediately if no section, no mask, or not dirty.
-2. Derive a deterministic path under the project `masks/` folder.
-3. Call `save_mask()`.
-4. Update `section.preprocessing.slice_mask_path`.
-5. Clear `_mask_dirty`.
-6. Emit `section_modified`.
-
-Suggested save path:
-
-```python
-masks_dir = Path(section.thumbnail_path).parent.parent / "masks"
-mask_path = masks_dir / f"{Path(section.original_path).stem}-slice-mask.png"
-```
-
-This matches the existing project structure created by `NewProjectDialog`
-(`thumbnails/` and `masks/` sibling folders) without writing beside arbitrary
-source images.
-
-Call `save_current_mask_if_dirty()` before:
-
-- `PrepView.load_section()` replaces `self._section`,
-- MainWindow switches away from Prep view,
-- MainWindow opens/closes/replaces the project,
-- application close, if close handling is added.
-
-On explicit Save mask, call the same save method regardless of dirty state if a
-mask exists, so the button is predictable.
-
-On section load:
-
-- If `section.preprocessing.slice_mask_path` exists, load it with `load_mask()`.
-- Otherwise initialize `_current_mask` as all-False and show no highlighted
-  mask until the user draws, clears, or auto-detects.
+- Call `save_mask()` + update `section.preprocessing.slice_mask_path` and emit
+  `section_modified` when the user explicitly clicks **Save mask** or navigates
+  away from the section (with a dirty-flag check).
+- No confirmation dialog (unlike maskEditor) — VERSO saves non-destructively and
+  can undo.
 
 ---
 
@@ -309,46 +215,50 @@ On section load:
 | A | Switch to Draw tool |
 | D | Switch to Erase tool |
 | M | Toggle mask visibility |
-| N or Spacebar | Toggle negative mask |
-| R | Toggle red channel hidden/restored |
-| G | Toggle green channel hidden/restored |
-| Ctrl+Z | Undo last mask edit |
-| Enter / Return | Save mask |
-| Left / Right arrows | Previous / next section via MainWindow/filmstrip navigation |
-
-Shortcuts should be scoped to PrepView with
-`Qt.ShortcutContext.WidgetWithChildrenShortcut`, matching the approach used by
-AlignView for CP deletion.
+| N | Toggle negative mask |
+| R | Toggle red channel |
+| G | Toggle green channel |
+| Ctrl+Z | Undo last stroke |
+| ← / → | Previous / next section (delegate to filmstrip) |
 
 ---
 
 ## 6. Implementation order
 
-1. Engine functions in `engine/preprocessing.py`: `apply_channel_luminance`,
-   `load_mask`, `save_mask`, `mask_to_rgba`, `apply_freehand_stroke`,
-   `detect_foreground`; add focused unit tests.
-2. `ImageCanvas` interaction mode and optional stroke-preview item support.
-   Preserve AlignView behavior.
-3. PrepView state and mask lifecycle: load/init mask, overlay refresh,
-   save-current-mask hook, undo stack.
-4. PrepView stroke wiring: Draw/Erase tools, drag collection, live preview,
-   apply stroke on release.
-5. Extend `_PrepProperties` with scroll area, channel luminance controls,
-   mask controls, Auto-detect/Save/Clear buttons, and all signal forwarding
-   through `PropertiesPanel`.
-6. MainWindow wiring: connect Prep properties to PrepView; call dirty-mask save
-   hooks before leaving/replacing the current Prep section/project.
-7. Toolbar and keyboard shortcuts: Draw, Erase, Undo, R/G, M, N/Space, Enter,
-   Ctrl+Z, and left/right navigation delegation.
-8. Overview/filmstrip refresh: after saving or clearing a mask, refresh the
-   relevant Overview row so "Slice mask" status updates.
+1. **Engine functions** in `engine/preprocessing.py`:
+   `apply_channel_scale`, `load_mask`, `save_mask`, `mask_to_rgba`,
+   `apply_freehand_stroke`, `detect_foreground`. Write unit tests in
+   `tests/engine/test_preprocessing.py`. `detect_foreground` should be tested
+   with a synthetic bright-on-dark and dark-on-bright image to confirm the
+   brightfield/fluorescence branch works correctly.
+
+2. **Canvas stroke capture**: extend `_OverlayViewBox` with a mode flag
+   (`"draw"` / `"erase"` / `None`) and emit stroke-specific signals, or handle
+   in PrepView by connecting to the existing drag signals and ignoring them when
+   tool is not active.
+
+3. **PrepView wiring**: connect drag signals → stroke buffer → mask update →
+   overlay refresh. Add undo stack.
+
+4. **Extend `_PrepProperties`**: wire existing `_show_slice`/`_show_lr` checkboxes;
+   add channel luminance sliders, negative/opacity mask controls, and the
+   Auto-detect / Save / Clear buttons. Add all new signals to `PropertiesPanel`
+   as forwarded top-level signals.
+
+5. **Toolbar buttons**: replace placeholders with working Draw / Erase / Mask
+   visibility / Negative buttons; wire keyboard shortcuts.
+
+6. **Flip**: `flip_horizontal` is already wired through `PropertiesPanel` — no
+   changes needed.
+
+7. **Persistence**: on section change, auto-save dirty mask; on load, call
+   `load_mask` if `slice_mask_path` is set.
 
 ---
 
 ## 7. Deferred / out of scope for now
 
-- L/R mask editing and split-hemisphere logic.
-- Polygon and Fill drawing tools.
-- Mask import from external PNG.
-- Brush-radius painting. The first pass matches `maskEditor.m` freehand polygon
-  behavior, where the closed freehand region is filled on release.
+- L/R mask (second mask type) — model field exists, UI can be added in step 4
+  alongside the mask-type selector, but actual split-hemisphere logic is separate.
+- Polygon and Fill drawing tools (placeholder buttons can remain greyed out).
+- Mask import from external PNG (can be added via a menu action later).
