@@ -14,7 +14,9 @@ from PyQt6.QtWidgets import (
     QDoubleSpinBox,
     QFormLayout,
     QGroupBox,
+    QHBoxLayout,
     QLabel,
+    QPushButton,
     QScrollArea,
     QSizePolicy,
     QSlider,
@@ -42,10 +44,10 @@ class _OverviewProperties(QWidget):
 
         info_box = QGroupBox("Section info")
         info_layout = QFormLayout(info_box)
-        self._lbl_file = QLabel("—")
+        self._lbl_file = QLabel("-")
         self._lbl_file.setWordWrap(True)
-        self._lbl_serial = QLabel("—")
-        self._lbl_scale = QLabel("—")
+        self._lbl_serial = QLabel("-")
+        self._lbl_scale = QLabel("-")
         info_layout.addRow("File:", self._lbl_file)
         info_layout.addRow("Serial #:", self._lbl_serial)
         info_layout.addRow("Scale:", self._lbl_scale)
@@ -56,11 +58,12 @@ class _OverviewProperties(QWidget):
     def update_section(self, section: Section | None) -> None:
         if section is None:
             self._title.setText("No section selected")
-            self._lbl_file.setText("—")
-            self._lbl_serial.setText("—")
-            self._lbl_scale.setText("—")
+            self._lbl_file.setText("-")
+            self._lbl_serial.setText("-")
+            self._lbl_scale.setText("-")
             return
         import os
+
         self._title.setText(os.path.basename(section.original_path))
         self._lbl_file.setText(section.original_path)
         self._lbl_serial.setText(str(section.serial_number))
@@ -72,12 +75,31 @@ class _PrepProperties(QWidget):
 
     flip_h_changed = pyqtSignal(bool)
     channel_changed = pyqtSignal(int)
+    channel_luminance_changed = pyqtSignal(float, float)
+    mask_visibility_changed = pyqtSignal(bool)
+    lr_visibility_changed = pyqtSignal(bool)
+    mask_opacity_changed = pyqtSignal(float)
+    mask_negative_changed = pyqtSignal(bool)
+    autodetect_requested = pyqtSignal()
+    save_mask_requested = pyqtSignal()
+    clear_mask_requested = pyqtSignal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        layout = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea { border: none; }")
+        outer.addWidget(scroll)
+
+        content = QWidget()
+        layout = QVBoxLayout(content)
         layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        layout.setSpacing(12)
+        layout.setSpacing(8)
+        scroll.setWidget(content)
 
         flip_box = QGroupBox("Preprocessing")
         flip_layout = QVBoxLayout(flip_box)
@@ -91,22 +113,76 @@ class _PrepProperties(QWidget):
         self._channel_combo = QComboBox()
         self._channel_combo.currentIndexChanged.connect(self.channel_changed)
         chan_layout.addWidget(self._channel_combo)
+
+        self._red_value = QLabel("1.00")
+        self._red_slider = QSlider(Qt.Orientation.Horizontal)
+        self._red_slider.setRange(1, 100)
+        self._red_slider.setValue(100)
+        self._red_slider.valueChanged.connect(self._emit_channel_luminance)
+        red_row = QHBoxLayout()
+        red_row.addWidget(QLabel("Red"))
+        red_row.addWidget(self._red_slider, stretch=1)
+        red_row.addWidget(self._red_value)
+        chan_layout.addLayout(red_row)
+
+        self._green_value = QLabel("1.00")
+        self._green_slider = QSlider(Qt.Orientation.Horizontal)
+        self._green_slider.setRange(1, 100)
+        self._green_slider.setValue(100)
+        self._green_slider.valueChanged.connect(self._emit_channel_luminance)
+        green_row = QHBoxLayout()
+        green_row.addWidget(QLabel("Green"))
+        green_row.addWidget(self._green_slider, stretch=1)
+        green_row.addWidget(self._green_value)
+        chan_layout.addLayout(green_row)
         layout.addWidget(chan_box)
 
         mask_box = QGroupBox("Mask visibility")
         mask_layout = QVBoxLayout(mask_box)
         self._show_slice = QCheckBox("Show slice mask")
         self._show_slice.setChecked(True)
+        self._show_slice.toggled.connect(self.mask_visibility_changed)
         self._show_lr = QCheckBox("Show L/R boundary")
         self._show_lr.setChecked(True)
+        self._show_lr.toggled.connect(self.lr_visibility_changed)
+        self._negative = QCheckBox("Negative mask")
+        self._negative.toggled.connect(self.mask_negative_changed)
         mask_layout.addWidget(self._show_slice)
         mask_layout.addWidget(self._show_lr)
+        mask_layout.addWidget(self._negative)
+
+        self._opacity_value = QLabel("0.40")
+        self._opacity_slider = QSlider(Qt.Orientation.Horizontal)
+        self._opacity_slider.setRange(0, 100)
+        self._opacity_slider.setValue(40)
+        self._opacity_slider.valueChanged.connect(self._emit_mask_opacity)
+        opacity_row = QHBoxLayout()
+        opacity_row.addWidget(QLabel("Opacity"))
+        opacity_row.addWidget(self._opacity_slider, stretch=1)
+        opacity_row.addWidget(self._opacity_value)
+        mask_layout.addLayout(opacity_row)
         layout.addWidget(mask_box)
+
+        edit_box = QGroupBox("Mask editing")
+        edit_layout = QVBoxLayout(edit_box)
+        self._autodetect_btn = QPushButton("Auto-detect")
+        self._autodetect_btn.clicked.connect(self.autodetect_requested)
+        edit_layout.addWidget(self._autodetect_btn)
+
+        edit_row = QHBoxLayout()
+        self._save_mask_btn = QPushButton("Save mask")
+        self._save_mask_btn.clicked.connect(self.save_mask_requested)
+        self._clear_mask_btn = QPushButton("Clear")
+        self._clear_mask_btn.clicked.connect(self.clear_mask_requested)
+        edit_row.addWidget(self._save_mask_btn)
+        edit_row.addWidget(self._clear_mask_btn)
+        edit_layout.addLayout(edit_row)
+        layout.addWidget(edit_box)
 
         info_box = QGroupBox("Section info")
         info_layout = QFormLayout(info_box)
-        self._lbl_dims = QLabel("—")
-        self._lbl_channels = QLabel("—")
+        self._lbl_dims = QLabel("-")
+        self._lbl_channels = QLabel("-")
         info_layout.addRow("Dimensions:", self._lbl_dims)
         info_layout.addRow("Channels:", self._lbl_channels)
         layout.addWidget(info_box)
@@ -115,11 +191,14 @@ class _PrepProperties(QWidget):
 
     def update_section(self, section: Section | None) -> None:
         if section is None:
+            self._flip_h.blockSignals(True)
             self._flip_h.setChecked(False)
+            self._flip_h.blockSignals(False)
             self._channel_combo.clear()
-            self._lbl_dims.setText("—")
-            self._lbl_channels.setText("—")
+            self._lbl_dims.setText("-")
+            self._lbl_channels.setText("-")
             return
+
         self._flip_h.blockSignals(True)
         self._flip_h.setChecked(section.preprocessing.flip_horizontal)
         self._flip_h.blockSignals(False)
@@ -130,7 +209,29 @@ class _PrepProperties(QWidget):
             self._channel_combo.addItem(ch)
         self._channel_combo.blockSignals(False)
 
-        self._lbl_channels.setText(", ".join(section.channels) if section.channels else "—")
+        self._lbl_dims.setText(self._section_dimensions(section))
+        self._lbl_channels.setText(", ".join(section.channels) if section.channels else "-")
+
+    def _emit_channel_luminance(self) -> None:
+        red = self._red_slider.value() / 100.0
+        green = self._green_slider.value() / 100.0
+        self._red_value.setText(f"{red:.2f}")
+        self._green_value.setText(f"{green:.2f}")
+        self.channel_luminance_changed.emit(red, green)
+
+    def _emit_mask_opacity(self) -> None:
+        opacity = self._opacity_slider.value() / 100.0
+        self._opacity_value.setText(f"{opacity:.2f}")
+        self.mask_opacity_changed.emit(opacity)
+
+    def _section_dimensions(self, section: Section) -> str:
+        try:
+            from verso.engine.io.image_io import registration_dimensions
+
+            w, h = registration_dimensions(section)
+            return f"{w} x {h}"
+        except Exception:
+            return "-"
 
 
 _CP_SHAPES = ["Circle", "Cross", "Square", "Diamond"]
@@ -162,14 +263,12 @@ class _AlignProperties(QWidget):
         layout.setSpacing(8)
         scroll.setWidget(content)
 
-        # Atlas info — always visible
         atlas_box = QGroupBox("Atlas")
         atlas_layout = QFormLayout(atlas_box)
-        self._atlas_label = QLabel("—")
+        self._atlas_label = QLabel("-")
         atlas_layout.addRow("Name:", self._atlas_label)
         layout.addWidget(atlas_box)
 
-        # Overlay opacity — always visible
         overlay_box = QGroupBox("Overlay")
         overlay_layout = QFormLayout(overlay_box)
         self._opacity_slider = QSlider(Qt.Orientation.Horizontal)
@@ -181,13 +280,11 @@ class _AlignProperties(QWidget):
         overlay_layout.addRow("Opacity:", self._opacity_slider)
         layout.addWidget(overlay_box)
 
-        # ── Align sub-mode widgets ────────────────────────────────────
         self._align_widget = QWidget()
         align_layout = QVBoxLayout(self._align_widget)
         align_layout.setContentsMargins(0, 0, 0, 0)
         align_layout.setSpacing(8)
 
-        # AP position: spinbox + plot in one group box
         ap_box = QGroupBox("AP position")
         ap_box_layout = QVBoxLayout(ap_box)
         ap_box_layout.setSpacing(4)
@@ -219,7 +316,6 @@ class _AlignProperties(QWidget):
 
         layout.addWidget(self._align_widget)
 
-        # ── Warp sub-mode widgets ─────────────────────────────────────
         self._warp_widget = QWidget()
         warp_layout = QVBoxLayout(self._warp_widget)
         warp_layout.setContentsMargins(0, 0, 0, 0)
@@ -325,30 +421,48 @@ class _AlignProperties(QWidget):
                 return
             pi.addItem(
                 pg.ScatterPlotItem(
-                    x=xs, y=ys, symbol="o", size=size,
-                    brush=pg.mkBrush(*color), pen=pg.mkPen(None),
+                    x=xs,
+                    y=ys,
+                    symbol="o",
+                    size=size,
+                    brush=pg.mkBrush(*color),
+                    pen=pg.mkPen(None),
                 )
             )
 
-        _add_scatter(x_none,     y_none,     (130, 130, 130, 180))
-        _add_scatter(x_progress, y_progress, (255, 193,   7, 220))
-        _add_scatter(x_complete, y_complete, ( 76, 175,  80, 220))
+        _add_scatter(x_none, y_none, (130, 130, 130, 180))
+        _add_scatter(x_progress, y_progress, (255, 193, 7, 220))
+        _add_scatter(x_complete, y_complete, (76, 175, 80, 220))
 
         if 0 <= current_index < len(sections):
-            s = sections[current_index]
-            ap = s.alignment.ap_position_mm
-            if ap is not None and any(v != 0.0 for v in (s.alignment.anchoring or [])):
-                pi.addItem(pg.ScatterPlotItem(
-                    x=[ap], y=[current_index], symbol="o", size=11,
-                    brush=pg.mkBrush(255, 255, 255, 230),
-                    pen=pg.mkPen(None),
-                ))
+            section = sections[current_index]
+            ap = section.alignment.ap_position_mm
+            if ap is not None and any(v != 0.0 for v in (section.alignment.anchoring or [])):
+                pi.addItem(
+                    pg.ScatterPlotItem(
+                        x=[ap],
+                        y=[current_index],
+                        symbol="o",
+                        size=11,
+                        brush=pg.mkBrush(255, 255, 255, 230),
+                        pen=pg.mkPen(None),
+                    )
+                )
 
 
 class PropertiesPanel(QWidget):
     """Outer container that switches between the three properties pages."""
 
     flip_h_changed = pyqtSignal(bool)
+    channel_changed = pyqtSignal(int)
+    channel_luminance_changed = pyqtSignal(float, float)
+    mask_visibility_changed = pyqtSignal(bool)
+    lr_visibility_changed = pyqtSignal(bool)
+    mask_opacity_changed = pyqtSignal(float)
+    mask_negative_changed = pyqtSignal(bool)
+    autodetect_requested = pyqtSignal()
+    save_mask_requested = pyqtSignal()
+    clear_mask_requested = pyqtSignal()
     opacity_changed = pyqtSignal(float)
     ap_changed = pyqtSignal(float)
     cp_style_changed = pyqtSignal(int, str, str)  # size, shape, color
@@ -372,6 +486,16 @@ class PropertiesPanel(QWidget):
         self._stack.addWidget(self._align_page)
 
         self._prep_page.flip_h_changed.connect(self.flip_h_changed)
+        self._prep_page.channel_changed.connect(self.channel_changed)
+        self._prep_page.channel_luminance_changed.connect(self.channel_luminance_changed)
+        self._prep_page.mask_visibility_changed.connect(self.mask_visibility_changed)
+        self._prep_page.lr_visibility_changed.connect(self.lr_visibility_changed)
+        self._prep_page.mask_opacity_changed.connect(self.mask_opacity_changed)
+        self._prep_page.mask_negative_changed.connect(self.mask_negative_changed)
+        self._prep_page.autodetect_requested.connect(self.autodetect_requested)
+        self._prep_page.save_mask_requested.connect(self.save_mask_requested)
+        self._prep_page.clear_mask_requested.connect(self.clear_mask_requested)
+
         self._align_page.opacity_changed.connect(self.opacity_changed)
         self._align_page.ap_changed.connect(self.ap_changed)
         self._align_page.cp_style_changed.connect(self.cp_style_changed)
