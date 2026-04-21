@@ -17,7 +17,9 @@ Warp steps:
        c. Compute barycentric coordinates inside that triangle.
        d. Interpolate the corresponding SRC (atlas) normalised coords.
        e. Convert to pixel coords and record in the remap array.
-  4. Apply the remap with cv2.remap (bilinear) to the affine atlas overlay.
+  4. Apply the remap with cv2.remap to the affine atlas overlay.  RGBA atlas
+     overlays use nearest-neighbour sampling so outline/fill opacity stays
+     constant instead of being averaged with transparent pixels.
 
 This matches VisuAlign's sample(x, y) approach: for each section pixel,
 find its atlas location via barycentric interpolation, then sample the atlas.
@@ -140,11 +142,17 @@ def warp_overlay(
     map_x[rows, cols] = (atlas_x * w).astype(np.float32)
     map_y[rows, cols] = (atlas_y * h).astype(np.float32)
 
+    interpolation = (
+        cv2.INTER_NEAREST
+        if overlay.ndim == 3 and overlay.shape[2] == 4
+        else cv2.INTER_LINEAR
+    )
+
     return cv2.remap(
         np.ascontiguousarray(overlay),
         map_x,
         map_y,
-        cv2.INTER_LINEAR,
+        interpolation,
         borderMode=cv2.BORDER_CONSTANT,
         borderValue=0,
     )

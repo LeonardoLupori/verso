@@ -45,6 +45,23 @@ def test_warp_overlay_grayscale():
     assert warped.shape == (40, 60)
 
 
+def test_warp_overlay_rgba_preserves_discrete_opacity_and_brightness():
+    """Atlas RGBA overlays should not fade when remapped by control points."""
+    h, w = 40, 60
+    overlay = np.zeros((h, w, 4), dtype=np.uint8)
+    overlay[8:32, 30] = [255, 255, 255, 220]
+
+    src = np.array([[0.2, 0.25], [0.8, 0.25], [0.2, 0.75], [0.8, 0.75]])
+    dst = src + np.array([0.5 / w, 0.0])
+
+    warped = warp_overlay(overlay, src, dst)
+    visible = warped[..., 3] > 0
+
+    assert visible.any()
+    assert set(np.unique(warped[..., 3])) <= {0, 220}
+    np.testing.assert_array_equal(warped[visible, :3], np.full((visible.sum(), 3), 255))
+
+
 def test_warp_overlay_no_control_points():
     """With no user control points the image is unchanged."""
     h, w = 40, 60
