@@ -11,6 +11,8 @@ AlignView connects this to translate the atlas cut plane.
 
 from __future__ import annotations
 
+from typing import Literal
+
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import QEvent, QObject, Qt, pyqtSignal
@@ -60,8 +62,22 @@ class _OverlayViewBox(pg.ViewBox):
     canvas_dragged = pyqtSignal(float, float)        # drag update
     canvas_drag_ended = pyqtSignal(float, float)     # drag finish
 
+    _InteractionMode = Literal["align", "prep", "view"]
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._interaction_mode: _OverlayViewBox._InteractionMode = "align"
+
+    def set_interaction_mode(self, mode: _InteractionMode) -> None:
+        self._interaction_mode = mode
+
     def mouseClickEvent(self, ev) -> None:
-        if ev.button() == Qt.MouseButton.LeftButton and not _SpaceState.held and not ev.double():
+        if (
+            self._interaction_mode in ("align", "prep")
+            and ev.button() == Qt.MouseButton.LeftButton
+            and not _SpaceState.held
+            and not ev.double()
+        ):
             pos = self.mapSceneToView(ev.scenePos())
             self.canvas_clicked.emit(pos.x(), pos.y())
             ev.accept()
@@ -69,12 +85,20 @@ class _OverlayViewBox(pg.ViewBox):
             super().mouseClickEvent(ev)
 
     def mouseDragEvent(self, ev, axis=None) -> None:
-        if _SpaceState.held and ev.button() == Qt.MouseButton.LeftButton:
+        if (
+            self._interaction_mode == "align"
+            and _SpaceState.held
+            and ev.button() == Qt.MouseButton.LeftButton
+        ):
             ev.accept()
             p1 = self.mapSceneToView(ev.lastScenePos())
             p2 = self.mapSceneToView(ev.scenePos())
             self.overlay_panned.emit(p2.x() - p1.x(), p2.y() - p1.y())
-        elif ev.button() == Qt.MouseButton.LeftButton:
+        elif (
+            self._interaction_mode in ("align", "prep")
+            and not _SpaceState.held
+            and ev.button() == Qt.MouseButton.LeftButton
+        ):
             ev.accept()
             pos = self.mapSceneToView(ev.scenePos())
             if ev.isStart():
@@ -104,6 +128,8 @@ class ImageCanvas(QWidget):
     canvas_drag_started = pyqtSignal(float, float)
     canvas_dragged = pyqtSignal(float, float)
     canvas_drag_ended = pyqtSignal(float, float)
+
+    _InteractionMode = Literal["align", "prep", "view"]
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -144,10 +170,17 @@ class ImageCanvas(QWidget):
         self.cp_item = pg.ScatterPlotItem(size=10, pxMode=True)
         self.cp_item.setZValue(20)
 
+        # Live freehand stroke preview (Prep mode)
+        self.stroke_item = pg.PlotCurveItem(
+            pen=pg.mkPen((80, 160, 255, 220), width=2.0),
+        )
+        self.stroke_item.setZValue(30)
+
         self.plot.addItem(self.bg_item)
         self.plot.addItem(self.overlay_item)
         self.plot.addItem(self.disp_item)
         self.plot.addItem(self.cp_item)
+        self.plot.addItem(self.stroke_item)
 
         # Forward scene mouse moves as image-pixel coordinates
         self.plot.scene().sigMouseMoved.connect(self._on_scene_mouse_moved)
@@ -161,6 +194,17 @@ class ImageCanvas(QWidget):
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    def set_interaction_mode(self, mode: _InteractionMode) -> None:
+        """Choose how left-drag gestures are interpreted by the canvas.
+
+        ``align`` preserves Align/Warp behavior: space+drag pans the atlas
+        overlay and plain left-drag emits CP interaction signals.
+        ``prep`` emits plain left-drag signals for mask strokes while allowing
+        space+drag to fall through to pyqtgraph.
+        ``view`` lets pyqtgraph handle left-drag gestures normally.
+        """
+        self._vb.set_interaction_mode(mode)
 
     def set_background(self, image: np.ndarray | None) -> None:
         """Set the section image (H×W or H×W×C, uint8)."""
@@ -276,6 +320,23 @@ class ImageCanvas(QWidget):
         self.cp_item.clear()
         self.disp_item.clear()
 
+    def set_stroke_preview(
+        self,
+        points: list[tuple[float, float]],
+        color: tuple[int, int, int] = (80, 160, 255),
+    ) -> None:
+        """Draw a live freehand stroke preview in image-pixel coordinates."""
+        if len(points) < 2:
+            self.stroke_item.clear()
+            return
+        xs = [point[0] for point in points]
+        ys = [point[1] for point in points]
+        self.stroke_item.setPen(pg.mkPen((*color, 220), width=2.0))
+        self.stroke_item.setData(x=xs, y=ys)
+
+    def clear_stroke_preview(self) -> None:
+        self.stroke_item.clear()
+
     def set_overlay_opacity(self, opacity: float) -> None:
         """Set overlay opacity in [0, 1]."""
         self.overlay_item.setOpacity(opacity)
@@ -285,3 +346,4 @@ class ImageCanvas(QWidget):
         self.overlay_item.clear()
         self.cp_item.clear()
         self.disp_item.clear()
+        self.stroke_item.clear()
