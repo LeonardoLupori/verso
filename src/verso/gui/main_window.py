@@ -233,6 +233,7 @@ class MainWindow(QMainWindow):
         self._prep.mask_negative_changed.connect(self._props.set_mask_negative)
 
         # AlignView navigator + store/clear + sub-mode
+        self._align.section_modified.connect(self._on_align_modified)
         self._align.anchoring_changed.connect(self._on_anchoring_changed)
         self._align.alignments_updated.connect(self._on_alignments_updated)
         self._align.mode_changed.connect(self._props.set_align_warp_mode)
@@ -260,6 +261,8 @@ class MainWindow(QMainWindow):
         self._bottom_dock.setVisible(index != _VIEW_OVERVIEW)
         self._filmstrip.set_align_mode(index == _VIEW_ALIGN)
         self._props.set_mode(self._current_mode)
+        if self._current_mode == "overview":
+            self._overview.refresh()
 
         # Sync the newly visible view with the current section
         section = self._state.current_section
@@ -542,6 +545,9 @@ class MainWindow(QMainWindow):
         self._filmstrip.refresh_stored()
         self._update_ap_plot()
         self._update_reverse_order_enabled()
+
+    def _on_align_modified(self) -> None:
+        self._overview.refresh_row(self._state.section_index)
 
     def _reverse_section_order(self) -> None:
         """Reverse the startup AP proposal before any alignment is stored."""
