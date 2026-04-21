@@ -230,6 +230,7 @@ class MainWindow(QMainWindow):
 
         # PrepView edits
         self._prep.section_modified.connect(self._on_prep_modified)
+        self._prep.mask_negative_changed.connect(self._props.set_mask_negative)
 
         # AlignView navigator + store/clear + sub-mode
         self._align.anchoring_changed.connect(self._on_anchoring_changed)

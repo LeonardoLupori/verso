@@ -212,6 +212,11 @@ class _PrepProperties(QWidget):
         self._lbl_dims.setText(self._section_dimensions(section))
         self._lbl_channels.setText(", ".join(section.channels) if section.channels else "-")
 
+    def set_mask_negative(self, negative: bool) -> None:
+        self._negative.blockSignals(True)
+        self._negative.setChecked(negative)
+        self._negative.blockSignals(False)
+
     def _emit_channel_luminance(self) -> None:
         red = self._red_slider.value() / 100.0
         green = self._green_slider.value() / 100.0
@@ -530,3 +535,6 @@ class PropertiesPanel(QWidget):
 
     def update_ap_plot(self, sections: list, current_index: int) -> None:
         self._align_page.update_ap_plot(sections, current_index)
+
+    def set_mask_negative(self, negative: bool) -> None:
+        self._prep_page.set_mask_negative(negative)

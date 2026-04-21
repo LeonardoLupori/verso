@@ -31,6 +31,7 @@ class PrepView(QWidget):
     """Canvas view for the Prep (mask drawing / flip) step."""
 
     section_modified = pyqtSignal()
+    mask_negative_changed = pyqtSignal(bool)
 
     _UNDO_LIMIT = 20
     _DRAW_COLOR = (80, 160, 255)
@@ -195,8 +196,12 @@ class PrepView(QWidget):
         self._update_mask_overlay()
 
     def set_mask_negative(self, negative: bool) -> None:
+        negative = bool(negative)
+        if self._negative_mask == negative:
+            return
         self._negative_mask = negative
         self._update_mask_overlay()
+        self.mask_negative_changed.emit(negative)
 
     def set_mask_opacity(self, opacity: float) -> None:
         self._mask_opacity = min(max(opacity, 0.0), 1.0)
