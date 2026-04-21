@@ -21,8 +21,8 @@ _STEPS = ("Flip", "Slice mask", "L/R mask", "Align", "Warp")
 
 _STATUS_SYMBOL = {
     AlignmentStatus.NOT_STARTED: "",
-    AlignmentStatus.IN_PROGRESS: "~",
-    AlignmentStatus.COMPLETE: "✓",
+    AlignmentStatus.IN_PROGRESS: "",
+    AlignmentStatus.COMPLETE: "●",
 }
 _STATUS_COLOR = {
     AlignmentStatus.NOT_STARTED: "#888888",
@@ -172,7 +172,11 @@ class OverviewView(QWidget):
         ]
         for i, status in enumerate(statuses):
             col = _COL_STEPS_START + i
-            sym = _STATUS_SYMBOL[status]
+            if _STEPS[i] == "Warp":
+                cp_count = len(section.warp.control_points)
+                sym = str(cp_count) if cp_count else ""
+            else:
+                sym = _STATUS_SYMBOL[status]
             item = cell(sym)
             item.setForeground(QColor(_STATUS_COLOR[status]))
             t.setItem(row, col, item)
