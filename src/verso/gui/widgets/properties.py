@@ -252,6 +252,8 @@ class _AlignProperties(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self._atlas_name = "-"
+        self._atlas_loading = False
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -376,11 +378,16 @@ class _AlignProperties(QWidget):
         self._ap_spin.blockSignals(False)
 
     def set_atlas_name(self, name: str) -> None:
-        self._atlas_label.setText(name)
+        self._atlas_name = name
+        self._refresh_atlas_label()
 
     def set_atlas_loading(self, loading: bool) -> None:
-        if loading:
-            self._atlas_label.setText(self._atlas_label.text() + " (loading...)")
+        self._atlas_loading = loading
+        self._refresh_atlas_label()
+
+    def _refresh_atlas_label(self) -> None:
+        suffix = " (loading...)" if self._atlas_loading else ""
+        self._atlas_label.setText(f"{self._atlas_name}{suffix}")
 
     def set_align_warp_mode(self, mode: str) -> None:
         is_align = mode == "align"
