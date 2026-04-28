@@ -287,6 +287,15 @@ class _AlignProperties(QWidget):
         overlay_layout.addRow("Opacity:", self._opacity_slider)
         layout.addWidget(overlay_box)
 
+        proposal_box = QGroupBox("Proposal")
+        proposal_layout = QFormLayout(proposal_box)
+        self._proposal_source = QLabel("-")
+        self._proposal_source.setWordWrap(True)
+        self._proposal_confidence = QLabel("-")
+        proposal_layout.addRow("Source:", self._proposal_source)
+        proposal_layout.addRow("Confidence:", self._proposal_confidence)
+        layout.addWidget(proposal_box)
+
         self._align_widget = QWidget()
         align_layout = QVBoxLayout(self._align_widget)
         align_layout.setContentsMargins(0, 0, 0, 0)
@@ -366,16 +375,33 @@ class _AlignProperties(QWidget):
             self._ap_spin.blockSignals(True)
             self._ap_spin.setValue(0.0)
             self._ap_spin.blockSignals(False)
+            self._update_proposal_status(None)
             return
         ap = section.alignment.ap_position_mm or 0.0
         self._ap_spin.blockSignals(True)
         self._ap_spin.setValue(ap)
         self._ap_spin.blockSignals(False)
+        self._update_proposal_status(section)
 
     def update_ap_from_anchoring(self, ap_mm: float) -> None:
         self._ap_spin.blockSignals(True)
         self._ap_spin.setValue(ap_mm)
         self._ap_spin.blockSignals(False)
+
+    def _update_proposal_status(self, section: Section | None) -> None:
+        if section is None:
+            self._proposal_source.setText("-")
+            self._proposal_confidence.setText("-")
+            return
+        source = section.alignment.source
+        labels = {
+            "deepslice": "DeepSlice suggestion",
+            "quicknii_default": "Default proposal",
+            "manual": "Manual edit",
+        }
+        self._proposal_source.setText(labels.get(source, "-"))
+        confidence = section.alignment.proposal_confidence
+        self._proposal_confidence.setText("-" if confidence is None else f"{confidence:.3f}")
 
     def set_atlas_name(self, name: str) -> None:
         self._atlas_name = name

@@ -4,6 +4,7 @@ import numpy as np
 
 from verso.engine.model.project import Preprocessing
 from verso.engine.preprocessing import (
+    _sensitive_threshold,
     apply_channel_luminance,
     apply_flip,
     apply_freehand_stroke,
@@ -120,3 +121,45 @@ def test_detect_foreground_bright_tissue_on_dark_background() -> None:
 
     assert mask[40, 40]
     assert not mask[5, 5]
+
+
+def test_sensitive_threshold_includes_more_dim_foreground() -> None:
+    gray = np.full((40, 40), 0.85, dtype=np.float32)
+    gray[10:30, 10:30] = 0.35
+    gray[14:26, 14:26] = 0.1
+
+    base = _sensitive_threshold(
+        gray,
+        bright_background=True,
+        background_level=0.85,
+        sensitivity=0.0,
+    )
+    sensitive = _sensitive_threshold(
+        gray,
+        bright_background=True,
+        background_level=0.85,
+        sensitivity=0.25,
+    )
+
+    assert sensitive > base
+
+
+def test_sensitive_threshold_includes_more_faint_bright_foreground() -> None:
+    gray = np.full((40, 40), 0.05, dtype=np.float32)
+    gray[10:30, 10:30] = 0.45
+    gray[14:26, 14:26] = 0.9
+
+    base = _sensitive_threshold(
+        gray,
+        bright_background=False,
+        background_level=0.05,
+        sensitivity=0.0,
+    )
+    sensitive = _sensitive_threshold(
+        gray,
+        bright_background=False,
+        background_level=0.05,
+        sensitivity=0.25,
+    )
+
+    assert sensitive < base

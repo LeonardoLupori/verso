@@ -12,6 +12,8 @@ import numpy as np
 
 from verso.engine.model.project import Preprocessing
 
+_FOREGROUND_SENSITIVITY = 0.25
+
 
 def apply_flip(image: np.ndarray, preprocessing: Preprocessing) -> np.ndarray:
     """Return a flipped copy of *image* according to *preprocessing* flags.
@@ -144,7 +146,7 @@ def detect_foreground(rgb: np.ndarray) -> np.ndarray:
     uses True=tissue/foreground.
     """
     from scipy import ndimage as ndi
-    from skimage import filters, morphology
+    from skimage import morphology
     from skimage.color import rgb2gray
 
     if rgb.ndim == 2:
@@ -163,7 +165,12 @@ def detect_foreground(rgb: np.ndarray) -> np.ndarray:
     bright_background = float(np.median(border)) >= 0.5
 
     try:
-        threshold = float(filters.threshold_otsu(gray))
+        threshold = _sensitive_threshold(
+            gray,
+            bright_background=bright_background,
+            background_level=float(np.median(border)),
+            sensitivity=_FOREGROUND_SENSITIVITY,
+        )
     except ValueError:
         return np.ones(gray.shape, dtype=bool)
 
@@ -180,6 +187,22 @@ def detect_foreground(rgb: np.ndarray) -> np.ndarray:
     if not _usable_mask(foreground):
         return np.ones(gray.shape, dtype=bool)
     return foreground
+
+
+def _sensitive_threshold(
+    gray: np.ndarray,
+    *,
+    bright_background: bool,
+    background_level: float,
+    sensitivity: float,
+) -> float:
+    from skimage import filters
+
+    threshold = float(filters.threshold_otsu(gray))
+    sensitivity = min(max(float(sensitivity), 0.0), 1.0)
+    if bright_background:
+        return threshold + max(0.0, background_level - threshold) * sensitivity
+    return threshold - max(0.0, threshold - background_level) * sensitivity
 
 
 def _border_values(gray: np.ndarray) -> np.ndarray:

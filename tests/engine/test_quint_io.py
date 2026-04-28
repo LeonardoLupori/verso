@@ -7,6 +7,7 @@ from verso.engine.io.quint_io import (
     _control_points_to_markers,
     _markers_to_control_points,
     _to_quicknii_convention,
+    load_deepslice,
     load_quicknii,
     load_visualign,
     save_quicknii,
@@ -114,6 +115,26 @@ def test_load_quicknii_atlas_name(tmp_path: Path):
 
     project = load_quicknii(p)
     assert project.atlas.name == "allen_mouse_25um"
+
+
+def test_load_deepslice_marks_suggestions_in_progress(tmp_path: Path):
+    data = {
+        **QUICKNII_JSON,
+        "sections": [
+            {**QUICKNII_JSON["sections"][0], "confidence": 0.91},
+            QUICKNII_JSON["sections"][1],
+        ],
+    }
+    p = tmp_path / "ds.json"
+    p.write_text(json.dumps(data))
+
+    project = load_deepslice(p)
+    s0 = project.sections[0]
+
+    assert s0.alignment.status == AlignmentStatus.IN_PROGRESS
+    assert s0.alignment.source == "deepslice"
+    assert s0.alignment.proposal_anchoring == QUICKNII_JSON["sections"][0]["anchoring"]
+    assert s0.alignment.proposal_confidence == 0.91
 
 
 # ---------------------------------------------------------------------------

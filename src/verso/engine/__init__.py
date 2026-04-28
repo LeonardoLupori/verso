@@ -7,6 +7,16 @@ User scripts and the GUI should import from here:
 """
 
 from verso.engine.atlas import AtlasVolume
+from verso.engine.deepslice import (
+    DeepSliceError,
+    DeepSliceOptions,
+    DeepSliceRunResult,
+    DeepSliceSectionSuggestion,
+    apply_deepslice_suggestions,
+    apply_deepslice_suggestions_with_atlas,
+    reset_in_progress_to_default_proposals,
+    run_deepslice_suggestions,
+)
 from verso.engine.io.image_io import (
     ensure_working_copy,
     image_dimensions,
@@ -46,6 +56,10 @@ from verso.engine.warping import find_atlas_position, warp_overlay
 __all__ = [
     # Atlas
     "AtlasVolume",
+    "DeepSliceError",
+    "DeepSliceOptions",
+    "DeepSliceRunResult",
+    "DeepSliceSectionSuggestion",
     # I/O — image
     "ensure_working_copy",
     "image_dimensions",
@@ -79,6 +93,10 @@ __all__ = [
     "scale_anchoring",
     "set_ap_position",
     "vectors_to_anchoring",
+    "apply_deepslice_suggestions",
+    "apply_deepslice_suggestions_with_atlas",
+    "reset_in_progress_to_default_proposals",
+    "run_deepslice_suggestions",
     # Warping
     "find_atlas_position",
     "warp_overlay",

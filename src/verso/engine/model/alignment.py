@@ -52,13 +52,26 @@ class Alignment:
     anchoring: list[float] = field(default_factory=lambda: [0.0] * 9)
     ap_position_mm: float | None = None
     status: AlignmentStatus = AlignmentStatus.NOT_STARTED
+    source: str | None = None
+    proposal_anchoring: list[float] | None = None
+    proposal_confidence: float | None = None
+    proposal_run_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        data = {
             "anchoring": self.anchoring,
             "ap_position_mm": self.ap_position_mm,
             "status": self.status.value,
         }
+        if self.source is not None:
+            data["source"] = self.source
+        if self.proposal_anchoring is not None:
+            data["proposal_anchoring"] = self.proposal_anchoring
+        if self.proposal_confidence is not None:
+            data["proposal_confidence"] = self.proposal_confidence
+        if self.proposal_run_id is not None:
+            data["proposal_run_id"] = self.proposal_run_id
+        return data
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Alignment:
@@ -66,6 +79,10 @@ class Alignment:
             anchoring=d.get("anchoring", [0.0] * 9),
             ap_position_mm=d.get("ap_position_mm"),
             status=AlignmentStatus(d.get("status", "not_started")),
+            source=d.get("source"),
+            proposal_anchoring=d.get("proposal_anchoring"),
+            proposal_confidence=d.get("proposal_confidence"),
+            proposal_run_id=d.get("proposal_run_id"),
         )
 
 

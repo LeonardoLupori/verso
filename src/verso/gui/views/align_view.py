@@ -39,6 +39,8 @@ class AlignView(QWidget):
     alignments_updated = pyqtSignal()
     mode_changed = pyqtSignal(str)  # "align" or "warp"
     reverse_requested = pyqtSignal()
+    deepslice_requested = pyqtSignal()
+    default_proposal_requested = pyqtSignal()
 
     # Pixel distance threshold (in normalised units × display size) for
     # picking an existing control point
@@ -235,6 +237,32 @@ class AlignView(QWidget):
         h.addStretch()
 
         # Series / Store / Clear
+        self._deepslice_btn = QPushButton("Run DeepSlice")
+        self._deepslice_btn.setFixedHeight(28)
+        self._deepslice_btn.setToolTip("Generate editable affine suggestions with DeepSlice")
+        self._deepslice_btn.setStyleSheet(
+            "QPushButton { border-radius: 4px; padding: 2px 10px; color: #ccc;"
+            " background: #383838; border: 1px solid #555; }"
+            "QPushButton:hover { background: #484848; }"
+            "QPushButton:disabled { color: #555; background: #2a2a2a; border-color: #333; }"
+        )
+        self._deepslice_btn.setEnabled(False)
+        self._deepslice_btn.clicked.connect(self.deepslice_requested)
+        h.addWidget(self._deepslice_btn)
+
+        self._default_btn = QPushButton("Default proposal")
+        self._default_btn.setFixedHeight(28)
+        self._default_btn.setToolTip("Revert editable suggestions to VERSO's default AP proposal")
+        self._default_btn.setStyleSheet(
+            "QPushButton { border-radius: 4px; padding: 2px 10px; color: #ccc;"
+            " background: #383838; border: 1px solid #555; }"
+            "QPushButton:hover { background: #484848; }"
+            "QPushButton:disabled { color: #555; background: #2a2a2a; border-color: #333; }"
+        )
+        self._default_btn.setEnabled(False)
+        self._default_btn.clicked.connect(self.default_proposal_requested)
+        h.addWidget(self._default_btn)
+
         self._reverse_btn = QPushButton("Reverse proposal")
         self._reverse_btn.setFixedHeight(28)
         self._reverse_btn.setToolTip(
@@ -302,6 +330,8 @@ class AlignView(QWidget):
         self._cp_dragging = -1
         is_align = (mode == "align")
         self._reverse_btn.setVisible(is_align)
+        self._deepslice_btn.setVisible(is_align)
+        self._default_btn.setVisible(is_align)
         self._store_btn.setVisible(is_align)
         self._clear_btn.setVisible(is_align)
         self._clear_cps_btn.setVisible(not is_align)
@@ -329,6 +359,12 @@ class AlignView(QWidget):
     def set_reverse_enabled(self, enabled: bool) -> None:
         """Enable the series reverse command when no alignment is stored."""
         self._reverse_btn.setEnabled(enabled)
+
+    def set_deepslice_enabled(self, enabled: bool, running: bool = False) -> None:
+        """Enable DeepSlice proposal controls."""
+        self._deepslice_btn.setEnabled(enabled and not running)
+        self._deepslice_btn.setText("DeepSlice running..." if running else "Run DeepSlice")
+        self._default_btn.setEnabled(enabled and not running)
 
     def load_section(self, section: Section | None) -> None:
         self._section = section
@@ -612,6 +648,10 @@ class AlignView(QWidget):
         self._section.alignment.anchoring = [0.0] * 9
         self._section.alignment.ap_position_mm = None
         self._section.alignment.status = AlignmentStatus.NOT_STARTED
+        self._section.alignment.source = None
+        self._section.alignment.proposal_anchoring = None
+        self._section.alignment.proposal_confidence = None
+        self._section.alignment.proposal_run_id = None
         self.alignments_updated.emit()
         self._clear_btn.setEnabled(True)
 

@@ -1,4 +1,4 @@
-"""Save and load project.json."""
+"""Save and load VERSO project files."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ def save_project(project: Project, path: Path) -> None:
 
     Args:
         project: The project to save.
-        path: Destination file path (typically ``<project_dir>/project.json``).
+        path: Destination file path.
     """
     raise NotImplementedError
 
@@ -21,7 +21,7 @@ def load_project(path: Path) -> Project:
     """Deserialise a project from *path*.
 
     Args:
-        path: Path to ``project.json``.
+        path: Path to a project JSON file.
 
     Returns:
         Reconstructed :class:`~verso.engine.model.project.Project`.

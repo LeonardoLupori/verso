@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QObject, QSettings, Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QAction, QKeySequence
 from PyQt6.QtWidgets import (
     QDockWidget,
@@ -34,7 +34,7 @@ from PyQt6.QtWidgets import (
 
 from verso.engine.io.quint_io import load_quicknii, load_visualign
 from verso.engine.model.alignment import AlignmentStatus
-from verso.engine.model.project import Project
+from verso.engine.model.project import DEFAULT_PROJECT_FILENAME, Project
 from verso.gui.dialogs.new_project import NewProjectDialog
 from verso.gui.state import AppState
 from verso.gui.views.align_view import AlignView
@@ -46,6 +46,39 @@ from verso.gui.widgets.properties import PropertiesPanel
 _VIEW_OVERVIEW = 0
 _VIEW_PREP = 1
 _VIEW_ALIGN = 2
+_DEEPSLICE_PATH_KEY = "deepslice/env_path"
+
+
+class _DeepSliceWorker(QObject):
+    done = pyqtSignal(object)
+    error = pyqtSignal(str)
+
+    def __init__(
+        self,
+        project: Project,
+        python_executable: str,
+        reverse_section_order: bool = False,
+    ) -> None:
+        super().__init__()
+        self._project = project
+        self._python_executable = python_executable
+        self._reverse_section_order = reverse_section_order
+
+    def run(self) -> None:
+        try:
+            from verso.engine.deepslice import DeepSliceOptions, run_deepslice_suggestions
+
+            result = run_deepslice_suggestions(
+                self._project,
+                self._python_executable,
+                DeepSliceOptions(
+                    species="mouse",
+                    reverse_section_order=self._reverse_section_order,
+                ),
+            )
+            self.done.emit(result)
+        except Exception as exc:
+            self.error.emit(str(exc))
 
 
 class MainWindow(QMainWindow):
@@ -57,6 +90,8 @@ class MainWindow(QMainWindow):
         self._state = AppState(self)
         self._current_mode = "overview"
         self._reverse_ap_proposal = False
+        self._deepslice_thread: QThread | None = None
+        self._deepslice_worker: _DeepSliceWorker | None = None
 
         self._build_menu()
         self._build_toolbar()
@@ -67,6 +102,14 @@ class MainWindow(QMainWindow):
         self._switch_view(_VIEW_OVERVIEW)
 
     def closeEvent(self, event) -> None:
+        if self._deepslice_thread and self._deepslice_thread.isRunning():
+            QMessageBox.information(
+                self,
+                "DeepSlice is running",
+                "Wait for the DeepSlice proposal run to finish before closing VERSO.",
+            )
+            event.ignore()
+            return
         self._save_prep_mask_before_transition()
         super().closeEvent(event)
 
@@ -98,6 +141,10 @@ class MainWindow(QMainWindow):
         act_open_va = QAction("Open &VisuAlign…", self)
         act_open_va.triggered.connect(self._open_visualign)
         file_menu.addAction(act_open_va)
+
+        act_configure_ds = QAction("Configure &DeepSlice Runtime…", self)
+        act_configure_ds.triggered.connect(self._configure_deepslice)
+        file_menu.addAction(act_configure_ds)
 
         file_menu.addSeparator()
 
@@ -238,6 +285,8 @@ class MainWindow(QMainWindow):
         self._align.alignments_updated.connect(self._on_alignments_updated)
         self._align.mode_changed.connect(self._props.set_align_warp_mode)
         self._align.reverse_requested.connect(self._reverse_section_order)
+        self._align.deepslice_requested.connect(self._run_deepslice)
+        self._align.default_proposal_requested.connect(self._revert_to_default_proposal)
         self._props.cp_style_changed.connect(
             lambda size, shape, color: self._align.set_cp_style(size, shape, color)
         )
@@ -280,6 +329,7 @@ class MainWindow(QMainWindow):
         # Refresh properties with current section
         self._refresh_properties()
         self._update_reverse_order_enabled()
+        self._update_deepslice_enabled()
 
     # ------------------------------------------------------------------
     # Project loading
@@ -291,7 +341,7 @@ class MainWindow(QMainWindow):
             self,
             "Open VERSO Project",
             "",
-            "VERSO project (project.json);;JSON files (*.json);;All files (*)",
+            "VERSO project (*.json);;JSON files (*.json);;All files (*)",
         )
         if path:
             try:
@@ -342,7 +392,9 @@ class MainWindow(QMainWindow):
         if self._state.project is None:
             return
         current_path = self._state.project_path
-        suggested = str(current_path) if current_path is not None else "project.json"
+        suggested = (
+            str(current_path) if current_path is not None else DEFAULT_PROJECT_FILENAME
+        )
         path, _ = QFileDialog.getSaveFileName(
             self, "Save Project As", suggested, "JSON files (*.json)"
         )
@@ -391,6 +443,7 @@ class MainWindow(QMainWindow):
         self._overview.load_project(project)
         self._filmstrip.populate(project.sections)
         self._update_reverse_order_enabled()
+        self._update_deepslice_enabled()
 
         if project.atlas:
             self._props.set_atlas_name(project.atlas.name)
@@ -412,10 +465,12 @@ class MainWindow(QMainWindow):
                 self._align.update_overlay()
                 self._update_ap_plot()
                 self._update_reverse_order_enabled()
+                self._update_deepslice_enabled()
 
     def _on_atlas_error(self, message: str) -> None:
         from PyQt6.QtWidgets import QMessageBox
         self._props.set_atlas_loading(False)
+        self._update_deepslice_enabled()
         QMessageBox.warning(self, "Atlas load failed", message)
 
     def _on_section_changed(self, index: int) -> None:
@@ -429,6 +484,7 @@ class MainWindow(QMainWindow):
 
         self._refresh_properties()
         self._update_ap_plot()
+        self._update_deepslice_enabled()
 
     def _on_section_activated(self, index: int) -> None:
         """Double-click in Overview → switch to Prep."""
@@ -506,6 +562,8 @@ class MainWindow(QMainWindow):
         if section is None:
             return
         section.alignment.ap_position_mm = ap_mm
+        if section.alignment.status != AlignmentStatus.COMPLETE:
+            section.alignment.source = "manual"
         if atlas is not None:
             from verso.engine.registration import set_ap_position
             anchoring = section.alignment.anchoring
@@ -519,6 +577,7 @@ class MainWindow(QMainWindow):
         self._overview.refresh_row(self._state.section_index)
         self._update_ap_plot()
         self._update_reverse_order_enabled()
+        self._refresh_properties()
 
     def _on_anchoring_changed(self, anchoring: list[float]) -> None:
         """Navigator panel changed the cut origin — sync AP spinbox."""
@@ -529,8 +588,11 @@ class MainWindow(QMainWindow):
             section = self._state.current_section
             if section is not None:
                 section.alignment.ap_position_mm = ap_mm
+                if section.alignment.status != AlignmentStatus.COMPLETE:
+                    section.alignment.source = "manual"
         self._overview.refresh_row(self._state.section_index)
         self._update_ap_plot()
+        self._refresh_properties()
 
     def _on_alignments_updated(self) -> None:
         """Store or Clear was clicked — re-interpolate all non-stored sections."""
@@ -545,9 +607,11 @@ class MainWindow(QMainWindow):
         self._filmstrip.refresh_stored()
         self._update_ap_plot()
         self._update_reverse_order_enabled()
+        self._update_deepslice_enabled()
 
     def _on_align_modified(self) -> None:
         self._overview.refresh_row(self._state.section_index)
+        self._refresh_properties()
 
     def _reverse_section_order(self) -> None:
         """Reverse the startup AP proposal before any alignment is stored."""
@@ -572,6 +636,10 @@ class MainWindow(QMainWindow):
             section.alignment.anchoring = [0.0] * 9
             section.alignment.ap_position_mm = None
             section.alignment.status = AlignmentStatus.NOT_STARTED
+            section.alignment.source = None
+            section.alignment.proposal_anchoring = None
+            section.alignment.proposal_confidence = None
+            section.alignment.proposal_run_id = None
             section.warp.control_points.clear()
             section.warp.status = AlignmentStatus.NOT_STARTED
 
@@ -582,6 +650,7 @@ class MainWindow(QMainWindow):
         self._on_section_changed(self._state.section_index)
         self._update_ap_plot()
         self._update_reverse_order_enabled()
+        self._update_deepslice_enabled()
 
     def _update_reverse_order_enabled(self) -> None:
         project = self._state.project
@@ -597,6 +666,15 @@ class MainWindow(QMainWindow):
             and len(project.sections) > 1
             and not has_stored_alignment
         )
+
+    def _update_deepslice_enabled(self, running: bool = False) -> None:
+        project = self._state.project
+        enabled = (
+            project is not None
+            and bool(project.sections)
+            and self._state.atlas is not None
+        )
+        self._align.set_deepslice_enabled(enabled, running=running)
 
     def _sync_ap_mm(self, sections: list) -> None:
         """Populate ap_position_mm for every section that has a valid anchoring."""
@@ -654,9 +732,176 @@ class MainWindow(QMainWindow):
         ):
             if stored is not None:
                 continue
+            has_existing = section.alignment.anchoring and any(
+                v != 0.0 for v in section.alignment.anchoring
+            )
+            if (
+                has_existing
+                and section.alignment.status != AlignmentStatus.NOT_STARTED
+                and section.alignment.source != "quicknii_default"
+            ):
+                continue
             section.alignment.anchoring = anchoring
             if section.alignment.status == AlignmentStatus.NOT_STARTED:
                 section.alignment.status = AlignmentStatus.IN_PROGRESS
+            section.alignment.source = "quicknii_default"
+
+    def _run_deepslice(self) -> None:
+        project = self._state.project
+        if project is None:
+            return
+        if self._deepslice_thread and self._deepslice_thread.isRunning():
+            return
+
+        executable = self._configured_deepslice_python()
+        if executable is None:
+            if not self._configure_deepslice():
+                return
+            executable = self._configured_deepslice_python()
+        if executable is None:
+            QMessageBox.warning(
+                self,
+                "DeepSlice not configured",
+                "Select a Python environment folder or executable with DeepSlice installed first.",
+            )
+            return
+
+        self._update_deepslice_enabled(running=True)
+        self.statusBar().showMessage("Running DeepSlice suggestions...")
+
+        thread = QThread(self)
+        worker = _DeepSliceWorker(
+            project,
+            executable,
+            reverse_section_order=self._reverse_ap_proposal,
+        )
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.done.connect(self._on_deepslice_done)
+        worker.error.connect(self._on_deepslice_error)
+        worker.done.connect(thread.quit)
+        worker.error.connect(thread.quit)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(self._on_deepslice_finished)
+        self._deepslice_thread = thread
+        self._deepslice_worker = worker
+        thread.start()
+
+    def _configure_deepslice(self) -> bool:
+        box = QMessageBox(self)
+        box.setWindowTitle("Select DeepSlice Runtime")
+        box.setText("Choose how to locate a Python runtime that has DeepSlice installed.")
+        env_btn = box.addButton("Environment folder", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("Python executable", QMessageBox.ButtonRole.ActionRole)
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(env_btn)
+        box.exec()
+
+        clicked = box.clickedButton()
+        if clicked is None or clicked == box.button(QMessageBox.StandardButton.Cancel):
+            return False
+
+        settings = QSettings("VERSO", "VERSO")
+        current = str(settings.value(_DEEPSLICE_PATH_KEY, ""))
+        if clicked == env_btn:
+            path = QFileDialog.getExistingDirectory(
+                self,
+                "Select DeepSlice Runtime",
+                current,
+            )
+        else:
+            path, _ = QFileDialog.getOpenFileName(
+                self,
+                "Select DeepSlice Runtime",
+                current,
+                "Python executable (python.exe python);;All files (*)",
+            )
+        if not path:
+            return False
+
+        settings.setValue(_DEEPSLICE_PATH_KEY, path)
+        executable = self._python_executable_from_deepslice_path(path)
+        if executable is None:
+            QMessageBox.warning(
+                self,
+                "DeepSlice path saved",
+                "The path was saved, but VERSO could not find a Python executable there.",
+            )
+        else:
+            self.statusBar().showMessage(f"DeepSlice Python set to {executable}", 5000)
+        return True
+
+    def _configured_deepslice_python(self) -> str | None:
+        settings = QSettings("VERSO", "VERSO")
+        path = settings.value(_DEEPSLICE_PATH_KEY, "")
+        if not path:
+            return None
+        return self._python_executable_from_deepslice_path(str(path))
+
+    def _python_executable_from_deepslice_path(self, path: str) -> str | None:
+        p = Path(path)
+        if p.is_file():
+            return str(p)
+
+        candidates = [
+            p / "python.exe",
+            p / "Scripts" / "python.exe",
+            p / "bin" / "python",
+            p / "bin" / "python3",
+        ]
+        for candidate in candidates:
+            if candidate.exists() and candidate.is_file():
+                return str(candidate)
+        return None
+
+    def _on_deepslice_done(self, result) -> None:
+        project = self._state.project
+        atlas = self._state.atlas
+        if project is None:
+            return
+        from verso.engine.deepslice import apply_deepslice_suggestions_with_atlas
+
+        applied = apply_deepslice_suggestions_with_atlas(
+            project,
+            result,
+            atlas.shape if atlas is not None else None,
+        )
+        if atlas is not None:
+            self._sync_ap_mm(project.sections)
+        self._overview.refresh()
+        self._filmstrip.refresh_stored()
+        self._align.refresh_display()
+        self._refresh_properties()
+        self._update_ap_plot()
+        self.statusBar().showMessage(f"Applied {applied} DeepSlice suggestions", 5000)
+
+    def _on_deepslice_error(self, message: str) -> None:
+        QMessageBox.warning(self, "DeepSlice failed", message)
+        self.statusBar().showMessage("DeepSlice failed", 5000)
+
+    def _on_deepslice_finished(self) -> None:
+        self._deepslice_thread = None
+        self._deepslice_worker = None
+        self._update_deepslice_enabled(running=False)
+
+    def _revert_to_default_proposal(self) -> None:
+        project = self._state.project
+        atlas = self._state.atlas
+        if project is None or atlas is None:
+            return
+        from verso.engine.deepslice import reset_in_progress_to_default_proposals
+
+        changed = reset_in_progress_to_default_proposals(
+            project.sections,
+            atlas.shape,
+            reverse_ap=self._reverse_ap_proposal,
+        )
+        self._sync_ap_mm(project.sections)
+        self._overview.refresh()
+        self._filmstrip.refresh_stored()
+        self._on_section_changed(self._state.section_index)
+        self._update_ap_plot()
+        self.statusBar().showMessage(f"Restored {changed} default proposals", 3000)
 
     def _update_ap_plot(self) -> None:
         project = self._state.project

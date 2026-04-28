@@ -216,9 +216,16 @@ def load_deepslice(path: Path, atlas_name: str = "allen_mouse_25um") -> Project:
     (since DeepSlice results typically still need manual refinement).
     """
     project = load_quicknii(path, atlas_name=atlas_name)
-    for section in project.sections:
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    raw_sections = data.get("slices") or data.get("sections", [])
+    for section, raw in zip(project.sections, raw_sections):
         if section.alignment.status == AlignmentStatus.COMPLETE:
             section.alignment.status = AlignmentStatus.IN_PROGRESS
+            section.alignment.source = "deepslice"
+            section.alignment.proposal_anchoring = list(section.alignment.anchoring)
+            confidence = raw.get("confidence")
+            if confidence is not None:
+                section.alignment.proposal_confidence = float(confidence)
     return project
 
 

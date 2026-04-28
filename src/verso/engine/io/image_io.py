@@ -95,18 +95,38 @@ def image_dimensions(path: str | Path) -> tuple[int, int]:
         return im.size
 
 
-def imadjust(rgb: np.ndarray, low_pct: float = 2.0, high_pct: float = 98.0) -> np.ndarray:
-    """Percentile-based contrast stretch, similar to MATLAB imadjust.
+def imadjust(
+    rgb: np.ndarray,
+    low_pct: float = 1.0,
+    high_pct: float = 99.8,
+) -> np.ndarray:
+    """Mild percentile contrast stretch, similar to MATLAB imadjust.
 
-    Clips pixel values to [low_pct, high_pct] percentiles (computed across the
-    whole image, not per-channel, to preserve colour balance) and remaps to
-    [0, 255].  Input must be uint8 H×W×3.
+    For colour thumbnails, red and green are stretched independently using
+    MATLAB-like 1/99.8 percentiles while blue is left at its original 0-255
+    range. Grayscale RGB images are adjusted uniformly across all channels.
     """
-    lo = float(np.percentile(rgb, low_pct))
-    hi = float(np.percentile(rgb, high_pct))
+    if rgb.ndim != 3 or rgb.shape[2] < 3:
+        return _stretch_uint8(rgb, low_pct, high_pct)
+
+    if np.array_equal(rgb[:, :, 0], rgb[:, :, 1]) and np.array_equal(
+        rgb[:, :, 0], rgb[:, :, 2]
+    ):
+        adjusted = _stretch_uint8(rgb[:, :, 0], low_pct, high_pct)
+        return np.stack([adjusted, adjusted, adjusted], axis=-1)
+
+    out = rgb.copy()
+    for channel in (0, 1):
+        out[:, :, channel] = _stretch_uint8(rgb[:, :, channel], low_pct, high_pct)
+    return out
+
+
+def _stretch_uint8(image: np.ndarray, low_pct: float, high_pct: float) -> np.ndarray:
+    lo = float(np.percentile(image, low_pct))
+    hi = float(np.percentile(image, high_pct))
     if hi <= lo:
-        return rgb
-    out = (rgb.astype(np.float32) - lo) * (255.0 / (hi - lo))
+        return image.copy()
+    out = (image.astype(np.float32) - lo) * (255.0 / (hi - lo))
     return out.clip(0, 255).astype(np.uint8)
 
 

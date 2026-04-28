@@ -2,7 +2,7 @@
 
 Collects:
   - Project name
-  - Project folder (where project.json and subfolders will be created)
+  - Project file path
   - Atlas selection
   - One or more section image files (TIFF / PNG / JPEG)
 
@@ -36,7 +36,7 @@ from PyQt6.QtWidgets import (
 
 from verso.engine.io.image_io import parse_section_serial_number, thumbnail_filename
 from verso.engine.model.alignment import Alignment, AlignmentStatus, WarpState
-from verso.engine.model.project import AtlasRef, Project, Section
+from verso.engine.model.project import DEFAULT_PROJECT_FILENAME, AtlasRef, Project, Section
 
 _KNOWN_ATLASES = [
     "allen_mouse_25um",
@@ -69,17 +69,17 @@ class NewProjectDialog(QDialog):
         self._name_edit = QLineEdit("My Experiment")
         form.addRow("Name:", self._name_edit)
 
-        folder_row = QWidget()
-        h = QHBoxLayout(folder_row)
+        file_row = QWidget()
+        h = QHBoxLayout(file_row)
         h.setContentsMargins(0, 0, 0, 0)
-        self._folder_edit = QLineEdit()
-        self._folder_edit.setPlaceholderText("Choose a folder…")
+        self._project_file_edit = QLineEdit()
+        self._project_file_edit.setPlaceholderText("Choose where to save the project…")
         browse_btn = QPushButton("Browse…")
         browse_btn.setFixedWidth(80)
-        browse_btn.clicked.connect(self._browse_folder)
-        h.addWidget(self._folder_edit)
+        browse_btn.clicked.connect(self._browse_project_file)
+        h.addWidget(self._project_file_edit)
         h.addWidget(browse_btn)
-        form.addRow("Project folder:", folder_row)
+        form.addRow("Project file:", file_row)
 
         self._atlas_combo = QComboBox()
         self._atlas_combo.addItems(_KNOWN_ATLASES)
@@ -128,10 +128,20 @@ class NewProjectDialog(QDialog):
     # Slots
     # ------------------------------------------------------------------
 
-    def _browse_folder(self) -> None:
-        folder = QFileDialog.getExistingDirectory(self, "Select Project Folder")
-        if folder:
-            self._folder_edit.setText(folder)
+    def _browse_project_file(self) -> None:
+        current = self._project_file_edit.text().strip()
+        suggested = current if current else DEFAULT_PROJECT_FILENAME
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Project File",
+            suggested,
+            "JSON files (*.json);;All files (*)",
+        )
+        if path:
+            project_path = Path(path)
+            if project_path.suffix == "":
+                project_path = project_path.with_suffix(".json")
+            self._project_file_edit.setText(str(project_path))
 
     def _add_images(self) -> None:
         paths, _ = QFileDialog.getOpenFileNames(
@@ -171,20 +181,25 @@ class NewProjectDialog(QDialog):
 
     def _on_accept(self) -> None:
         name = self._name_edit.text().strip()
-        folder = self._folder_edit.text().strip()
+        project_file = self._project_file_edit.text().strip()
         atlas = self._atlas_combo.currentText().strip()
 
         if not name:
             QMessageBox.warning(self, "Missing field", "Please enter a project name.")
             return
-        if not folder:
-            QMessageBox.warning(self, "Missing field", "Please choose a project folder.")
+        if not project_file:
+            QMessageBox.warning(self, "Missing field", "Please choose a project file.")
             return
         if self._file_list.count() == 0:
             QMessageBox.warning(self, "No images", "Please add at least one section image.")
             return
 
-        folder_path = Path(folder)
+        project_path = Path(project_file)
+        if project_path.suffix == "":
+            project_path = project_path.with_suffix(".json")
+            self._project_file_edit.setText(str(project_path))
+
+        folder_path = project_path.parent
         folder_path.mkdir(parents=True, exist_ok=True)
         (folder_path / "thumbnails").mkdir(exist_ok=True)
         (folder_path / "masks").mkdir(exist_ok=True)
@@ -214,7 +229,7 @@ class NewProjectDialog(QDialog):
             atlas=AtlasRef(name=atlas),
             sections=sections,
         )
-        self._project_path = folder_path / "project.json"
+        self._project_path = project_path
         self._project.save(self._project_path)
 
         # Generate working-resolution thumbnails now so all views load quickly.

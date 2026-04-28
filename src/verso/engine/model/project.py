@@ -7,6 +7,8 @@ from typing import Any
 
 from verso.engine.model.alignment import Alignment, WarpState
 
+DEFAULT_PROJECT_FILENAME = "project-verso.json"
+
 
 @dataclass
 class AtlasRef:
@@ -114,7 +116,7 @@ class Project:
         }
 
     def save(self, path: Path) -> None:
-        """Write project state to project.json."""
+        """Write project state to disk."""
         path.write_text(json.dumps(self.to_dict(), indent=2), encoding="utf-8")
 
     @classmethod
@@ -128,6 +130,6 @@ class Project:
 
     @classmethod
     def load(cls, path: Path) -> Project:
-        """Load a project from project.json."""
+        """Load a project from disk."""
         data = json.loads(path.read_text(encoding="utf-8"))
         return cls.from_dict(data)
