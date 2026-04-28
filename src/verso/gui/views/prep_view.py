@@ -44,6 +44,7 @@ class PrepView(QWidget):
         self._current_mask: np.ndarray | None = None
         self._mask_dirty = False
         self._mask_opacity = 0.4
+        self._mask_color = (255, 255, 255)
         self._negative_mask = False
         self._mask_visible = True
         self._red_luminance = 1.0
@@ -121,7 +122,7 @@ class PrepView(QWidget):
         undo_btn = QToolButton()
         undo_btn.setText("U")
         undo_btn.setFont(undo_font)
-        undo_btn.setToolTip("Undo (Ctrl+Z)")
+        undo_btn.setToolTip("Undo (U or Ctrl+Z)")
         undo_btn.setFixedSize(36, 36)
         undo_btn.setStyleSheet(
             "QToolButton { color: #ccc; border-radius: 4px; }"
@@ -139,9 +140,9 @@ class PrepView(QWidget):
             (Qt.Key.Key_D, lambda: self._set_tool("erase")),
             (Qt.Key.Key_M, lambda: self.set_mask_visible(not self._mask_visible)),
             (Qt.Key.Key_N, lambda: self.set_mask_negative(not self._negative_mask)),
-            (Qt.Key.Key_Space, lambda: self.set_mask_negative(not self._negative_mask)),
             (Qt.Key.Key_R, self.toggle_red_channel),
             (Qt.Key.Key_G, self.toggle_green_channel),
+            (Qt.Key.Key_U, self.undo_mask_edit),
             (QKeySequence.StandardKey.Undo, self.undo_mask_edit),
             (Qt.Key.Key_Return, self.save_current_mask),
             (Qt.Key.Key_Enter, self.save_current_mask),
@@ -205,6 +206,10 @@ class PrepView(QWidget):
 
     def set_mask_opacity(self, opacity: float) -> None:
         self._mask_opacity = min(max(opacity, 0.0), 1.0)
+        self._update_mask_overlay()
+
+    def set_mask_color(self, color: tuple[int, int, int]) -> None:
+        self._mask_color = color
         self._update_mask_overlay()
 
     def set_channel_luminance(self, red: float, green: float) -> None:
@@ -311,6 +316,7 @@ class PrepView(QWidget):
             display_mask,
             negative=self._negative_mask,
             opacity=self._mask_opacity,
+            color=self._mask_color,
         )
         h, w = display_mask.shape
         self._canvas.set_overlay(rgba, display_w=w, display_h=h)

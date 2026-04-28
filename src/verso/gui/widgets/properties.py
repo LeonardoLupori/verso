@@ -28,6 +28,15 @@ from PyQt6.QtWidgets import (
 
 from verso.engine.model.project import Section
 
+_MASK_COLORS: dict[str, tuple[int, int, int]] = {
+    "White": (255, 255, 255),
+    "Cyan": (0, 210, 210),
+    "Yellow": (255, 230, 0),
+    "Magenta": (220, 0, 220),
+    "Green": (80, 220, 80),
+    "Orange": (255, 140, 0),
+}
+
 
 class _OverviewProperties(QWidget):
     """Properties panel content for the Overview view."""
@@ -79,6 +88,7 @@ class _PrepProperties(QWidget):
     mask_visibility_changed = pyqtSignal(bool)
     lr_visibility_changed = pyqtSignal(bool)
     mask_opacity_changed = pyqtSignal(float)
+    mask_color_changed = pyqtSignal(tuple)
     mask_negative_changed = pyqtSignal(bool)
     autodetect_requested = pyqtSignal()
     save_mask_requested = pyqtSignal()
@@ -161,6 +171,12 @@ class _PrepProperties(QWidget):
         opacity_row.addWidget(self._opacity_slider, stretch=1)
         opacity_row.addWidget(self._opacity_value)
         mask_layout.addLayout(opacity_row)
+
+        self._mask_color_combo = QComboBox()
+        for name, rgb in _MASK_COLORS.items():
+            self._mask_color_combo.addItem(name, rgb)
+        self._mask_color_combo.currentIndexChanged.connect(self._emit_mask_color)
+        mask_layout.addWidget(self._mask_color_combo)
         layout.addWidget(mask_box)
 
         edit_box = QGroupBox("Mask editing")
@@ -228,6 +244,9 @@ class _PrepProperties(QWidget):
         opacity = self._opacity_slider.value() / 100.0
         self._opacity_value.setText(f"{opacity:.2f}")
         self.mask_opacity_changed.emit(opacity)
+
+    def _emit_mask_color(self) -> None:
+        self.mask_color_changed.emit(self._mask_color_combo.currentData())
 
     def _section_dimensions(self, section: Section) -> str:
         try:
@@ -497,6 +516,7 @@ class PropertiesPanel(QWidget):
     mask_visibility_changed = pyqtSignal(bool)
     lr_visibility_changed = pyqtSignal(bool)
     mask_opacity_changed = pyqtSignal(float)
+    mask_color_changed = pyqtSignal(tuple)
     mask_negative_changed = pyqtSignal(bool)
     autodetect_requested = pyqtSignal()
     save_mask_requested = pyqtSignal()
@@ -529,6 +549,7 @@ class PropertiesPanel(QWidget):
         self._prep_page.mask_visibility_changed.connect(self.mask_visibility_changed)
         self._prep_page.lr_visibility_changed.connect(self.lr_visibility_changed)
         self._prep_page.mask_opacity_changed.connect(self.mask_opacity_changed)
+        self._prep_page.mask_color_changed.connect(self.mask_color_changed)
         self._prep_page.mask_negative_changed.connect(self.mask_negative_changed)
         self._prep_page.autodetect_requested.connect(self.autodetect_requested)
         self._prep_page.save_mask_requested.connect(self.save_mask_requested)

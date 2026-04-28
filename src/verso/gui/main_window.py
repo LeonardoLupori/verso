@@ -268,6 +268,7 @@ class MainWindow(QMainWindow):
         self._props.channel_luminance_changed.connect(self._prep.set_channel_luminance)
         self._props.mask_visibility_changed.connect(self._prep.set_mask_visible)
         self._props.mask_opacity_changed.connect(self._prep.set_mask_opacity)
+        self._props.mask_color_changed.connect(self._prep.set_mask_color)
         self._props.mask_negative_changed.connect(self._prep.set_mask_negative)
         self._props.autodetect_requested.connect(self._on_prep_autodetect_requested)
         self._props.save_mask_requested.connect(self._on_prep_save_mask_requested)
