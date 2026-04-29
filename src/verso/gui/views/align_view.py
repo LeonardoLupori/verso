@@ -25,8 +25,8 @@ if TYPE_CHECKING:
 
 # Scale increment per button click (2 %, matching QuickNII)
 _SCALE_STEP = 1.02
-# Translation per click in atlas voxels (~625 µm for Allen 25 µm atlas)
-_MOVE_STEP = 5
+# Translation per click in atlas voxels. One voxel matches atlas-native resolution.
+_MOVE_STEP = 1
 # In-plane rotation per click, in degrees.
 _ROTATE_STEP_DEG = 1.0
 
@@ -489,10 +489,17 @@ class AlignView(QWidget):
         if self._section is None:
             return
         self._section.alignment.anchoring = new_anchoring
-        if self._atlas is not None:
-            self._section.alignment.ap_position_mm = self._atlas.ap_voxel_to_mm(new_anchoring[1])
+        self._sync_ap_from_anchoring(new_anchoring)
         self._update_overlay()
         self.anchoring_changed.emit(new_anchoring)
+
+    def _sync_ap_from_anchoring(self, anchoring: list[float]) -> None:
+        if self._section is None or self._atlas is None:
+            return
+        center = self._atlas.cut_center(anchoring)
+        self._section.alignment.ap_position_mm = self._atlas.ap_voxel_to_mm(
+            center[self._atlas.ap_axis]
+        )
 
     def _on_overlay_panned(self, dx: float, dy: float) -> None:
         if self._section is None or self._raw_image is None:
@@ -507,8 +514,7 @@ class AlignView(QWidget):
         new_o = o - (dx / w_bg) * u - (dy / h_bg) * v
         new_anchoring = new_o.tolist() + anchoring[3:]
         self._section.alignment.anchoring = new_anchoring
-        if self._atlas is not None:
-            self._section.alignment.ap_position_mm = self._atlas.ap_voxel_to_mm(new_anchoring[1])
+        self._sync_ap_from_anchoring(new_anchoring)
         self._update_overlay()
         self.anchoring_changed.emit(new_anchoring)
 
@@ -555,8 +561,7 @@ class AlignView(QWidget):
         from verso.engine.registration import scale_anchoring
         new_anchoring = scale_anchoring(anchoring, scale_u, scale_v)
         self._section.alignment.anchoring = new_anchoring
-        if self._atlas is not None:
-            self._section.alignment.ap_position_mm = self._atlas.ap_voxel_to_mm(new_anchoring[1])
+        self._sync_ap_from_anchoring(new_anchoring)
         self._update_overlay()
         self.anchoring_changed.emit(new_anchoring)
 
@@ -574,8 +579,7 @@ class AlignView(QWidget):
         new_anchoring = list(anchoring)
         new_anchoring[axis] += delta
         self._section.alignment.anchoring = new_anchoring
-        if self._atlas is not None:
-            self._section.alignment.ap_position_mm = self._atlas.ap_voxel_to_mm(new_anchoring[1])
+        self._sync_ap_from_anchoring(new_anchoring)
         self._update_overlay()
         self.anchoring_changed.emit(new_anchoring)
 
@@ -620,8 +624,7 @@ class AlignView(QWidget):
         new_o = center - u_new / 2.0 - v_new / 2.0
         new_anchoring = vectors_to_anchoring(new_o, u_new, v_new)
         self._section.alignment.anchoring = new_anchoring
-        if self._atlas is not None:
-            self._section.alignment.ap_position_mm = self._atlas.ap_voxel_to_mm(new_anchoring[1])
+        self._sync_ap_from_anchoring(new_anchoring)
         self._update_overlay()
         self.anchoring_changed.emit(new_anchoring)
 

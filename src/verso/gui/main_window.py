@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QMainWindow,
     QMessageBox,
+    QProgressDialog,
     QPushButton,
     QSizePolicy,
     QStackedWidget,
@@ -81,6 +82,38 @@ class _DeepSliceWorker(QObject):
             self.error.emit(str(exc))
 
 
+class _BatchMaskWorker(QObject):
+    done = pyqtSignal(int, list)
+
+    def __init__(self, sections: list) -> None:
+        super().__init__()
+        self._sections = sections
+
+    def run(self) -> None:
+        errors: list[str] = []
+        completed = 0
+        from pathlib import Path
+
+        from verso.engine.io.image_io import ensure_working_copy
+        from verso.engine.preprocessing import detect_foreground, save_mask
+
+        for section in self._sections:
+            try:
+                image = ensure_working_copy(section)
+                if image is None:
+                    errors.append(f"{Path(section.original_path).name}: no readable image")
+                    continue
+                mask = detect_foreground(image)
+                masks_dir = Path(section.thumbnail_path).parent.parent / "masks"
+                mask_path = masks_dir / f"{Path(section.original_path).stem}-slice-mask.png"
+                save_mask(mask, mask_path)
+                section.preprocessing.slice_mask_path = str(mask_path)
+                completed += 1
+            except Exception as exc:
+                errors.append(f"{Path(section.original_path).name}: {exc}")
+        self.done.emit(completed, errors)
+
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -92,6 +125,10 @@ class MainWindow(QMainWindow):
         self._reverse_ap_proposal = False
         self._deepslice_thread: QThread | None = None
         self._deepslice_worker: _DeepSliceWorker | None = None
+        self._deepslice_progress: QProgressDialog | None = None
+        self._batch_mask_thread: QThread | None = None
+        self._batch_mask_worker: _BatchMaskWorker | None = None
+        self._batch_mask_progress: QProgressDialog | None = None
 
         self._build_menu()
         self._build_toolbar()
@@ -107,6 +144,14 @@ class MainWindow(QMainWindow):
                 self,
                 "DeepSlice is running",
                 "Wait for the DeepSlice proposal run to finish before closing VERSO.",
+            )
+            event.ignore()
+            return
+        if self._batch_mask_thread and self._batch_mask_thread.isRunning():
+            QMessageBox.information(
+                self,
+                "Batch masks are running",
+                "Wait for batch mask auto-detection to finish before closing VERSO.",
             )
             event.ignore()
             return
@@ -271,6 +316,7 @@ class MainWindow(QMainWindow):
         self._props.mask_color_changed.connect(self._prep.set_mask_color)
         self._props.mask_negative_changed.connect(self._prep.set_mask_negative)
         self._props.autodetect_requested.connect(self._on_prep_autodetect_requested)
+        self._props.autodetect_all_requested.connect(self._batch_autodetect_masks)
         self._props.save_mask_requested.connect(self._on_prep_save_mask_requested)
         self._props.clear_mask_requested.connect(self._on_prep_clear_mask_requested)
         self._props.opacity_changed.connect(self._on_opacity_changed)
@@ -459,6 +505,7 @@ class MainWindow(QMainWindow):
         self._props.set_atlas_loading(False)
         if atlas is not None:
             self._props.set_ap_range(0.0, atlas.ap_extent_mm)
+            self._props.set_ap_step(atlas.resolution_um / 1000.0)
             project = self._state.project
             if project is not None:
                 self._initialize_quicknii_anchorings(project.sections)
@@ -519,8 +566,8 @@ class MainWindow(QMainWindow):
                 section.alignment.anchoring
             )
             if self._state.atlas is not None:
-                section.alignment.ap_position_mm = self._state.atlas.ap_voxel_to_mm(
-                    section.alignment.anchoring[1]
+                section.alignment.ap_position_mm = self._anchoring_ap_mm(
+                    section.alignment.anchoring
                 )
         if self._current_mode == "prep":
             self._prep.refresh_display()
@@ -557,6 +604,83 @@ class MainWindow(QMainWindow):
     def _on_prep_modified(self) -> None:
         self._overview.refresh_row(self._state.section_index)
 
+    def _batch_autodetect_masks(self) -> None:
+        project = self._state.project
+        if project is None or not project.sections:
+            return
+        if self._batch_mask_thread and self._batch_mask_thread.isRunning():
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "Auto-detect slice masks",
+            "Run slice-mask auto-detection for all sections? "
+            "Existing slice masks will be replaced.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        self._save_prep_mask_before_transition()
+        self._show_batch_mask_progress()
+
+        thread = QThread(self)
+        worker = _BatchMaskWorker(list(project.sections))
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.done.connect(self._on_batch_masks_done)
+        worker.done.connect(thread.quit)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(self._on_batch_masks_finished)
+        self._batch_mask_thread = thread
+        self._batch_mask_worker = worker
+        thread.start()
+
+    def _show_batch_mask_progress(self) -> None:
+        progress = QProgressDialog(
+            "Auto-detecting slice masks...",
+            "",
+            0,
+            0,
+            self,
+        )
+        progress.setWindowTitle("Batch masks")
+        progress.setCancelButton(None)
+        progress.setMinimumDuration(0)
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+        progress.setModal(False)
+        progress.show()
+        self._batch_mask_progress = progress
+
+    def _hide_batch_mask_progress(self) -> None:
+        if self._batch_mask_progress is None:
+            return
+        self._batch_mask_progress.close()
+        self._batch_mask_progress.deleteLater()
+        self._batch_mask_progress = None
+
+    def _on_batch_masks_done(self, completed: int, errors: list[str]) -> None:
+        self._overview.refresh()
+        if self._current_mode == "prep":
+            self._prep.load_section(self._state.current_section)
+        self._refresh_properties()
+        self.statusBar().showMessage(f"Auto-detected {completed} slice masks", 5000)
+        if errors:
+            preview = "\n".join(errors[:8])
+            suffix = "" if len(errors) <= 8 else f"\n...and {len(errors) - 8} more"
+            QMessageBox.warning(
+                self,
+                "Some masks failed",
+                f"{len(errors)} sections could not be processed:\n\n{preview}{suffix}",
+            )
+
+    def _on_batch_masks_finished(self) -> None:
+        self._hide_batch_mask_progress()
+        self._batch_mask_thread = None
+        self._batch_mask_worker = None
+
     def _on_ap_changed(self, ap_mm: float) -> None:
         section = self._state.current_section
         atlas = self._state.atlas
@@ -566,14 +690,16 @@ class MainWindow(QMainWindow):
         if section.alignment.status != AlignmentStatus.COMPLETE:
             section.alignment.source = "manual"
         if atlas is not None:
-            from verso.engine.registration import set_ap_position
+            from verso.engine.registration import set_ap_center_position
             anchoring = section.alignment.anchoring
             if not anchoring or all(v == 0.0 for v in anchoring):
                 raw_img = self._align._raw_image
                 aspect = (raw_img.shape[1] / raw_img.shape[0]) if raw_img is not None else 1.0
                 anchoring = atlas.default_anchoring(aspect_ratio=aspect)
             ap_voxel = atlas.ap_mm_to_voxel(ap_mm)
-            section.alignment.anchoring = set_ap_position(anchoring, ap_voxel, atlas.ap_axis)
+            section.alignment.anchoring = set_ap_center_position(
+                anchoring, ap_voxel, atlas.ap_axis
+            )
             self._align.update_overlay()
         self._overview.refresh_row(self._state.section_index)
         self._update_ap_plot()
@@ -581,10 +707,10 @@ class MainWindow(QMainWindow):
         self._refresh_properties()
 
     def _on_anchoring_changed(self, anchoring: list[float]) -> None:
-        """Navigator panel changed the cut origin — sync AP spinbox."""
+        """Navigator panel changed the cut plane — sync AP spinbox."""
         atlas = self._state.atlas
         if atlas is not None:
-            ap_mm = atlas.ap_voxel_to_mm(anchoring[1])
+            ap_mm = self._anchoring_ap_mm(anchoring)
             self._props.update_ap_from_anchoring(ap_mm)
             section = self._state.current_section
             if section is not None:
@@ -686,9 +812,16 @@ class MainWindow(QMainWindow):
             if section.alignment.anchoring and any(
                 v != 0.0 for v in section.alignment.anchoring
             ):
-                section.alignment.ap_position_mm = atlas.ap_voxel_to_mm(
-                    section.alignment.anchoring[1]
+                section.alignment.ap_position_mm = self._anchoring_ap_mm(
+                    section.alignment.anchoring
                 )
+
+    def _anchoring_ap_mm(self, anchoring: list[float]) -> float:
+        atlas = self._state.atlas
+        if atlas is None:
+            return 0.0
+        center = atlas.cut_center(anchoring)
+        return atlas.ap_voxel_to_mm(center[atlas.ap_axis])
 
     def _initialize_quicknii_anchorings(self, sections: list) -> None:
         """Initialize empty section planes with QuickNII-compatible stretch."""
@@ -769,6 +902,7 @@ class MainWindow(QMainWindow):
 
         self._update_deepslice_enabled(running=True)
         self.statusBar().showMessage("Running DeepSlice suggestions...")
+        self._show_deepslice_progress()
 
         thread = QThread(self)
         worker = _DeepSliceWorker(
@@ -787,6 +921,30 @@ class MainWindow(QMainWindow):
         self._deepslice_thread = thread
         self._deepslice_worker = worker
         thread.start()
+
+    def _show_deepslice_progress(self) -> None:
+        progress = QProgressDialog(
+            "Running DeepSlice prediction...",
+            "",
+            0,
+            0,
+            self,
+        )
+        progress.setWindowTitle("DeepSlice")
+        progress.setCancelButton(None)
+        progress.setMinimumDuration(0)
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+        progress.setModal(False)
+        progress.show()
+        self._deepslice_progress = progress
+
+    def _hide_deepslice_progress(self) -> None:
+        if self._deepslice_progress is None:
+            return
+        self._deepslice_progress.close()
+        self._deepslice_progress.deleteLater()
+        self._deepslice_progress = None
 
     def _configure_deepslice(self) -> bool:
         box = QMessageBox(self)
@@ -881,6 +1039,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("DeepSlice failed", 5000)
 
     def _on_deepslice_finished(self) -> None:
+        self._hide_deepslice_progress()
         self._deepslice_thread = None
         self._deepslice_worker = None
         self._update_deepslice_enabled(running=False)

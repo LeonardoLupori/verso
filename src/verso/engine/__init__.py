@@ -36,6 +36,7 @@ from verso.engine.model.alignment import Alignment, AlignmentStatus, ControlPoin
 from verso.engine.model.mask import Mask, MaskType
 from verso.engine.model.project import AtlasRef, Preprocessing, Project, Section
 from verso.engine.registration import (
+    anchoring_center,
     anchoring_to_vectors,
     atlas_to_normalized,
     make_atlas_sample_grid,
@@ -48,6 +49,7 @@ from verso.engine.registration import (
     quicknii_unpack_anchoring,
     rotate_anchoring,
     scale_anchoring,
+    set_ap_center_position,
     set_ap_position,
     vectors_to_anchoring,
 )
@@ -79,6 +81,7 @@ __all__ = [
     "Section",
     "WarpState",
     # Registration
+    "anchoring_center",
     "anchoring_to_vectors",
     "atlas_to_normalized",
     "make_atlas_sample_grid",
@@ -91,6 +94,7 @@ __all__ = [
     "quicknii_unpack_anchoring",
     "rotate_anchoring",
     "scale_anchoring",
+    "set_ap_center_position",
     "set_ap_position",
     "vectors_to_anchoring",
     "apply_deepslice_suggestions",

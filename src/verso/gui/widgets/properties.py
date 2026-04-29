@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import pyqtgraph as pg
 from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QIcon, QPixmap
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -36,6 +37,12 @@ _MASK_COLORS: dict[str, tuple[int, int, int]] = {
     "Green": (80, 220, 80),
     "Orange": (255, 140, 0),
 }
+
+
+def _color_swatch_icon(rgb: tuple[int, int, int]) -> QIcon:
+    pixmap = QPixmap(18, 18)
+    pixmap.fill(QColor(*rgb))
+    return QIcon(pixmap)
 
 
 class _OverviewProperties(QWidget):
@@ -91,6 +98,7 @@ class _PrepProperties(QWidget):
     mask_color_changed = pyqtSignal(tuple)
     mask_negative_changed = pyqtSignal(bool)
     autodetect_requested = pyqtSignal()
+    autodetect_all_requested = pyqtSignal()
     save_mask_requested = pyqtSignal()
     clear_mask_requested = pyqtSignal()
 
@@ -174,16 +182,34 @@ class _PrepProperties(QWidget):
 
         self._mask_color_combo = QComboBox()
         for name, rgb in _MASK_COLORS.items():
-            self._mask_color_combo.addItem(name, rgb)
+            self._mask_color_combo.addItem(_color_swatch_icon(rgb), "", rgb)
+            self._mask_color_combo.setItemData(
+                self._mask_color_combo.count() - 1,
+                name,
+                Qt.ItemDataRole.ToolTipRole,
+            )
         self._mask_color_combo.currentIndexChanged.connect(self._emit_mask_color)
-        mask_layout.addWidget(self._mask_color_combo)
+        self._mask_color_combo.setFixedSize(56, 26)
+        self._mask_color_combo.setIconSize(QPixmap(18, 18).size())
+        self._mask_color_combo.setStyleSheet(
+            "QComboBox { padding-left: 4px; padding-right: 16px; }"
+            "QComboBox::drop-down { width: 16px; }"
+        )
+        color_row = QHBoxLayout()
+        color_row.addWidget(QLabel("Color"))
+        color_row.addWidget(self._mask_color_combo)
+        color_row.addStretch()
+        mask_layout.addLayout(color_row)
         layout.addWidget(mask_box)
 
         edit_box = QGroupBox("Mask editing")
         edit_layout = QVBoxLayout(edit_box)
-        self._autodetect_btn = QPushButton("Auto-detect")
+        self._autodetect_btn = QPushButton("Auto-detect current")
         self._autodetect_btn.clicked.connect(self.autodetect_requested)
         edit_layout.addWidget(self._autodetect_btn)
+        self._autodetect_all_btn = QPushButton("Auto-detect all")
+        self._autodetect_all_btn.clicked.connect(self.autodetect_all_requested)
+        edit_layout.addWidget(self._autodetect_all_btn)
 
         edit_row = QHBoxLayout()
         self._save_mask_btn = QPushButton("Save mask")
@@ -259,7 +285,14 @@ class _PrepProperties(QWidget):
 
 
 _CP_SHAPES = ["Circle", "Cross", "Square", "Diamond"]
-_CP_COLORS = ["Orange", "Cyan", "Yellow", "Red", "White", "Magenta"]
+_CP_COLORS: dict[str, tuple[int, int, int]] = {
+    "Orange": (255, 80, 0),
+    "Cyan": (0, 210, 210),
+    "Yellow": (255, 240, 0),
+    "Red": (220, 50, 50),
+    "White": (255, 255, 255),
+    "Magenta": (210, 0, 210),
+}
 
 
 class _AlignProperties(QWidget):
@@ -327,9 +360,9 @@ class _AlignProperties(QWidget):
         ap_form = QFormLayout()
         self._ap_spin = QDoubleSpinBox()
         self._ap_spin.setRange(0.0, 20.0)
-        self._ap_spin.setSingleStep(0.05)
+        self._ap_spin.setSingleStep(0.025)
         self._ap_spin.setSuffix(" mm")
-        self._ap_spin.setDecimals(2)
+        self._ap_spin.setDecimals(3)
         self._ap_spin.valueChanged.connect(self.ap_changed)
         ap_form.addRow("AP:", self._ap_spin)
         ap_box_layout.addLayout(ap_form)
@@ -372,8 +405,20 @@ class _AlignProperties(QWidget):
         cp_form.addRow("Shape:", self._cp_shape_combo)
 
         self._cp_color_combo = QComboBox()
-        self._cp_color_combo.addItems(_CP_COLORS)
-        self._cp_color_combo.currentTextChanged.connect(self._emit_cp_style)
+        for name, rgb in _CP_COLORS.items():
+            self._cp_color_combo.addItem(_color_swatch_icon(rgb), "", name)
+            self._cp_color_combo.setItemData(
+                self._cp_color_combo.count() - 1,
+                name,
+                Qt.ItemDataRole.ToolTipRole,
+            )
+        self._cp_color_combo.currentIndexChanged.connect(self._emit_cp_style)
+        self._cp_color_combo.setFixedSize(56, 26)
+        self._cp_color_combo.setIconSize(QPixmap(18, 18).size())
+        self._cp_color_combo.setStyleSheet(
+            "QComboBox { padding-left: 4px; padding-right: 16px; }"
+            "QComboBox::drop-down { width: 16px; }"
+        )
         cp_form.addRow("Color:", self._cp_color_combo)
 
         warp_layout.addWidget(cp_box)
@@ -386,7 +431,7 @@ class _AlignProperties(QWidget):
         self.cp_style_changed.emit(
             self._cp_size_spin.value(),
             self._cp_shape_combo.currentText(),
-            self._cp_color_combo.currentText(),
+            self._cp_color_combo.currentData(),
         )
 
     def update_section(self, section: Section | None) -> None:
@@ -442,6 +487,12 @@ class _AlignProperties(QWidget):
     def set_ap_range(self, min_mm: float, max_mm: float) -> None:
         self._ap_spin.blockSignals(True)
         self._ap_spin.setRange(min_mm, max_mm)
+        self._ap_spin.blockSignals(False)
+
+    def set_ap_step(self, step_mm: float) -> None:
+        self._ap_spin.blockSignals(True)
+        self._ap_spin.setSingleStep(max(step_mm, 0.001))
+        self._ap_spin.setDecimals(3 if step_mm < 0.1 else 2)
         self._ap_spin.blockSignals(False)
 
     def update_ap_plot(self, sections: list, current_index: int) -> None:
@@ -519,6 +570,7 @@ class PropertiesPanel(QWidget):
     mask_color_changed = pyqtSignal(tuple)
     mask_negative_changed = pyqtSignal(bool)
     autodetect_requested = pyqtSignal()
+    autodetect_all_requested = pyqtSignal()
     save_mask_requested = pyqtSignal()
     clear_mask_requested = pyqtSignal()
     opacity_changed = pyqtSignal(float)
@@ -552,6 +604,7 @@ class PropertiesPanel(QWidget):
         self._prep_page.mask_color_changed.connect(self.mask_color_changed)
         self._prep_page.mask_negative_changed.connect(self.mask_negative_changed)
         self._prep_page.autodetect_requested.connect(self.autodetect_requested)
+        self._prep_page.autodetect_all_requested.connect(self.autodetect_all_requested)
         self._prep_page.save_mask_requested.connect(self.save_mask_requested)
         self._prep_page.clear_mask_requested.connect(self.clear_mask_requested)
 
@@ -583,6 +636,9 @@ class PropertiesPanel(QWidget):
 
     def set_ap_range(self, min_mm: float, max_mm: float) -> None:
         self._align_page.set_ap_range(min_mm, max_mm)
+
+    def set_ap_step(self, step_mm: float) -> None:
+        self._align_page.set_ap_step(step_mm)
 
     def update_ap_from_anchoring(self, ap_mm: float) -> None:
         self._align_page.update_ap_from_anchoring(ap_mm)

@@ -10,6 +10,7 @@ from PyQt6.QtGui import QFont, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QHBoxLayout,
+    QLabel,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -66,13 +67,27 @@ class PrepView(QWidget):
         self._toolbar = self._make_toolbar()
         layout.addWidget(self._toolbar)
 
-        # Central canvas
+        # Central canvas with filename strip
+        canvas_col = QVBoxLayout()
+        canvas_col.setContentsMargins(0, 0, 0, 0)
+        canvas_col.setSpacing(0)
+
+        self._status_label = QLabel("No section loaded")
+        self._status_label.setFixedHeight(28)
+        self._status_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self._status_label.setStyleSheet(
+            "background: #252525; color: #aaa; font-size: 11px; padding-left: 8px;"
+            " border-bottom: 1px solid #333;"
+        )
+        canvas_col.addWidget(self._status_label)
+
         self._canvas = ImageCanvas()
         self._canvas.set_interaction_mode("prep")
         self._canvas.canvas_drag_started.connect(self._on_canvas_drag_started)
         self._canvas.canvas_dragged.connect(self._on_canvas_dragged)
         self._canvas.canvas_drag_ended.connect(self._on_canvas_drag_ended)
-        layout.addWidget(self._canvas, stretch=1)
+        canvas_col.addWidget(self._canvas, stretch=1)
+        layout.addLayout(canvas_col, stretch=1)
 
         self._install_shortcuts()
 
@@ -171,7 +186,12 @@ class PrepView(QWidget):
         self._stroke_active = False
         self._canvas.clear()
         if section is None:
+            self._status_label.setText("No section loaded")
             return
+
+        import os
+
+        self._status_label.setText(os.path.basename(section.original_path))
 
         from PyQt6.QtWidgets import QMessageBox
 

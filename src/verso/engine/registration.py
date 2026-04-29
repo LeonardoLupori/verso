@@ -115,6 +115,29 @@ def set_ap_position(
     return vectors_to_anchoring(o, u, v)
 
 
+def anchoring_center(anchoring: list[float]) -> np.ndarray:
+    """Return the center point of an anchoring plane in atlas voxel space."""
+    o, u, v = anchoring_to_vectors(anchoring)
+    return o + (u + v) / 2.0
+
+
+def set_ap_center_position(
+    anchoring: list[float],
+    ap_voxel: float,
+    ap_axis: int = 2,
+) -> list[float]:
+    """Return a new anchoring whose plane center lies at ``ap_voxel``.
+
+    QuickNII's 11-value registration form stores the section midpoint, so AP
+    navigation should move the plane center rather than the anchoring origin.
+    """
+    o, u, v = anchoring_to_vectors(anchoring)
+    center = o + (u + v) / 2.0
+    o = o.copy()
+    o[ap_axis] += ap_voxel - center[ap_axis]
+    return vectors_to_anchoring(o, u, v)
+
+
 def rotate_anchoring(
     anchoring: list[float],
     angle_rad: float,
@@ -483,76 +506,82 @@ def normalized_to_pixel(
 # ---------------------------------------------------------------------------
 
 def interpolate_anchorings(sections: list) -> None:
-    """Linearly interpolate/extrapolate anchoring for non-stored sections.
-
-    Sections with ``AlignmentStatus.COMPLETE`` and a valid (non-zero) anchoring
-    act as keyframes.  All other sections receive an interpolated anchoring and
-    their status is set to ``IN_PROGRESS``.  Already-COMPLETE sections are never
-    modified.
-
-    Interpolation is performed per serial_number, matching QuickNII behaviour.
-
-    Args:
-        sections: List of :class:`~verso.engine.model.project.Section` objects
-            in any order.  Modified in-place.
-    """
+    """Propagate anchorings for non-stored sections using QuickNII semantics."""
+    from verso.engine.io.image_io import registration_dimensions
     from verso.engine.model.alignment import AlignmentStatus
 
-    def _valid(s) -> bool:
-        return (
-            s.alignment.status == AlignmentStatus.COMPLETE
-            and s.alignment.anchoring
-            and any(v != 0.0 for v in s.alignment.anchoring)
-        )
-
-    stored = sorted([s for s in sections if _valid(s)], key=lambda s: s.serial_number)
-    if not stored:
+    usable = []
+    for section in sections:
+        try:
+            w, h = registration_dimensions(section)
+        except Exception:
+            continue
+        if w > 0 and h > 0:
+            usable.append((section, w, h))
+    if not usable:
         return
 
-    for section in sections:
+    order = sorted(range(len(usable)), key=lambda i: (usable[i][0].serial_number, i))
+    sorted_usable = [usable[i] for i in order]
+    serial_numbers = [section.serial_number for section, _, _ in sorted_usable]
+
+    unpacked_by_index: dict[int, list[float]] = {}
+    stored_indices: list[int] = []
+    for idx, (section, w, h) in enumerate(sorted_usable):
+        if (
+            section.alignment.status == AlignmentStatus.COMPLETE
+            and section.alignment.anchoring
+            and any(v != 0.0 for v in section.alignment.anchoring)
+        ):
+            unpacked_by_index[idx] = quicknii_unpack_anchoring(
+                section.alignment.anchoring,
+                w,
+                h,
+            )
+            stored_indices.append(idx)
+
+    if len(stored_indices) < 2:
+        return
+
+    controls = list(stored_indices)
+    if stored_indices[0] != 0:
+        unpacked_by_index[0] = _quicknii_regressed_unpacked(
+            stored_indices,
+            unpacked_by_index,
+            serial_numbers,
+            serial_numbers[0],
+        )
+        controls.insert(0, 0)
+    if stored_indices[-1] != len(sorted_usable) - 1:
+        last_idx = len(sorted_usable) - 1
+        unpacked_by_index[last_idx] = _quicknii_regressed_unpacked(
+            stored_indices,
+            unpacked_by_index,
+            serial_numbers,
+            serial_numbers[last_idx],
+        )
+        controls.append(last_idx)
+
+    controls = sorted(set(controls))
+    propagated: dict[int, list[float]] = {}
+    for left, right in zip(controls, controls[1:]):
+        left_serial = serial_numbers[left]
+        right_serial = serial_numbers[right]
+        left_unpacked = unpacked_by_index[left]
+        right_unpacked = unpacked_by_index[right]
+        for idx in range(left, right + 1):
+            denom = right_serial - left_serial
+            t = 0.0 if denom == 0 else (serial_numbers[idx] - left_serial) / denom
+            propagated[idx] = [
+                a + t * (b - a)
+                for a, b in zip(left_unpacked, right_unpacked)
+            ]
+
+    for idx, unpacked in propagated.items():
+        section, w, h = sorted_usable[idx]
         if section.alignment.status == AlignmentStatus.COMPLETE:
             continue
-
-        nr = section.serial_number
-        before = [s for s in stored if s.serial_number <= nr]
-        after = [s for s in stored if s.serial_number >= nr]
-
-        if before and after:
-            s1, s2 = before[-1], after[0]
-            if s1 is s2:
-                anchoring = list(s1.alignment.anchoring)
-            else:
-                t = (nr - s1.serial_number) / (s2.serial_number - s1.serial_number)
-                anchoring = [
-                    a1 + t * (a2 - a1)
-                    for a1, a2 in zip(s1.alignment.anchoring, s2.alignment.anchoring)
-                ]
-        elif before:
-            # After the last keyframe — extrapolate from last two (or copy)
-            if len(before) >= 2:
-                s1, s2 = before[-2], before[-1]
-                dn = s2.serial_number - s1.serial_number
-                slope = (nr - s2.serial_number) / dn if dn else 0.0
-                anchoring = [
-                    a2 + slope * (a2 - a1)
-                    for a1, a2 in zip(s1.alignment.anchoring, s2.alignment.anchoring)
-                ]
-            else:
-                anchoring = list(before[-1].alignment.anchoring)
-        else:
-            # Before the first keyframe — extrapolate from first two (or copy)
-            if len(after) >= 2:
-                s1, s2 = after[0], after[1]
-                dn = s2.serial_number - s1.serial_number
-                slope = (nr - s1.serial_number) / dn if dn else 0.0
-                anchoring = [
-                    a1 + slope * (a2 - a1)
-                    for a1, a2 in zip(s1.alignment.anchoring, s2.alignment.anchoring)
-                ]
-            else:
-                anchoring = list(after[0].alignment.anchoring)
-
-        section.alignment.anchoring = anchoring
+        section.alignment.anchoring = quicknii_pack_anchoring(unpacked, w, h)
         section.alignment.status = AlignmentStatus.IN_PROGRESS
 
 

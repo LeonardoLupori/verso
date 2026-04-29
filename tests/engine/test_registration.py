@@ -5,10 +5,13 @@ import math
 import numpy as np
 import pytest
 
+from verso.engine.model.alignment import Alignment, AlignmentStatus
+from verso.engine.model.project import Section
 from verso.engine.registration import (
     anchoring_to_vectors,
     atlas_to_normalized,
     flip_anchoring_horizontal,
+    interpolate_anchorings,
     make_atlas_sample_grid,
     normalized_to_atlas,
     normalized_to_pixel,
@@ -19,6 +22,7 @@ from verso.engine.registration import (
     quicknii_unpack_anchoring,
     rotate_anchoring,
     scale_anchoring,
+    set_ap_center_position,
     set_ap_position,
     vectors_to_anchoring,
 )
@@ -98,6 +102,24 @@ def test_set_ap_position_changes_only_origin_z():
     # u and v unchanged
     np.testing.assert_allclose(u, SAMPLE_ANCHORING[3:6])
     np.testing.assert_allclose(v, SAMPLE_ANCHORING[6:9])
+
+
+def test_set_ap_center_position_moves_midpoint_only():
+    tilted = [
+        10.0, 20.0, 30.0,
+        100.0, 12.0, 0.0,
+        0.0, 18.0, 80.0,
+    ]
+
+    new_anch = set_ap_center_position(tilted, ap_voxel=75.0, ap_axis=1)
+    o, u, v = anchoring_to_vectors(new_anch)
+    old_o, old_u, old_v = anchoring_to_vectors(tilted)
+    center = o + (u + v) / 2.0
+
+    assert abs(center[1] - 75.0) < 1e-9
+    np.testing.assert_allclose(u, old_u)
+    np.testing.assert_allclose(v, old_v)
+    np.testing.assert_allclose(o[[0, 2]], old_o[[0, 2]])
 
 
 # ---------------------------------------------------------------------------
@@ -241,6 +263,89 @@ def test_quicknii_coronal_series_uses_serial_numbers_not_list_indices():
         [centers_by_serial[n][1] for n in [10, 20, 30]],
         [527.0, 263.5, 0.0],
     )
+
+
+def test_interpolate_anchorings_uses_quicknii_decomposed_space(tmp_path):
+    from PIL import Image
+
+    paths = []
+    for i in range(3):
+        path = tmp_path / f"s{i + 1}.png"
+        Image.new("RGB", (1000, 800)).save(path)
+        paths.append(path)
+
+    stored = quicknii_coronal_series_anchorings(
+        image_sizes=[(1000, 800), (1000, 800), (1000, 800)],
+        serial_numbers=[1, 2, 3],
+        atlas_shape=(528, 320, 456),
+    )
+    sections = [
+        Section(
+            id="s001",
+            serial_number=1,
+            original_path=str(paths[0]),
+            thumbnail_path=str(paths[0]),
+            alignment=Alignment(anchoring=stored[0], status=AlignmentStatus.COMPLETE),
+        ),
+        Section(
+            id="s002",
+            serial_number=2,
+            original_path=str(paths[1]),
+            thumbnail_path=str(paths[1]),
+        ),
+        Section(
+            id="s003",
+            serial_number=3,
+            original_path=str(paths[2]),
+            thumbnail_path=str(paths[2]),
+            alignment=Alignment(anchoring=stored[2], status=AlignmentStatus.COMPLETE),
+        ),
+    ]
+
+    interpolate_anchorings(sections)
+
+    expected = quicknii_coronal_series_anchorings(
+        image_sizes=[(1000, 800), (1000, 800), (1000, 800)],
+        serial_numbers=[1, 2, 3],
+        atlas_shape=(528, 320, 456),
+        stored_anchorings=[stored[0], None, stored[2]],
+    )
+    np.testing.assert_allclose(sections[1].alignment.anchoring, expected[1])
+    assert sections[1].alignment.status == AlignmentStatus.IN_PROGRESS
+
+
+def test_interpolate_anchorings_with_one_keyframe_matches_quicknii_noop(tmp_path):
+    from PIL import Image
+
+    paths = []
+    for i in range(2):
+        path = tmp_path / f"s{i + 1}.png"
+        Image.new("RGB", (1000, 800)).save(path)
+        paths.append(path)
+
+    sections = [
+        Section(
+            id="s001",
+            serial_number=1,
+            original_path=str(paths[0]),
+            thumbnail_path=str(paths[0]),
+            alignment=Alignment(
+                anchoring=SAMPLE_ANCHORING,
+                status=AlignmentStatus.COMPLETE,
+            ),
+        ),
+        Section(
+            id="s002",
+            serial_number=2,
+            original_path=str(paths[1]),
+            thumbnail_path=str(paths[1]),
+        ),
+    ]
+
+    interpolate_anchorings(sections)
+
+    assert sections[1].alignment.anchoring == [0.0] * 9
+    assert sections[1].alignment.status == AlignmentStatus.NOT_STARTED
 
 
 # ---------------------------------------------------------------------------

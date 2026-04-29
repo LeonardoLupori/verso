@@ -77,6 +77,11 @@ class _ThumbButton(QLabel):
         self._badge.setVisible(is_stored)
         self._apply_border()
 
+    def set_status(self, status: AlignmentStatus) -> None:
+        """Update the status colour without rebuilding the thumbnail pixmap."""
+        self._status = status
+        self._apply_border()
+
     def _set_placeholder(self) -> None:
         px = QPixmap(_THUMB_SIZE, _THUMB_SIZE)
         px.fill(QColor("#2a2a2a"))
@@ -183,7 +188,18 @@ class Filmstrip(QWidget):
 
     def refresh_stored(self) -> None:
         """Re-apply stored-alignment indicators after alignment changes."""
+        self.refresh_statuses()
         self._apply_align_indicators()
+
+    def refresh_statuses(self) -> None:
+        """Refresh border status colours from the current section state."""
+        for i, btn in enumerate(self._buttons):
+            if i >= len(self._sections):
+                continue
+            status = self._sections[i].warp.status
+            if status == AlignmentStatus.NOT_STARTED:
+                status = self._sections[i].alignment.status
+            btn.set_status(status)
 
     def _apply_align_indicators(self) -> None:
         for i, btn in enumerate(self._buttons):
