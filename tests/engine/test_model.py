@@ -32,6 +32,7 @@ def test_alignment_round_trip():
         ap_position_mm=-1.5,
         status=AlignmentStatus.COMPLETE,
         source="deepslice",
+        stored_anchoring=[9.0, 8.0, 7.0, 6.0, 5.0, 4.0, 3.0, 2.0, 1.0],
         proposal_anchoring=[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0],
         proposal_confidence=0.87,
         proposal_run_id="run-1",
@@ -46,9 +47,18 @@ def test_alignment_loads_legacy_dict_without_metadata():
         "status": "in_progress",
     })
     assert a.source is None
+    assert a.stored_anchoring is None
     assert a.proposal_anchoring is None
     assert a.proposal_confidence is None
     assert a.proposal_run_id is None
+
+
+def test_alignment_loads_legacy_complete_as_stored():
+    a = Alignment.from_dict({
+        "anchoring": [1.0] * 9,
+        "status": "complete",
+    })
+    assert a.stored_anchoring == [1.0] * 9
 
 
 # ---------------------------------------------------------------------------

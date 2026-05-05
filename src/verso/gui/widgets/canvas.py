@@ -159,9 +159,14 @@ class ImageCanvas(QWidget):
         self.overlay_item.setOpacity(0.5)
         self.overlay_item.setZValue(10)
 
-        # Control-point displacement lines (Warp mode) — drawn below the dots
+        # Control-point displacement lines (Warp mode) — drawn below the dots.
+        self.disp_halo_item = pg.PlotCurveItem(
+            pen=pg.mkPen((0, 0, 0, 220), width=5.0),
+            connect="pairs",
+        )
+        self.disp_halo_item.setZValue(14)
         self.disp_item = pg.PlotCurveItem(
-            pen=pg.mkPen((255, 255, 255, 160), width=1.5),
+            pen=pg.mkPen((255, 255, 255, 255), width=2.75),
             connect="pairs",
         )
         self.disp_item.setZValue(15)
@@ -178,6 +183,7 @@ class ImageCanvas(QWidget):
 
         self.plot.addItem(self.bg_item)
         self.plot.addItem(self.overlay_item)
+        self.plot.addItem(self.disp_halo_item)
         self.plot.addItem(self.disp_item)
         self.plot.addItem(self.cp_item)
         self.plot.addItem(self.stroke_item)
@@ -245,12 +251,12 @@ class ImageCanvas(QWidget):
         "Circle": "o", "Cross": "+", "Square": "s", "Diamond": "d",
     }
     _CP_COLOR_RGB: dict[str, tuple[int, int, int]] = {
-        "Orange": (255, 80, 0),
-        "Cyan": (0, 210, 210),
-        "Yellow": (255, 240, 0),
-        "Red": (220, 50, 50),
+        "Orange": (255, 96, 0),
+        "Cyan": (0, 255, 255),
+        "Yellow": (255, 245, 0),
+        "Red": (255, 32, 32),
         "White": (255, 255, 255),
-        "Magenta": (210, 0, 210),
+        "Magenta": (255, 0, 255),
     }
 
     def set_control_points(
@@ -279,6 +285,7 @@ class ImageCanvas(QWidget):
         """
         if not dst_pts:
             self.cp_item.clear()
+            self.disp_halo_item.clear()
             self.disp_item.clear()
             return
 
@@ -292,11 +299,13 @@ class ImageCanvas(QWidget):
             for (ss, st), (ds, dt) in zip(src_pts, dst_pts):
                 xs += [ss * display_w, ds * display_w]
                 ys += [st * display_h, dt * display_h]
+            self.disp_halo_item.setData(x=xs, y=ys)
             self.disp_item.setPen(
-                pg.mkPen((r, g, b, 160), width=1.5)
+                pg.mkPen((r, g, b, 255), width=2.75)
             )
             self.disp_item.setData(x=xs, y=ys)
         else:
+            self.disp_halo_item.clear()
             self.disp_item.clear()
 
         spots = []
@@ -305,19 +314,20 @@ class ImageCanvas(QWidget):
             if i == hovered_idx:
                 spots.append({
                     "pos": (px, py), "size": hov_size, "symbol": symbol,
-                    "brush": pg.mkBrush(255, 240, 0, 240),
-                    "pen": pg.mkPen("w", width=1.5),
+                    "brush": pg.mkBrush(r, g, b, 255),
+                    "pen": pg.mkPen(255, 255, 255, 255, width=2.5),
                 })
             else:
                 spots.append({
                     "pos": (px, py), "size": cp_size, "symbol": symbol,
-                    "brush": pg.mkBrush(r, g, b, 200),
-                    "pen": pg.mkPen("w", width=1),
+                    "brush": pg.mkBrush(r, g, b, 255),
+                    "pen": pg.mkPen(0, 0, 0, 240, width=1.5),
                 })
         self.cp_item.setData(spots)
 
     def clear_control_points(self) -> None:
         self.cp_item.clear()
+        self.disp_halo_item.clear()
         self.disp_item.clear()
 
     def set_stroke_preview(
@@ -345,5 +355,6 @@ class ImageCanvas(QWidget):
         self.bg_item.clear()
         self.overlay_item.clear()
         self.cp_item.clear()
+        self.disp_halo_item.clear()
         self.disp_item.clear()
         self.stroke_item.clear()

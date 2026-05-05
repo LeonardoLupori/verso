@@ -592,29 +592,39 @@ def interpolate_anchorings(
     unpacked_by_index: dict[int, list[float]] = {}
     stored_indices: list[int] = []
     for idx, (section, w, h) in enumerate(sorted_usable):
+        stored_anchoring = (
+            section.alignment.stored_anchoring
+            if section.alignment.stored_anchoring
+            and any(v != 0.0 for v in section.alignment.stored_anchoring)
+            else section.alignment.anchoring
+        )
         if (
             section.alignment.status == AlignmentStatus.COMPLETE
-            and section.alignment.anchoring
-            and any(v != 0.0 for v in section.alignment.anchoring)
+            and stored_anchoring
+            and any(v != 0.0 for v in stored_anchoring)
         ):
             unpacked_by_index[idx] = quicknii_unpack_anchoring(
-                section.alignment.anchoring,
+                stored_anchoring,
                 w,
                 h,
             )
             stored_indices.append(idx)
 
     if atlas_shape is not None:
+        stored_anchorings_for_series = [
+            (
+                section.alignment.stored_anchoring
+                or section.alignment.anchoring
+            )
+            if idx in stored_indices
+            else None
+            for idx, (section, _, _) in enumerate(sorted_usable)
+        ]
         propagated_anchorings = quicknii_coronal_series_anchorings(
             image_sizes=[(w, h) for _, w, h in sorted_usable],
             serial_numbers=serial_numbers,
             atlas_shape=atlas_shape,
-            stored_anchorings=[
-                section.alignment.anchoring
-                if idx in stored_indices
-                else None
-                for idx, (section, _, _) in enumerate(sorted_usable)
-            ],
+            stored_anchorings=stored_anchorings_for_series,
             reverse_ap=reverse_ap,
             center_proposals=center_proposals,
         )

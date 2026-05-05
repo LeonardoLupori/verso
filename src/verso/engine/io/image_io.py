@@ -213,11 +213,39 @@ def resize_by_scale(
 # Working copy
 # ---------------------------------------------------------------------------
 
+def _canonical_thumbnail(section) -> Path:
+    """Return the canonical OME-TIFF thumbnail path for *section*.
+
+    Uses the parent directory of the existing ``thumbnail_path`` when it has a
+    real parent (i.e. is not a bare filename resolving to CWD).  Falls back to
+    a ``thumbnails/`` subfolder next to the original image — this covers
+    QuickNII-imported sections where ``thumbnail_path`` was never set.
+    """
+    existing = Path(section.thumbnail_path) if section.thumbnail_path else None
+    if existing and existing.parent != Path("."):
+        thumb_dir = existing.parent
+    else:
+        thumb_dir = Path(section.original_path).parent / "thumbnails"
+    return thumb_dir / thumbnail_filename(section.original_path)
+
+
 def ensure_working_copy(
     section,
     scale: float | None = None,
 ) -> np.ndarray | None:
     """Return the working-resolution multichannel array for a section.
+
+    Thumbnail resolution strategy (tried in order):
+
+    1. Canonical OME-TIFF path — the expected ``{thumbnails_dir}/{stem}-thumb.ome.tif``.
+       Used directly if it exists.
+    2. Legacy thumbnail path — for old projects whose ``thumbnail_path`` still
+       points to a ``.png``.  Loaded, then immediately re-saved as OME-TIFF at
+       the canonical path so future calls hit path 1.
+    3. Original image — loaded, downscaled, saved as OME-TIFF at canonical path.
+
+    ``section.thumbnail_path`` is updated to the canonical path after any
+    successful load so the next ``Project.save()`` persists the migrated value.
 
     Args:
         section: A :class:`~verso.engine.model.project.Section` instance.
@@ -228,14 +256,35 @@ def ensure_working_copy(
     """
     working_scale = scale if scale is not None else WORKING_SCALE
 
-    thumb = Path(section.thumbnail_path)
-    if thumb.exists():
-        try:
-            raw = load_image(thumb)
-            return to_multichannel(raw)
-        except Exception:
-            pass  # fall through to original
+    canonical = _canonical_thumbnail(section)
+    existing = Path(section.thumbnail_path) if section.thumbnail_path else None
 
+    # 1. Canonical OME-TIFF already on disk.
+    if canonical.exists():
+        try:
+            raw = load_image(canonical)
+            img = to_multichannel(raw)
+            section.thumbnail_path = str(canonical)
+            return img
+        except Exception:
+            pass
+
+    # 2. Legacy thumbnail (e.g. PNG from old project) — load and migrate.
+    if existing and existing != canonical and existing.exists():
+        try:
+            raw = load_image(existing)
+            img = to_multichannel(raw)
+            try:
+                canonical.parent.mkdir(parents=True, exist_ok=True)
+                _save_ome_tiff(img, canonical, channel_names=_default_channel_names(img.shape[2]))
+                section.thumbnail_path = str(canonical)
+            except OSError:
+                pass
+            return img
+        except Exception:
+            pass
+
+    # 3. No cached thumbnail — generate from original image.
     orig = Path(section.original_path)
     if not orig.exists():
         return None
@@ -253,10 +302,11 @@ def ensure_working_copy(
     section.scale = actual_scale
 
     try:
-        thumb.parent.mkdir(parents=True, exist_ok=True)
-        _save_ome_tiff(img, thumb, channel_names=_default_channel_names(img.shape[2]))
+        canonical.parent.mkdir(parents=True, exist_ok=True)
+        _save_ome_tiff(img, canonical, channel_names=_default_channel_names(img.shape[2]))
+        section.thumbnail_path = str(canonical)
     except OSError:
-        pass  # Can't write thumbnail — that's OK, just won't cache
+        pass
 
     return img
 
@@ -348,11 +398,12 @@ def _extract_ome_channel_names(ome_xml: str) -> list[str]:
 def registration_dimensions(section) -> tuple[int, int]:
     """Return dimensions of the image used for interactive registration.
 
-    Falls back to the original if there is no working copy.
+    Checks the canonical OME-TIFF path first, then the stored thumbnail_path
+    (legacy PNG), and falls back to the original image.
     """
-    thumb = Path(section.thumbnail_path)
-    if thumb.exists():
-        return image_dimensions(thumb)
+    for candidate in (_canonical_thumbnail(section), Path(section.thumbnail_path) if section.thumbnail_path else None):
+        if candidate and candidate.exists():
+            return image_dimensions(candidate)
     return image_dimensions(section.original_path)
 
 

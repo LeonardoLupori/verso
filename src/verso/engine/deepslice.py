@@ -170,6 +170,7 @@ def apply_deepslice_suggestions_with_atlas(
         section.alignment.anchoring = anchoring
         section.alignment.status = AlignmentStatus.IN_PROGRESS
         section.alignment.source = "deepslice"
+        section.alignment.stored_anchoring = None
         section.alignment.proposal_anchoring = list(anchoring)
         section.alignment.proposal_confidence = suggestion.confidence
         section.alignment.proposal_run_id = result.run_id
@@ -202,15 +203,17 @@ def reset_in_progress_to_default_proposals(
     if not usable:
         return 0
 
-    stored_anchorings = [
-        section.alignment.anchoring
-        if not include_complete
-        and section.alignment.status == AlignmentStatus.COMPLETE
-        and section.alignment.anchoring
-        and any(v != 0.0 for v in section.alignment.anchoring)
-        else None
-        for section, _, _ in usable
-    ]
+    stored_anchorings = []
+    for section, _, _ in usable:
+        stored = section.alignment.stored_anchoring or section.alignment.anchoring
+        stored_anchorings.append(
+            stored
+            if not include_complete
+            and section.alignment.status == AlignmentStatus.COMPLETE
+            and stored
+            and any(v != 0.0 for v in stored)
+            else None
+        )
     propagated = quicknii_coronal_series_anchorings(
         image_sizes=[(w, h) for _, w, h in usable],
         serial_numbers=[section.serial_number for section, _, _ in usable],
@@ -228,6 +231,8 @@ def reset_in_progress_to_default_proposals(
         section.alignment.ap_position_mm = None
         section.alignment.status = AlignmentStatus.IN_PROGRESS
         section.alignment.source = "quicknii_default"
+        if include_complete:
+            section.alignment.stored_anchoring = None
         section.alignment.proposal_anchoring = None
         section.alignment.proposal_confidence = None
         section.alignment.proposal_run_id = None

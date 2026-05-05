@@ -164,7 +164,7 @@ def load_quicknii(path: Path, atlas_name: str = "allen_mouse_25um") -> Project:
             id=f"s{i + 1:03d}",
             serial_number=parsed["nr"],
             original_path=parsed["filename"],
-            thumbnail_path=parsed["filename"],
+            thumbnail_path="",
             alignment=alignment,
         )
         sections.append(section)
@@ -406,11 +406,12 @@ def save_quicknii_xml(
             f" nr='{section.serial_number}'"
             f" width='{w}' height='{h}"
         )
+        anchoring = section.alignment.stored_anchoring or section.alignment.anchoring
         if (section.alignment.status == AlignmentStatus.COMPLETE
-                and section.alignment.anchoring
-                and any(section.alignment.anchoring)):
+                and anchoring
+                and any(anchoring)):
             a = _export_anchoring(
-                section.alignment.anchoring,
+                anchoring,
                 section.preprocessing.flip_horizontal,
                 atlas_shape,
             )
@@ -447,11 +448,12 @@ def save_quicknii(
             "width": w,
             "height": h,
         }
+        anchoring = section.alignment.stored_anchoring or section.alignment.anchoring
         if (section.alignment.status == AlignmentStatus.COMPLETE
-                and section.alignment.anchoring
-                and any(section.alignment.anchoring)):
+                and anchoring
+                and any(anchoring)):
             a = _export_anchoring(
-                section.alignment.anchoring,
+                anchoring,
                 section.preprocessing.flip_horizontal,
                 atlas_shape,
             )
@@ -492,11 +494,12 @@ def save_visualign(
             "width": w,
             "height": h,
         }
+        anchoring = section.alignment.stored_anchoring or section.alignment.anchoring
         if (section.alignment.status == AlignmentStatus.COMPLETE
-                and section.alignment.anchoring
-                and any(section.alignment.anchoring)):
+                and anchoring
+                and any(anchoring)):
             a = _export_anchoring(
-                section.alignment.anchoring,
+                anchoring,
                 section.preprocessing.flip_horizontal,
                 atlas_shape,
             )

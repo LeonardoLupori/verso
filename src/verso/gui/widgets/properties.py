@@ -478,12 +478,12 @@ class _PrepProperties(QWidget):
 
 _CP_SHAPES = ["Circle", "Cross", "Square", "Diamond"]
 _CP_COLORS: dict[str, tuple[int, int, int]] = {
-    "Orange": (255, 80, 0),
-    "Cyan": (0, 210, 210),
-    "Yellow": (255, 240, 0),
-    "Red": (220, 50, 50),
+    "Orange": (255, 96, 0),
+    "Cyan": (0, 255, 255),
+    "Yellow": (255, 245, 0),
+    "Red": (255, 32, 32),
     "White": (255, 255, 255),
-    "Magenta": (210, 0, 210),
+    "Magenta": (255, 0, 255),
 }
 
 

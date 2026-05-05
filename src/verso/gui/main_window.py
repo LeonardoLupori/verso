@@ -18,17 +18,23 @@ from __future__ import annotations
 from pathlib import Path
 
 from PyQt6.QtCore import QObject, QSettings, Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QAction, QKeySequence
+from PyQt6.QtGui import QAction, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
+    QAbstractSlider,
+    QAbstractSpinBox,
+    QComboBox,
     QDockWidget,
     QFileDialog,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QMessageBox,
+    QPlainTextEdit,
     QProgressDialog,
     QPushButton,
     QSizePolicy,
     QStackedWidget,
+    QTextEdit,
     QToolBar,
     QWidget,
 )
@@ -135,6 +141,7 @@ class MainWindow(QMainWindow):
         self._build_central()
         self._build_docks()
         self._connect_signals()
+        self._build_shortcuts()
 
         self._switch_view(_VIEW_OVERVIEW)
 
@@ -292,6 +299,17 @@ class MainWindow(QMainWindow):
         bottom_dock.setTitleBarWidget(QWidget())
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, bottom_dock)
         self._bottom_dock = bottom_dock
+
+    def _build_shortcuts(self) -> None:
+        self._section_shortcuts: list[QShortcut] = []
+        for key, delta in (
+            (Qt.Key.Key_Left, -1),
+            (Qt.Key.Key_Right, 1),
+        ):
+            shortcut = QShortcut(QKeySequence(key), self)
+            shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+            shortcut.activated.connect(lambda d=delta: self._step_section(d))
+            self._section_shortcuts.append(shortcut)
 
     def _connect_signals(self) -> None:
         # State → views
@@ -547,6 +565,28 @@ class MainWindow(QMainWindow):
         self._update_ap_plot()
         self._update_deepslice_enabled()
 
+    def _step_section(self, delta: int) -> None:
+        if not self._section_shortcuts_enabled():
+            return
+        project = self._state.project
+        if project is None or not project.sections:
+            return
+        self._state.set_section(self._state.section_index + delta)
+
+    def _section_shortcuts_enabled(self) -> bool:
+        focus = self.focusWidget()
+        return not isinstance(
+            focus,
+            (
+                QAbstractSlider,
+                QAbstractSpinBox,
+                QComboBox,
+                QLineEdit,
+                QPlainTextEdit,
+                QTextEdit,
+            ),
+        )
+
     def _on_section_activated(self, index: int) -> None:
         """Double-click in Overview → switch to Prep."""
         self._state.set_section(index)
@@ -578,6 +618,10 @@ class MainWindow(QMainWindow):
             section.alignment.anchoring = flip_anchoring_horizontal(
                 section.alignment.anchoring
             )
+            if section.alignment.stored_anchoring is not None:
+                section.alignment.stored_anchoring = flip_anchoring_horizontal(
+                    section.alignment.stored_anchoring
+                )
             if self._state.atlas is not None:
                 section.alignment.ap_position_mm = self._anchoring_ap_mm(
                     section.alignment.anchoring
@@ -815,6 +859,7 @@ class MainWindow(QMainWindow):
             section.alignment.ap_position_mm = None
             section.alignment.status = AlignmentStatus.NOT_STARTED
             section.alignment.source = None
+            section.alignment.stored_anchoring = None
             section.alignment.proposal_anchoring = None
             section.alignment.proposal_confidence = None
             section.alignment.proposal_run_id = None
@@ -896,14 +941,16 @@ class MainWindow(QMainWindow):
         if not usable:
             return
 
-        stored_anchorings = [
-            section.alignment.anchoring
-            if section.alignment.status == AlignmentStatus.COMPLETE
-            and section.alignment.anchoring
-            and any(v != 0.0 for v in section.alignment.anchoring)
-            else None
-            for section, _, _ in usable
-        ]
+        stored_anchorings = []
+        for section, _, _ in usable:
+            stored = section.alignment.stored_anchoring or section.alignment.anchoring
+            stored_anchorings.append(
+                stored
+                if section.alignment.status == AlignmentStatus.COMPLETE
+                and stored
+                and any(v != 0.0 for v in stored)
+                else None
+            )
         propagated = quicknii_coronal_series_anchorings(
             image_sizes=[(w, h) for _, w, h in usable],
             serial_numbers=[section.serial_number for section, _, _ in usable],
@@ -915,10 +962,8 @@ class MainWindow(QMainWindow):
 
         stored_serials = {
             section.serial_number
-            for section, _, _ in usable
-            if section.alignment.status == AlignmentStatus.COMPLETE
-            and section.alignment.anchoring
-            and any(v != 0.0 for v in section.alignment.anchoring)
+            for (section, _, _), stored in zip(usable, stored_anchorings)
+            if stored is not None
         }
 
         for (section, _, _), anchoring, stored in zip(

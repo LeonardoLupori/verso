@@ -53,9 +53,19 @@ class Alignment:
     ap_position_mm: float | None = None
     status: AlignmentStatus = AlignmentStatus.NOT_STARTED
     source: str | None = None
+    stored_anchoring: list[float] | None = None
     proposal_anchoring: list[float] | None = None
     proposal_confidence: float | None = None
     proposal_run_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if (
+            self.status == AlignmentStatus.COMPLETE
+            and self.stored_anchoring is None
+            and self.anchoring
+            and any(v != 0.0 for v in self.anchoring)
+        ):
+            self.stored_anchoring = list(self.anchoring)
 
     def to_dict(self) -> dict[str, Any]:
         data = {
@@ -65,6 +75,8 @@ class Alignment:
         }
         if self.source is not None:
             data["source"] = self.source
+        if self.stored_anchoring is not None:
+            data["stored_anchoring"] = self.stored_anchoring
         if self.proposal_anchoring is not None:
             data["proposal_anchoring"] = self.proposal_anchoring
         if self.proposal_confidence is not None:
@@ -80,6 +92,7 @@ class Alignment:
             ap_position_mm=d.get("ap_position_mm"),
             status=AlignmentStatus(d.get("status", "not_started")),
             source=d.get("source"),
+            stored_anchoring=d.get("stored_anchoring"),
             proposal_anchoring=d.get("proposal_anchoring"),
             proposal_confidence=d.get("proposal_confidence"),
             proposal_run_id=d.get("proposal_run_id"),
