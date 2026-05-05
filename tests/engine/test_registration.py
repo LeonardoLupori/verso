@@ -265,6 +265,111 @@ def test_quicknii_coronal_series_uses_serial_numbers_not_list_indices():
     )
 
 
+def test_quicknii_coronal_series_duplicate_serial_gets_stored_ap_but_default_orientation():
+    stored = quicknii_coronal_series_anchorings(
+        image_sizes=[(1000, 800), (1000, 800), (1000, 800)],
+        serial_numbers=[9, 10, 11],
+        atlas_shape=(528, 320, 456),
+    )
+
+    anchorings = quicknii_coronal_series_anchorings(
+        image_sizes=[(800, 600), (1000, 800), (1000, 800), (1000, 800)],
+        serial_numbers=[10, 10, 11, 12],
+        atlas_shape=(528, 320, 456),
+        stored_anchorings=[None, stored[1], None, None],
+    )
+
+    stored_u = quicknii_unpack_anchoring(anchorings[1], 1000, 800)
+    dup_u = quicknii_unpack_anchoring(anchorings[0], 800, 600)
+
+    # AP position matches the stored section.
+    np.testing.assert_allclose(dup_u[1], stored_u[1])
+    # Orientation is reset to the default upright coronal, not copied from stored.
+    np.testing.assert_allclose(dup_u[3:9], [1.0, 0.0, 0.0, 0.0, 0.0, 1.0], atol=1e-9)
+    # LR and DV are at the atlas centre.
+    np.testing.assert_allclose(dup_u[0], 228.0)  # lr_dim/2 = 456/2
+    np.testing.assert_allclose(dup_u[2], 160.0)  # dv_dim/2 = 320/2
+
+
+def test_quicknii_coronal_series_same_serial_same_ap_with_different_sizes():
+    """Sections sharing a serial get the same AP position regardless of image size."""
+    anchorings = quicknii_coronal_series_anchorings(
+        image_sizes=[(800, 600), (1000, 800), (600, 400)],
+        serial_numbers=[10, 10, 10],
+        atlas_shape=(528, 320, 456),
+    )
+    # All three must land on the same AP voxel (same midpoint in atlas space).
+    centers = [
+        anchoring_to_vectors(a)[0] + anchoring_to_vectors(a)[1] / 2 + anchoring_to_vectors(a)[2] / 2
+        for a in anchorings
+    ]
+    np.testing.assert_allclose(centers[0][1], centers[1][1])  # AP axis
+    np.testing.assert_allclose(centers[0][1], centers[2][1])
+
+
+def test_quicknii_coronal_series_centers_generated_proposals_from_off_center_keyframes():
+    off_center_left = quicknii_pack_anchoring(
+        [120.0, 500.0, 90.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.456, 0.4],
+        image_width=1000,
+        image_height=800,
+    )
+    off_center_right = quicknii_pack_anchoring(
+        [340.0, 100.0, 250.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.456, 0.4],
+        image_width=1000,
+        image_height=800,
+    )
+
+    anchorings = quicknii_coronal_series_anchorings(
+        image_sizes=[(1000, 800), (1000, 800), (1000, 800)],
+        serial_numbers=[1, 2, 3],
+        atlas_shape=(528, 320, 456),
+        stored_anchorings=[off_center_left, None, off_center_right],
+    )
+
+    proposal = quicknii_unpack_anchoring(anchorings[1], 1000, 800)
+    np.testing.assert_allclose(proposal[0], 228.0)
+    np.testing.assert_allclose(proposal[2], 160.0)
+    np.testing.assert_allclose(anchorings[0], off_center_left)
+    np.testing.assert_allclose(anchorings[2], off_center_right)
+
+
+
+def test_quicknii_coronal_series_proposals_are_upright_even_when_keyframe_is_rotated():
+    """Interpolated proposals must have default (upright) rotation regardless of keyframes."""
+    left_anchoring = quicknii_coronal_default_anchoring(
+        image_width=1000, image_height=800,
+        max_width=1000, max_height=800,
+        atlas_shape=(528, 320, 456),
+        ap_voxel=400.0,
+    )
+    right_base = quicknii_coronal_default_anchoring(
+        image_width=1000, image_height=800,
+        max_width=1000, max_height=800,
+        atlas_shape=(528, 320, 456),
+        ap_voxel=100.0,
+    )
+    right_anchoring = rotate_anchoring(right_base, math.radians(15))
+
+    anchorings = quicknii_coronal_series_anchorings(
+        image_sizes=[(1000, 800)] * 3,
+        serial_numbers=[1, 2, 3],
+        atlas_shape=(528, 320, 456),
+        stored_anchorings=[left_anchoring, None, right_anchoring],
+    )
+
+    mid_u = quicknii_unpack_anchoring(anchorings[1], 1000, 800)
+    default_u = quicknii_unpack_anchoring(
+        quicknii_coronal_default_anchoring(
+            image_width=1000, image_height=800,
+            max_width=1000, max_height=800,
+            atlas_shape=(528, 320, 456),
+        ),
+        1000, 800,
+    )
+    # Rotation components of the proposal must equal the default upright orientation.
+    np.testing.assert_allclose(mid_u[3:9], default_u[3:9], atol=1e-9)
+
+
 def test_interpolate_anchorings_uses_quicknii_decomposed_space(tmp_path):
     from PIL import Image
 
@@ -314,7 +419,113 @@ def test_interpolate_anchorings_uses_quicknii_decomposed_space(tmp_path):
     assert sections[1].alignment.status == AlignmentStatus.IN_PROGRESS
 
 
-def test_interpolate_anchorings_with_one_keyframe_matches_quicknii_noop(tmp_path):
+def test_interpolate_anchorings_with_one_keyframe_matches_quicknii(tmp_path):
+    from PIL import Image
+
+    paths = []
+    for i in range(2):
+        path = tmp_path / f"s{i + 1}.png"
+        Image.new("RGB", (1000, 800)).save(path)
+        paths.append(path)
+
+    sections = [
+        Section(
+            id="s001",
+            serial_number=1,
+            original_path=str(paths[0]),
+            thumbnail_path=str(paths[0]),
+            alignment=Alignment(
+                anchoring=SAMPLE_ANCHORING,
+                status=AlignmentStatus.COMPLETE,
+            ),
+        ),
+        Section(
+            id="s002",
+            serial_number=2,
+            original_path=str(paths[1]),
+            thumbnail_path=str(paths[1]),
+        ),
+    ]
+
+    interpolate_anchorings(sections, atlas_shape=(528, 320, 456))
+
+    expected = quicknii_coronal_series_anchorings(
+        image_sizes=[(1000, 800), (1000, 800)],
+        serial_numbers=[1, 2],
+        atlas_shape=(528, 320, 456),
+        stored_anchorings=[SAMPLE_ANCHORING, None],
+    )
+    np.testing.assert_allclose(sections[1].alignment.anchoring, expected[1])
+    assert sections[1].alignment.status == AlignmentStatus.IN_PROGRESS
+
+
+def test_interpolate_anchorings_duplicate_serial_strips_inplane_rotation_keeps_tilt(
+    tmp_path,
+):
+    from PIL import Image
+
+    atlas_shape = (528, 320, 456)
+    # Stored section: upright coronal anchoring with an in-plane rotation applied.
+    stored_base = quicknii_coronal_default_anchoring(
+        image_width=1000, image_height=800,
+        max_width=1000, max_height=800,
+        atlas_shape=atlas_shape,
+        ap_voxel=300.0,
+    )
+    stored_anchoring = rotate_anchoring(stored_base, math.radians(20))
+
+    paths = []
+    image_sizes = [(800, 600), (1000, 800), (1000, 800)]
+    for i, size in enumerate(image_sizes):
+        path = tmp_path / f"s{i + 1}.png"
+        Image.new("RGB", size).save(path)
+        paths.append(path)
+
+    sections = [
+        Section(
+            id="s001",
+            serial_number=10,
+            original_path=str(paths[0]),
+            thumbnail_path=str(paths[0]),
+        ),
+        Section(
+            id="s002",
+            serial_number=10,
+            original_path=str(paths[1]),
+            thumbnail_path=str(paths[1]),
+            alignment=Alignment(
+                anchoring=stored_anchoring,
+                status=AlignmentStatus.COMPLETE,
+            ),
+        ),
+        Section(
+            id="s003",
+            serial_number=11,
+            original_path=str(paths[2]),
+            thumbnail_path=str(paths[2]),
+        ),
+    ]
+
+    interpolate_anchorings(sections, atlas_shape=atlas_shape)
+
+    duplicate_unpacked = quicknii_unpack_anchoring(
+        sections[0].alignment.anchoring,
+        *image_sizes[0],
+    )
+    stored_unpacked = quicknii_unpack_anchoring(
+        sections[1].alignment.anchoring,
+        *image_sizes[1],
+    )
+    # AP position must match the stored section.
+    np.testing.assert_allclose(duplicate_unpacked[1], stored_unpacked[1])
+    # In-plane rotation removed; rotate_anchoring leaves u_y=v_y=0, so result is upright.
+    np.testing.assert_allclose(duplicate_unpacked[3:9], [1.0, 0.0, 0.0, 0.0, 0.0, 1.0], atol=1e-9)
+    assert sections[0].alignment.status == AlignmentStatus.IN_PROGRESS
+
+
+def test_interpolate_anchorings_without_atlas_shape_keeps_legacy_one_keyframe_noop(
+    tmp_path,
+):
     from PIL import Image
 
     paths = []

@@ -76,7 +76,7 @@ class _SliceView(QWidget):
 
     Rotation axes in atlas (LR, AP, DV) space:
         sagittal  (axis=0) → LR = [1, 0, 0]
-        coronal   (axis=1) → AP = [0, 1, 0]  (angle negated — AP points away from viewer)
+        coronal   (axis=1) → AP = [0, 1, 0]
         horizontal(axis=2) → DV = [0, 0, 1]
     """
 
@@ -87,8 +87,9 @@ class _SliceView(QWidget):
         1: np.array([0.0, 1.0, 0.0]),
         2: np.array([0.0, 0.0, 1.0]),
     }
-    # Coronal AP axis points away from viewer → negate drag angle
-    _ANGLE_SIGNS = {0: 1, 1: -1, 2: 1}
+    # Match QuickNII's Slice.mxml rotation commands:
+    # x/z plane views rotate with the opposite sign to the coronal y view.
+    _ANGLE_SIGNS = {0: -1, 1: 1, 2: -1}
 
     def __init__(
         self,

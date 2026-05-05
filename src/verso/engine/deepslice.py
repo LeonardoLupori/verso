@@ -184,6 +184,7 @@ def reset_in_progress_to_default_proposals(
     sections: list[Section],
     atlas_shape: tuple[int, int, int],
     reverse_ap: bool = False,
+    include_complete: bool = False,
 ) -> int:
     """Clear editable suggestions and regenerate QuickNII-style default proposals."""
     from verso.engine.io.image_io import registration_dimensions
@@ -203,7 +204,8 @@ def reset_in_progress_to_default_proposals(
 
     stored_anchorings = [
         section.alignment.anchoring
-        if section.alignment.status == AlignmentStatus.COMPLETE
+        if not include_complete
+        and section.alignment.status == AlignmentStatus.COMPLETE
         and section.alignment.anchoring
         and any(v != 0.0 for v in section.alignment.anchoring)
         else None
@@ -215,6 +217,7 @@ def reset_in_progress_to_default_proposals(
         atlas_shape=atlas_shape,
         stored_anchorings=stored_anchorings,
         reverse_ap=reverse_ap,
+        center_proposals=True,
     )
 
     changed = 0

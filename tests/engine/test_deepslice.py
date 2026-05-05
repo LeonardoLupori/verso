@@ -214,3 +214,25 @@ def test_reset_in_progress_to_default_proposals_clears_deepslice_metadata(tmp_pa
         assert section.alignment.proposal_anchoring is None
         assert section.alignment.proposal_confidence is None
         assert section.warp.control_points == []
+
+
+def test_reset_to_default_can_clear_complete_alignments(tmp_path: Path):
+    project = _make_project(tmp_path)
+    for section in project.sections:
+        section.alignment.anchoring = [1.0] * 9
+        section.alignment.status = AlignmentStatus.COMPLETE
+        section.alignment.source = "manual"
+        section.warp.control_points.append(ControlPoint(0.1, 0.2, 0.3, 0.4))
+
+    changed = reset_in_progress_to_default_proposals(
+        project.sections,
+        atlas_shape=(528, 320, 456),
+        include_complete=True,
+    )
+
+    assert changed == 2
+    for section in project.sections:
+        assert section.alignment.status == AlignmentStatus.IN_PROGRESS
+        assert section.alignment.source == "quicknii_default"
+        assert section.alignment.anchoring != [1.0] * 9
+        assert section.warp.control_points == []

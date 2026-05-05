@@ -334,6 +334,7 @@ class MainWindow(QMainWindow):
         self._align.reverse_requested.connect(self._reverse_section_order)
         self._align.deepslice_requested.connect(self._run_deepslice)
         self._align.default_proposal_requested.connect(self._revert_to_default_proposal)
+        self._align.clear_all_alignments_requested.connect(self._clear_all_alignments)
         self._props.cp_style_changed.connect(
             lambda size, shape, color: self._align.set_cp_style(size, shape, color)
         )
@@ -481,9 +482,17 @@ class MainWindow(QMainWindow):
 
         self._reverse_ap_proposal = False
 
-        # Propagate any stored anchorings to neighbours on load
-        from verso.engine.registration import interpolate_anchorings
-        interpolate_anchorings(project.sections)
+        # QuickNII interpolation needs atlas dimensions for the no-anchor and
+        # one-anchor endpoint controls. If the atlas is still loading,
+        # _on_atlas_loaded performs the exact QuickNII propagation.
+        if self._state.atlas is not None:
+            from verso.engine.registration import interpolate_anchorings
+
+            interpolate_anchorings(
+                project.sections,
+                atlas_shape=self._state.atlas.shape,
+                reverse_ap=self._reverse_ap_proposal,
+            )
         self._sync_ap_mm(project.sections)
 
         self._project_label.setText(project.name)
@@ -859,18 +868,31 @@ class MainWindow(QMainWindow):
             atlas_shape=atlas.shape,
             stored_anchorings=stored_anchorings,
             reverse_ap=self._reverse_ap_proposal,
+            center_proposals=True,
         )
+
+        stored_serials = {
+            section.serial_number
+            for section, _, _ in usable
+            if section.alignment.status == AlignmentStatus.COMPLETE
+            and section.alignment.anchoring
+            and any(v != 0.0 for v in section.alignment.anchoring)
+        }
 
         for (section, _, _), anchoring, stored in zip(
             usable, propagated, stored_anchorings
         ):
             if stored is not None:
                 continue
+            # Always sync sections that share a serial with a stored section —
+            # they represent the same physical slice and must show the same image.
+            is_serial_duplicate = section.serial_number in stored_serials
             has_existing = section.alignment.anchoring and any(
                 v != 0.0 for v in section.alignment.anchoring
             )
             if (
-                has_existing
+                not is_serial_duplicate
+                and has_existing
                 and section.alignment.status != AlignmentStatus.NOT_STARTED
                 and section.alignment.source != "quicknii_default"
             ):
@@ -1062,6 +1084,42 @@ class MainWindow(QMainWindow):
         self._on_section_changed(self._state.section_index)
         self._update_ap_plot()
         self.statusBar().showMessage(f"Restored {changed} default proposals", 3000)
+
+    def _clear_all_alignments(self) -> None:
+        project = self._state.project
+        atlas = self._state.atlas
+        if project is None or atlas is None:
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "Clear all alignments",
+            "Clear every stored alignment, warp control point, and editable proposal, "
+            "then restore VERSO's default AP proposal for all sections?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        from verso.engine.deepslice import reset_in_progress_to_default_proposals
+
+        changed = reset_in_progress_to_default_proposals(
+            project.sections,
+            atlas.shape,
+            reverse_ap=self._reverse_ap_proposal,
+            include_complete=True,
+        )
+        self._sync_ap_mm(project.sections)
+        self._overview.refresh()
+        self._filmstrip.refresh_stored()
+        self._on_section_changed(self._state.section_index)
+        self._update_ap_plot()
+        self._update_reverse_order_enabled()
+        self.statusBar().showMessage(
+            f"Cleared all alignments and restored {changed} default proposals",
+            5000,
+        )
 
     def _update_ap_plot(self) -> None:
         project = self._state.project

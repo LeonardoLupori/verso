@@ -41,6 +41,7 @@ class AlignView(QWidget):
     reverse_requested = pyqtSignal()
     deepslice_requested = pyqtSignal()
     default_proposal_requested = pyqtSignal()
+    clear_all_alignments_requested = pyqtSignal()
 
     # Pixel distance threshold (in normalised units × display size) for
     # picking an existing control point
@@ -263,6 +264,21 @@ class AlignView(QWidget):
         self._default_btn.clicked.connect(self.default_proposal_requested)
         h.addWidget(self._default_btn)
 
+        self._clear_all_btn = QPushButton("Clear all")
+        self._clear_all_btn.setFixedHeight(28)
+        self._clear_all_btn.setToolTip(
+            "Clear every stored alignment and restore the default AP proposal"
+        )
+        self._clear_all_btn.setStyleSheet(
+            "QPushButton { border-radius: 4px; padding: 2px 10px; color: #ccc;"
+            " background: #5a2a2a; }"
+            "QPushButton:hover { background: #6a3a3a; }"
+            "QPushButton:disabled { color: #666; background: #333; }"
+        )
+        self._clear_all_btn.setEnabled(False)
+        self._clear_all_btn.clicked.connect(self.clear_all_alignments_requested)
+        h.addWidget(self._clear_all_btn)
+
         self._reverse_btn = QPushButton("Reverse proposal")
         self._reverse_btn.setFixedHeight(28)
         self._reverse_btn.setToolTip(
@@ -332,6 +348,7 @@ class AlignView(QWidget):
         self._reverse_btn.setVisible(is_align)
         self._deepslice_btn.setVisible(is_align)
         self._default_btn.setVisible(is_align)
+        self._clear_all_btn.setVisible(is_align)
         self._store_btn.setVisible(is_align)
         self._clear_btn.setVisible(is_align)
         self._clear_cps_btn.setVisible(not is_align)
@@ -365,6 +382,7 @@ class AlignView(QWidget):
         self._deepslice_btn.setEnabled(enabled and not running)
         self._deepslice_btn.setText("DeepSlice running..." if running else "Run DeepSlice")
         self._default_btn.setEnabled(enabled and not running)
+        self._clear_all_btn.setEnabled(enabled and not running)
 
     def load_section(self, section: Section | None) -> None:
         self._section = section

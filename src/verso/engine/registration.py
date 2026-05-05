@@ -325,6 +325,7 @@ def quicknii_coronal_series_anchorings(
     atlas_shape: tuple[int, int, int],
     stored_anchorings: list[list[float] | None] | None = None,
     reverse_ap: bool = False,
+    center_proposals: bool = True,
 ) -> list[list[float]]:
     """Propagate coronal anchorings using QuickNII's series interpolation logic.
 
@@ -336,6 +337,8 @@ def quicknii_coronal_series_anchorings(
             receive propagated anchorings.
         reverse_ap: If true, reverse the initial AP proposal direction while
             leaving section order unchanged.
+        center_proposals: If true, generated proposals are recentered on the
+            atlas LR/DV midpoint while stored anchorings remain unchanged.
 
     Returns:
         One packed QuickNII anchoring per section.
@@ -359,6 +362,7 @@ def quicknii_coronal_series_anchorings(
                 else None
             ),
             reverse_ap=reverse_ap,
+            center_proposals=center_proposals,
         )
         restored: list[list[float] | None] = [None] * len(serial_numbers)
         for sorted_idx, original_idx in enumerate(order):
@@ -399,6 +403,20 @@ def quicknii_coronal_series_anchorings(
         w, h = image_sizes[i]
         unpacked_by_index[i] = quicknii_unpack_anchoring(anchoring, w, h)
 
+    stored_by_serial: dict[int, int] = {}
+    for i in stored_indices:
+        stored_by_serial.setdefault(serial_numbers[i], i)
+
+    duplicate_serial_indices: list[int] = []
+    for i, serial in enumerate(serial_numbers):
+        if i in stored_indices or serial not in stored_by_serial:
+            continue
+        stored_idx = stored_by_serial[serial]
+        unpacked_by_index[i] = list(unpacked_by_index[stored_idx])
+        duplicate_serial_indices.append(i)
+
+    anchor_indices = sorted(stored_indices + duplicate_serial_indices)
+
     controls: list[int] = []
     if not stored_indices:
         first_ap = 0.0 if reverse_ap else float(ap_dim - 1)
@@ -410,28 +428,30 @@ def quicknii_coronal_series_anchorings(
             controls.append(len(image_sizes) - 1)
     elif len(stored_indices) == 1:
         idx = stored_indices[0]
+        first_control = anchor_indices[0]
+        last_control = anchor_indices[-1]
         stored = unpacked_by_index[idx]
         first_ap = 0.0 if reverse_ap else float(ap_dim - 1)
         last_ap = float(ap_dim - 1) if reverse_ap else 0.0
-        if idx != 0:
+        if first_control != 0:
             first = list(stored)
             first[1] = first_ap
             unpacked_by_index[0] = first
             controls.append(0)
-        controls.append(idx)
-        if idx != len(image_sizes) - 1:
+        controls.extend(anchor_indices)
+        if last_control != len(image_sizes) - 1:
             last = list(stored)
             last[1] = last_ap
             unpacked_by_index[len(image_sizes) - 1] = last
             controls.append(len(image_sizes) - 1)
     else:
-        controls.extend(stored_indices)
-        if stored_indices[0] != 0:
+        controls.extend(anchor_indices)
+        if anchor_indices[0] != 0:
             unpacked_by_index[0] = _quicknii_regressed_unpacked(
                 stored_indices, unpacked_by_index, serial_numbers, serial_numbers[0]
             )
             controls.insert(0, 0)
-        if stored_indices[-1] != len(image_sizes) - 1:
+        if anchor_indices[-1] != len(image_sizes) - 1:
             last_idx = len(image_sizes) - 1
             unpacked_by_index[last_idx] = _quicknii_regressed_unpacked(
                 stored_indices, unpacked_by_index, serial_numbers, serial_numbers[last_idx]
@@ -460,10 +480,27 @@ def quicknii_coronal_series_anchorings(
                     for a, b in zip(left_u, right_u)
                 ]
 
+    # Strip in-plane coronal rotation (rotation around the AP axis) from proposals
+    # while keeping all other interpolated values — AP position, physical tilt
+    # (y-components of unit vectors), LR/DV position, and stretch.
+    _stored_set = set(stored_indices)
+    for i, row in enumerate(propagated):
+        if row is not None and i not in _stored_set:
+            uy = row[4]  # u_unit AP component (encodes DV-axis tilt)
+            vy = row[7]  # v_unit AP component (encodes LR-axis tilt)
+            row[3] = float(np.sqrt(max(0.0, 1.0 - uy * uy)))  # u_x: restore LR default
+            row[5] = 0.0                                        # u_z: remove in-plane rotation
+            row[6] = 0.0                                        # v_x: remove in-plane rotation
+            row[8] = float(np.sqrt(max(0.0, 1.0 - vy * vy)))  # v_z: restore DV default
+
     packed: list[list[float]] = []
-    for unpacked, (w, h) in zip(propagated, image_sizes):
+    for i, (unpacked, (w, h)) in enumerate(zip(propagated, image_sizes)):
         if unpacked is None:
             raise RuntimeError("QuickNII propagation left a section without anchoring")
+        if center_proposals and i not in stored_indices:
+            unpacked = list(unpacked)
+            unpacked[0] = float(lr_dim) / 2.0
+            unpacked[2] = float(dv_dim) / 2.0
         packed.append(quicknii_pack_anchoring(unpacked, w, h))
     return packed
 
@@ -505,8 +542,21 @@ def normalized_to_pixel(
 # Anchoring interpolation
 # ---------------------------------------------------------------------------
 
-def interpolate_anchorings(sections: list) -> None:
-    """Propagate anchorings for non-stored sections using QuickNII semantics."""
+def interpolate_anchorings(
+    sections: list,
+    atlas_shape: tuple[int, int, int] | None = None,
+    reverse_ap: bool = False,
+    center_proposals: bool = True,
+) -> None:
+    """Propagate anchorings for non-stored sections using QuickNII semantics.
+
+    When ``atlas_shape`` is available this follows QuickNII's
+    ``MgmtPanel.dointerpolate`` path, including the no-stored-anchoring and
+    one-stored-anchoring cases where endpoint controls are synthesized before
+    linear interpolation. Without an atlas shape, only the multi-anchor path can
+    be resolved because QuickNII's synthesized endpoint controls depend on atlas
+    dimensions.
+    """
     from verso.engine.io.image_io import registration_dimensions
     from verso.engine.model.alignment import AlignmentStatus
 
@@ -539,6 +589,28 @@ def interpolate_anchorings(sections: list) -> None:
                 h,
             )
             stored_indices.append(idx)
+
+    if atlas_shape is not None:
+        propagated_anchorings = quicknii_coronal_series_anchorings(
+            image_sizes=[(w, h) for _, w, h in sorted_usable],
+            serial_numbers=serial_numbers,
+            atlas_shape=atlas_shape,
+            stored_anchorings=[
+                section.alignment.anchoring
+                if idx in stored_indices
+                else None
+                for idx, (section, _, _) in enumerate(sorted_usable)
+            ],
+            reverse_ap=reverse_ap,
+            center_proposals=center_proposals,
+        )
+
+        for (section, _, _), anchoring in zip(sorted_usable, propagated_anchorings):
+            if section.alignment.status == AlignmentStatus.COMPLETE:
+                continue
+            section.alignment.anchoring = anchoring
+            section.alignment.status = AlignmentStatus.IN_PROGRESS
+        return
 
     if len(stored_indices) < 2:
         return
@@ -576,6 +648,16 @@ def interpolate_anchorings(sections: list) -> None:
                 a + t * (b - a)
                 for a, b in zip(left_unpacked, right_unpacked)
             ]
+
+    _stored_set_legacy = set(stored_indices)
+    for idx, row in propagated.items():
+        if idx not in _stored_set_legacy:
+            uy = row[4]
+            vy = row[7]
+            row[3] = float(np.sqrt(max(0.0, 1.0 - uy * uy)))
+            row[5] = 0.0
+            row[6] = 0.0
+            row[8] = float(np.sqrt(max(0.0, 1.0 - vy * vy)))
 
     for idx, unpacked in propagated.items():
         section, w, h = sorted_usable[idx]
