@@ -45,6 +45,55 @@ def _color_swatch_icon(rgb: tuple[int, int, int]) -> QIcon:
     return QIcon(pixmap)
 
 
+class _BrightnessControls(QWidget):
+    """Per-channel brightness sliders shared between Prep and Align panels."""
+
+    luminance_changed = pyqtSignal(float, float)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+
+        self._red_value = QLabel("1.00")
+        self._red_slider = QSlider(Qt.Orientation.Horizontal)
+        self._red_slider.setRange(1, 100)
+        self._red_slider.setValue(100)
+        self._red_slider.valueChanged.connect(self._emit)
+        red_row = QHBoxLayout()
+        red_row.addWidget(QLabel("Red"))
+        red_row.addWidget(self._red_slider, stretch=1)
+        red_row.addWidget(self._red_value)
+        layout.addLayout(red_row)
+
+        self._green_value = QLabel("1.00")
+        self._green_slider = QSlider(Qt.Orientation.Horizontal)
+        self._green_slider.setRange(1, 100)
+        self._green_slider.setValue(100)
+        self._green_slider.valueChanged.connect(self._emit)
+        green_row = QHBoxLayout()
+        green_row.addWidget(QLabel("Green"))
+        green_row.addWidget(self._green_slider, stretch=1)
+        green_row.addWidget(self._green_value)
+        layout.addLayout(green_row)
+
+    def _emit(self) -> None:
+        red = self._red_slider.value() / 100.0
+        green = self._green_slider.value() / 100.0
+        self._red_value.setText(f"{red:.2f}")
+        self._green_value.setText(f"{green:.2f}")
+        self.luminance_changed.emit(red, green)
+
+    def set_luminance(self, red: float, green: float) -> None:
+        for slider, value in ((self._red_slider, red), (self._green_slider, green)):
+            slider.blockSignals(True)
+            slider.setValue(int(round(max(1.0, min(100.0, value * 100.0)))))
+            slider.blockSignals(False)
+        self._red_value.setText(f"{red:.2f}")
+        self._green_value.setText(f"{green:.2f}")
+
+
 class _OverviewProperties(QWidget):
     """Properties panel content for the Overview view."""
 
@@ -90,7 +139,7 @@ class _PrepProperties(QWidget):
     """Properties panel content for the Prep view."""
 
     flip_h_changed = pyqtSignal(bool)
-    channel_changed = pyqtSignal(int)
+    flip_v_changed = pyqtSignal(bool)
     channel_luminance_changed = pyqtSignal(float, float)
     mask_visibility_changed = pyqtSignal(bool)
     lr_visibility_changed = pyqtSignal(bool)
@@ -119,41 +168,15 @@ class _PrepProperties(QWidget):
         layout.setSpacing(8)
         scroll.setWidget(content)
 
-        flip_box = QGroupBox("Preprocessing")
+        flip_box = QGroupBox("Flip image")
         flip_layout = QVBoxLayout(flip_box)
         self._flip_h = QCheckBox("Flip horizontal")
         self._flip_h.toggled.connect(self.flip_h_changed)
         flip_layout.addWidget(self._flip_h)
+        self._flip_v = QCheckBox("Flip vertical")
+        self._flip_v.toggled.connect(self.flip_v_changed)
+        flip_layout.addWidget(self._flip_v)
         layout.addWidget(flip_box)
-
-        chan_box = QGroupBox("Channel")
-        chan_layout = QVBoxLayout(chan_box)
-        self._channel_combo = QComboBox()
-        self._channel_combo.currentIndexChanged.connect(self.channel_changed)
-        chan_layout.addWidget(self._channel_combo)
-
-        self._red_value = QLabel("1.00")
-        self._red_slider = QSlider(Qt.Orientation.Horizontal)
-        self._red_slider.setRange(1, 100)
-        self._red_slider.setValue(100)
-        self._red_slider.valueChanged.connect(self._emit_channel_luminance)
-        red_row = QHBoxLayout()
-        red_row.addWidget(QLabel("Red"))
-        red_row.addWidget(self._red_slider, stretch=1)
-        red_row.addWidget(self._red_value)
-        chan_layout.addLayout(red_row)
-
-        self._green_value = QLabel("1.00")
-        self._green_slider = QSlider(Qt.Orientation.Horizontal)
-        self._green_slider.setRange(1, 100)
-        self._green_slider.setValue(100)
-        self._green_slider.valueChanged.connect(self._emit_channel_luminance)
-        green_row = QHBoxLayout()
-        green_row.addWidget(QLabel("Green"))
-        green_row.addWidget(self._green_slider, stretch=1)
-        green_row.addWidget(self._green_value)
-        chan_layout.addLayout(green_row)
-        layout.addWidget(chan_box)
 
         mask_box = QGroupBox("Mask visibility")
         mask_layout = QVBoxLayout(mask_box)
@@ -229,6 +252,13 @@ class _PrepProperties(QWidget):
         info_layout.addRow("Channels:", self._lbl_channels)
         layout.addWidget(info_box)
 
+        brightness_box = QGroupBox("Adjust brightness")
+        brightness_layout = QVBoxLayout(brightness_box)
+        self._brightness = _BrightnessControls()
+        self._brightness.luminance_changed.connect(self.channel_luminance_changed)
+        brightness_layout.addWidget(self._brightness)
+        layout.addWidget(brightness_box)
+
         layout.addStretch()
 
     def update_section(self, section: Section | None) -> None:
@@ -236,7 +266,9 @@ class _PrepProperties(QWidget):
             self._flip_h.blockSignals(True)
             self._flip_h.setChecked(False)
             self._flip_h.blockSignals(False)
-            self._channel_combo.clear()
+            self._flip_v.blockSignals(True)
+            self._flip_v.setChecked(False)
+            self._flip_v.blockSignals(False)
             self._lbl_dims.setText("-")
             self._lbl_channels.setText("-")
             return
@@ -245,11 +277,9 @@ class _PrepProperties(QWidget):
         self._flip_h.setChecked(section.preprocessing.flip_horizontal)
         self._flip_h.blockSignals(False)
 
-        self._channel_combo.blockSignals(True)
-        self._channel_combo.clear()
-        for ch in section.channels or ["Default"]:
-            self._channel_combo.addItem(ch)
-        self._channel_combo.blockSignals(False)
+        self._flip_v.blockSignals(True)
+        self._flip_v.setChecked(section.preprocessing.flip_vertical)
+        self._flip_v.blockSignals(False)
 
         self._lbl_dims.setText(self._section_dimensions(section))
         self._lbl_channels.setText(", ".join(section.channels) if section.channels else "-")
@@ -259,12 +289,8 @@ class _PrepProperties(QWidget):
         self._negative.setChecked(negative)
         self._negative.blockSignals(False)
 
-    def _emit_channel_luminance(self) -> None:
-        red = self._red_slider.value() / 100.0
-        green = self._green_slider.value() / 100.0
-        self._red_value.setText(f"{red:.2f}")
-        self._green_value.setText(f"{green:.2f}")
-        self.channel_luminance_changed.emit(red, green)
+    def set_luminance(self, red: float, green: float) -> None:
+        self._brightness.set_luminance(red, green)
 
     def _emit_mask_opacity(self) -> None:
         opacity = self._opacity_slider.value() / 100.0
@@ -301,6 +327,7 @@ class _AlignProperties(QWidget):
     opacity_changed = pyqtSignal(float)
     ap_changed = pyqtSignal(float)
     cp_style_changed = pyqtSignal(int, str, str)  # size, shape, color
+    channel_luminance_changed = pyqtSignal(float, float)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -425,7 +452,17 @@ class _AlignProperties(QWidget):
         layout.addWidget(self._warp_widget)
         self._warp_widget.setVisible(False)
 
+        brightness_box = QGroupBox("Adjust brightness")
+        brightness_layout = QVBoxLayout(brightness_box)
+        self._brightness = _BrightnessControls()
+        self._brightness.luminance_changed.connect(self.channel_luminance_changed)
+        brightness_layout.addWidget(self._brightness)
+        layout.addWidget(brightness_box)
+
         layout.addStretch()
+
+    def set_luminance(self, red: float, green: float) -> None:
+        self._brightness.set_luminance(red, green)
 
     def _emit_cp_style(self) -> None:
         self.cp_style_changed.emit(
@@ -562,7 +599,7 @@ class PropertiesPanel(QWidget):
     """Outer container that switches between the three properties pages."""
 
     flip_h_changed = pyqtSignal(bool)
-    channel_changed = pyqtSignal(int)
+    flip_v_changed = pyqtSignal(bool)
     channel_luminance_changed = pyqtSignal(float, float)
     mask_visibility_changed = pyqtSignal(bool)
     lr_visibility_changed = pyqtSignal(bool)
@@ -596,7 +633,7 @@ class PropertiesPanel(QWidget):
         self._stack.addWidget(self._align_page)
 
         self._prep_page.flip_h_changed.connect(self.flip_h_changed)
-        self._prep_page.channel_changed.connect(self.channel_changed)
+        self._prep_page.flip_v_changed.connect(self.flip_v_changed)
         self._prep_page.channel_luminance_changed.connect(self.channel_luminance_changed)
         self._prep_page.mask_visibility_changed.connect(self.mask_visibility_changed)
         self._prep_page.lr_visibility_changed.connect(self.lr_visibility_changed)
@@ -611,6 +648,7 @@ class PropertiesPanel(QWidget):
         self._align_page.opacity_changed.connect(self.opacity_changed)
         self._align_page.ap_changed.connect(self.ap_changed)
         self._align_page.cp_style_changed.connect(self.cp_style_changed)
+        self._align_page.channel_luminance_changed.connect(self.channel_luminance_changed)
 
         layout.addWidget(self._stack)
 
@@ -648,3 +686,7 @@ class PropertiesPanel(QWidget):
 
     def set_mask_negative(self, negative: bool) -> None:
         self._prep_page.set_mask_negative(negative)
+
+    def set_luminance(self, red: float, green: float) -> None:
+        self._prep_page.set_luminance(red, green)
+        self._align_page.set_luminance(red, green)

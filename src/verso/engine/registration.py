@@ -220,6 +220,20 @@ def flip_anchoring_horizontal(anchoring: list[float]) -> list[float]:
     return vectors_to_anchoring(o + u, -u, v)
 
 
+def flip_anchoring_vertical(anchoring: list[float]) -> list[float]:
+    """Mirror an anchoring vertically in section coordinates.
+
+    A vertical display flip changes section coordinates as
+    ``t_flipped = 1 - t_original``. The equivalent anchoring is:
+        ``o' = o + v``, ``u' = u``, ``v' = -v``.
+
+    The transform is its own inverse, so the same function can be used when
+    toggling a stored alignment into or out of flipped display space.
+    """
+    o, u, v = anchoring_to_vectors(anchoring)
+    return vectors_to_anchoring(o + v, u, -v)
+
+
 # ---------------------------------------------------------------------------
 # Pixel ↔ Normalised (convenience wrappers for the GUI)
 # ---------------------------------------------------------------------------

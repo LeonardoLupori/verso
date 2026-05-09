@@ -309,8 +309,8 @@ class MainWindow(QMainWindow):
 
         # Properties
         self._props.flip_h_changed.connect(self._on_flip_h_changed)
-        self._props.channel_changed.connect(self._on_prep_channel_changed)
-        self._props.channel_luminance_changed.connect(self._prep.set_channel_luminance)
+        self._props.flip_v_changed.connect(self._on_flip_v_changed)
+        self._props.channel_luminance_changed.connect(self._on_channel_luminance_changed)
         self._props.mask_visibility_changed.connect(self._prep.set_mask_visible)
         self._props.mask_opacity_changed.connect(self._prep.set_mask_opacity)
         self._props.mask_color_changed.connect(self._prep.set_mask_color)
@@ -585,18 +585,42 @@ class MainWindow(QMainWindow):
         self._overview.refresh_row(self._state.section_index)
         self._update_ap_plot()
 
-    def _on_opacity_changed(self, opacity: float) -> None:
-        self._align.canvas.set_overlay_opacity(opacity)
-
-    def _on_prep_channel_changed(self, index: int) -> None:
+    def _on_flip_v_changed(self, value: bool) -> None:
         section = self._state.current_section
         if section is None:
             return
-        if 0 <= index < len(section.channels):
-            section.registration_channel = section.channels[index]
-        else:
-            section.registration_channel = None
+        was_flipped = section.preprocessing.flip_vertical
+        if value == was_flipped:
+            return
+        section.preprocessing.flip_vertical = value
+        if (
+            section.alignment.status == AlignmentStatus.COMPLETE
+            and section.alignment.anchoring
+            and any(section.alignment.anchoring)
+        ):
+            from verso.engine.registration import flip_anchoring_vertical
+
+            section.alignment.anchoring = flip_anchoring_vertical(
+                section.alignment.anchoring
+            )
+            if self._state.atlas is not None:
+                section.alignment.ap_position_mm = self._anchoring_ap_mm(
+                    section.alignment.anchoring
+                )
+        if self._current_mode == "prep":
+            self._prep.refresh_display()
+        elif self._current_mode == "align":
+            self._align.refresh_display()
         self._overview.refresh_row(self._state.section_index)
+        self._update_ap_plot()
+
+    def _on_opacity_changed(self, opacity: float) -> None:
+        self._align.canvas.set_overlay_opacity(opacity)
+
+    def _on_channel_luminance_changed(self, red: float, green: float) -> None:
+        self._prep.set_channel_luminance(red, green)
+        self._align.set_channel_luminance(red, green)
+        self._props.set_luminance(red, green)
 
     def _on_prep_autodetect_requested(self) -> None:
         self._prep.autodetect_mask()
