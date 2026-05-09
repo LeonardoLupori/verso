@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import numpy as np
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QHBoxLayout,
@@ -63,6 +63,10 @@ class AlignView(QWidget):
         self._cp_size = 10
         self._cp_shape = "Cross"
         self._cp_color = "Yellow"
+        # Real-time warp throttle: fires _update_overlay at ~30fps during CP drag
+        self._warp_timer = QTimer(self)
+        self._warp_timer.setInterval(33)
+        self._warp_timer.timeout.connect(self._update_overlay)
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -829,10 +833,12 @@ class AlignView(QWidget):
             return
         self._move_dragged_cp_to(x, y)
         self._cp_hovered = self._cp_dragging
-        self._update_control_point_display()
+        if not self._warp_timer.isActive():
+            self._warp_timer.start()
 
     def _on_canvas_drag_ended(self, x: float, y: float) -> None:
         """Drag end: finalise CP position."""
+        self._warp_timer.stop()
         if self._mode != "warp" or self._cp_dragging < 0 or self._section is None:
             self._cp_dragging = -1
             return
