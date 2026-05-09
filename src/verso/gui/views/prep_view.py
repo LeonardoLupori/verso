@@ -16,10 +16,10 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from verso.engine.model.project import Section
+from verso.engine.model.project import ChannelSpec, Section
 from verso.engine.preprocessing import (
-    apply_channel_luminance,
     apply_freehand_stroke,
+    composite_channels,
     detect_foreground,
     load_mask,
     mask_to_rgba,
@@ -48,10 +48,7 @@ class PrepView(QWidget):
         self._mask_color = (255, 255, 255)
         self._negative_mask = False
         self._mask_visible = True
-        self._red_luminance = 1.0
-        self._green_luminance = 1.0
-        self._red_previous_luminance = 1.0
-        self._green_previous_luminance = 1.0
+        self._channels: list[ChannelSpec] = []
         self._undo_stack: list[np.ndarray] = []
         self._stroke_points: list[tuple[float, float]] = []
         self._stroke_active = False
@@ -155,8 +152,6 @@ class PrepView(QWidget):
             (Qt.Key.Key_D, lambda: self._set_tool("erase")),
             (Qt.Key.Key_M, lambda: self.set_mask_visible(not self._mask_visible)),
             (Qt.Key.Key_N, lambda: self.set_mask_negative(not self._negative_mask)),
-            (Qt.Key.Key_R, self.toggle_red_channel),
-            (Qt.Key.Key_G, self.toggle_green_channel),
             (Qt.Key.Key_U, self.undo_mask_edit),
             (QKeySequence.StandardKey.Undo, self.undo_mask_edit),
             (Qt.Key.Key_Return, self.save_current_mask),
@@ -232,29 +227,8 @@ class PrepView(QWidget):
         self._mask_color = color
         self._update_mask_overlay()
 
-    def set_channel_luminance(self, red: float, green: float) -> None:
-        self._red_luminance = min(max(red, 0.0), 1.0)
-        self._green_luminance = min(max(green, 0.0), 1.0)
-        if self._red_luminance > 0:
-            self._red_previous_luminance = self._red_luminance
-        if self._green_luminance > 0:
-            self._green_previous_luminance = self._green_luminance
-        self._display_image()
-
-    def toggle_red_channel(self) -> None:
-        if self._red_luminance > 0:
-            self._red_previous_luminance = self._red_luminance
-            self._red_luminance = 0.0
-        else:
-            self._red_luminance = self._red_previous_luminance
-        self._display_image()
-
-    def toggle_green_channel(self) -> None:
-        if self._green_luminance > 0:
-            self._green_previous_luminance = self._green_luminance
-            self._green_luminance = 0.0
-        else:
-            self._green_luminance = self._green_previous_luminance
+    def set_channels(self, channels: list[ChannelSpec]) -> None:
+        self._channels = list(channels)
         self._display_image()
 
     def autodetect_mask(self) -> None:
@@ -300,12 +274,8 @@ class PrepView(QWidget):
             img = np.fliplr(img)
         if self._section and self._section.preprocessing.flip_vertical:
             img = np.flipud(img)
-        img = apply_channel_luminance(
-            img,
-            red=self._red_luminance,
-            green=self._green_luminance,
-        )
-        self._canvas.set_background(np.ascontiguousarray(img))
+        rgb = composite_channels(img, self._channels)
+        self._canvas.set_background(np.ascontiguousarray(rgb))
 
     def _load_or_init_mask(self) -> None:
         if self._section is None or self._raw_image is None:

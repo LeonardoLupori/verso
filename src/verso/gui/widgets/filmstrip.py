@@ -146,9 +146,16 @@ class Filmstrip(QWidget):
         outer.addWidget(scroll)
         self._scroll = scroll
 
-    def populate(self, sections: list) -> None:
-        """Rebuild thumbnails from a list of Section objects."""
+    def populate(self, sections: list, channels: list | None = None) -> None:
+        """Rebuild thumbnails from a list of Section objects.
+
+        Args:
+            sections: section list to render.
+            channels: project-level :class:`ChannelSpec` list used to composite
+                the cached multichannel thumbnail to RGB.
+        """
         self._sections = sections
+        channels = channels or []
 
         for btn in self._buttons:
             self._row.removeWidget(btn)
@@ -165,7 +172,7 @@ class Filmstrip(QWidget):
             try:
                 from verso.engine.io.image_io import load_filmstrip_thumbnail
                 from verso.gui.utils import ndarray_to_pixmap
-                thumb_arr = load_filmstrip_thumbnail(section)
+                thumb_arr = load_filmstrip_thumbnail(section, channels)
                 if thumb_arr is not None:
                     btn.set_thumbnail(ndarray_to_pixmap(thumb_arr), status)
                 else:

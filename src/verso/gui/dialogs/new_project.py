@@ -34,9 +34,65 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from verso.engine.io.image_io import parse_section_serial_number, thumbnail_filename
+from verso.engine.io.image_io import (
+    parse_section_serial_number,
+    probe_channels,
+    thumbnail_filename,
+)
 from verso.engine.model.alignment import Alignment, AlignmentStatus, WarpState
-from verso.engine.model.project import DEFAULT_PROJECT_FILENAME, AtlasRef, Project, Section
+from verso.engine.model.project import (
+    DEFAULT_PROJECT_FILENAME,
+    AtlasRef,
+    ChannelSpec,
+    Project,
+    Section,
+)
+
+# Default per-channel pseudo-color palettes used when seeding Project.channels
+# at project creation time.
+_FLUORESCENCE_PALETTE: list[tuple[int, int, int]] = [
+    (0, 100, 255),    # DAPI / blue
+    (0, 255, 0),      # GFP / green
+    (255, 0, 0),      # RFP / red
+    (255, 0, 200),    # far-red / magenta
+    (255, 255, 255),  # white
+    (255, 255, 0),    # yellow
+    (0, 255, 255),    # cyan
+]
+
+_RGB_IDENTITY_PALETTE: list[tuple[int, int, int]] = [
+    (255, 0, 0),
+    (0, 255, 0),
+    (0, 0, 255),
+]
+
+
+def _default_channel_specs(
+    channel_names: list[str], source_ext: str
+) -> list[ChannelSpec]:
+    """Pick the per-channel color palette based on the source file extension.
+
+    Single-channel inputs default to white. JPG/PNG inputs use the identity
+    RGB palette so a regular photo renders correctly. TIFFs (assumed
+    scientific) use the fluorescence palette.
+    """
+    n = len(channel_names)
+    if n == 0:
+        return []
+    if n == 1:
+        return [ChannelSpec(name=channel_names[0], color=(255, 255, 255))]
+
+    ext = source_ext.lower().lstrip(".")
+    if ext in ("jpg", "jpeg", "png"):
+        palette = _RGB_IDENTITY_PALETTE
+    else:
+        palette = _FLUORESCENCE_PALETTE
+
+    specs: list[ChannelSpec] = []
+    for i, name in enumerate(channel_names):
+        color = palette[i] if i < len(palette) else (255, 255, 255)
+        specs.append(ChannelSpec(name=name, color=color))
+    return specs
 
 _KNOWN_ATLASES = [
     "allen_mouse_25um",
@@ -224,10 +280,21 @@ class NewProjectDialog(QDialog):
                 )
             )
 
+        # Probe channels from the first source image to seed Project.channels
+        # with sensible defaults. The user can edit these in the Adjust
+        # brightness panel afterwards.
+        first_path = Path(sections[0].original_path)
+        try:
+            channel_names = probe_channels(first_path)
+        except Exception:
+            channel_names = ["Ch 0"]
+        project_channels = _default_channel_specs(channel_names, first_path.suffix)
+
         self._project = Project(
             name=name,
             atlas=AtlasRef(name=atlas),
             sections=sections,
+            channels=project_channels,
         )
         self._project_path = project_path
         self._project.save(self._project_path)
@@ -239,7 +306,7 @@ class NewProjectDialog(QDialog):
         self.accept()
 
     def _generate_thumbnails(self, sections: list[Section]) -> None:
-        """Generate working-resolution PNG thumbnails for all sections."""
+        """Generate working-resolution OME-TIFF thumbnails for all sections."""
         from PyQt6.QtCore import Qt
         from PyQt6.QtWidgets import QApplication, QProgressDialog
 

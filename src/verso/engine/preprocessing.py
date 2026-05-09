@@ -56,22 +56,53 @@ def apply_mask(image: np.ndarray, mask: np.ndarray) -> np.ndarray:
     return out
 
 
-def apply_channel_luminance(rgb: np.ndarray, red: float, green: float) -> np.ndarray:
-    """Apply maskEditor-style per-channel display luminance.
+def composite_channels(
+    image: np.ndarray,
+    channels,
+) -> np.ndarray:
+    """Composite a multichannel image into a displayable RGB.
 
-    This matches MATLAB ``imadjust(channel, [0, scale], [0, 1])`` for the red
-    and green channels: lower non-zero scale values brighten/saturate the
-    channel. A scale of 0 hides that channel for display.
+    For each visible :class:`~verso.engine.model.project.ChannelSpec`:
+      * apply an ``imadjust([0, scale], [0, 1])`` brightness boost,
+      * tint the resulting plane by the spec's RGB color,
+      * max-blend into the output (matches Fiji "Composite" mode and avoids
+        over-saturation).
+
+    If the channel list has fewer entries than the image has planes, extra
+    planes are ignored. If it has more entries than the image has planes, the
+    excess specs are ignored.
+
+    Args:
+        image: uint8 ``(H, W)`` or ``(H, W, C)`` array.
+        channels: iterable of :class:`ChannelSpec`-like objects with
+            ``scale``, ``color`` (RGB tuple), and ``visible`` attributes.
+
+    Returns:
+        uint8 ``(H, W, 3)`` RGB image.
     """
-    if rgb.ndim != 3 or rgb.shape[2] < 3:
-        raise ValueError("Expected an RGB image with shape HxWx3")
+    if image.ndim == 2:
+        image = image[..., np.newaxis]
+    if image.ndim != 3:
+        raise ValueError(f"Expected (H, W) or (H, W, C), got shape {image.shape}")
 
-    out = rgb.astype(np.float32, copy=True)
-    for channel, scale in ((0, red), (1, green)):
+    h, w, c = image.shape
+    out = np.zeros((h, w, 3), dtype=np.float32)
+
+    specs = list(channels)
+    n = min(c, len(specs))
+    for i in range(n):
+        spec = specs[i]
+        if not getattr(spec, "visible", True):
+            continue
+        scale = float(spec.scale)
         if scale <= 0:
-            out[:, :, channel] = 0
-        else:
-            out[:, :, channel] = out[:, :, channel] / min(float(scale), 1.0)
+            continue
+        plane = image[:, :, i].astype(np.float32) / min(scale, 1.0)
+        np.clip(plane, 0, 255, out=plane)
+        for k in range(3):
+            tinted = plane * (spec.color[k] / 255.0)
+            np.maximum(out[:, :, k], tinted, out=out[:, :, k])
+
     return out.clip(0, 255).astype(np.uint8)
 
 
@@ -139,24 +170,25 @@ def apply_freehand_stroke(
     return out
 
 
-def detect_foreground(rgb: np.ndarray) -> np.ndarray:
+def detect_foreground(image: np.ndarray) -> np.ndarray:
     """Auto-segment tissue from bright or dark background.
 
-    Background polarity is estimated from border luminance. The returned mask
-    uses True=tissue/foreground.
+    Multichannel inputs are reduced to a single plane via max-projection,
+    so any channel with strong signal contributes to the foreground mask.
+    Background polarity is estimated from border luminance. The returned
+    mask uses True=tissue/foreground.
     """
     from scipy import ndimage as ndi
     from skimage import morphology
-    from skimage.color import rgb2gray
 
-    if rgb.ndim == 2:
-        gray = rgb.astype(np.float32)
-        if gray.max() > 1.0:
-            gray /= 255.0
-    elif rgb.ndim == 3:
-        gray = rgb2gray(rgb[:, :, :3])
+    if image.ndim == 2:
+        gray = image.astype(np.float32)
+    elif image.ndim == 3:
+        gray = image.max(axis=2).astype(np.float32)
     else:
-        raise ValueError("Expected a 2-D or RGB image")
+        raise ValueError("Expected a 2-D or 3-D image")
+    if gray.max() > 1.0:
+        gray /= 255.0
 
     if gray.size == 0:
         return np.ones(gray.shape, dtype=bool)

@@ -63,9 +63,8 @@ class AlignView(QWidget):
         self._cp_size = 10
         self._cp_shape = "Cross"
         self._cp_color = "Yellow"
-        # Brightness (synced from properties panel)
-        self._red_luminance = 1.0
-        self._green_luminance = 1.0
+        # Per-channel display state (project-level, synced via main_window)
+        self._channels: list = []
         # Real-time warp throttle: fires _update_overlay at ~30fps during CP drag
         self._warp_timer = QTimer(self)
         self._warp_timer.setInterval(33)
@@ -439,18 +438,13 @@ class AlignView(QWidget):
             img = np.fliplr(img)
         if self._section and self._section.preprocessing.flip_vertical:
             img = np.flipud(img)
-        from verso.engine.preprocessing import apply_channel_luminance
+        from verso.engine.preprocessing import composite_channels
 
-        img = apply_channel_luminance(
-            img,
-            red=self._red_luminance,
-            green=self._green_luminance,
-        )
-        self._canvas.set_background(np.ascontiguousarray(img))
+        rgb = composite_channels(img, self._channels)
+        self._canvas.set_background(np.ascontiguousarray(rgb))
 
-    def set_channel_luminance(self, red: float, green: float) -> None:
-        self._red_luminance = min(max(red, 0.0), 1.0)
-        self._green_luminance = min(max(green, 0.0), 1.0)
+    def set_channels(self, channels: list) -> None:
+        self._channels = list(channels)
         self._display_image()
 
     def refresh_display(self) -> None:

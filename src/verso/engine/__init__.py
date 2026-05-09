@@ -21,8 +21,8 @@ from verso.engine.io.image_io import (
     ensure_working_copy,
     image_dimensions,
     load_filmstrip_thumbnail,
-    load_for_display,
     load_image,
+    probe_channels,
     registration_dimensions,
 )
 from verso.engine.io.quint_io import (
@@ -34,7 +34,7 @@ from verso.engine.io.quint_io import (
 )
 from verso.engine.model.alignment import Alignment, AlignmentStatus, ControlPoint, WarpState
 from verso.engine.model.mask import Mask, MaskType
-from verso.engine.model.project import AtlasRef, Preprocessing, Project, Section
+from verso.engine.model.project import AtlasRef, ChannelSpec, Preprocessing, Project, Section
 from verso.engine.registration import (
     anchoring_center,
     anchoring_to_vectors,
@@ -66,13 +66,14 @@ __all__ = [
     "ensure_working_copy",
     "image_dimensions",
     "load_filmstrip_thumbnail",
-    "load_for_display",
     "load_image",
+    "probe_channels",
     "registration_dimensions",
     # Model
     "Alignment",
     "AlignmentStatus",
     "AtlasRef",
+    "ChannelSpec",
     "ControlPoint",
     "Mask",
     "MaskType",

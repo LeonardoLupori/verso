@@ -26,6 +26,34 @@ class AtlasRef:
 
 
 @dataclass
+class ChannelSpec:
+    """Per-channel display settings, shared across all sections in a project."""
+
+    name: str
+    color: tuple[int, int, int] = (255, 255, 255)
+    scale: float = 1.0
+    visible: bool = True
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "color": list(self.color),
+            "scale": self.scale,
+            "visible": self.visible,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> ChannelSpec:
+        color = d.get("color", [255, 255, 255])
+        return cls(
+            name=d["name"],
+            color=(int(color[0]), int(color[1]), int(color[2])),
+            scale=float(d.get("scale", 1.0)),
+            visible=bool(d.get("visible", True)),
+        )
+
+
+@dataclass
 class Preprocessing:
     """Non-destructive preprocessing parameters stored per section."""
 
@@ -60,8 +88,6 @@ class Section:
     serial_number: int
     original_path: str
     thumbnail_path: str
-    channels: list[str] = field(default_factory=list)
-    registration_channel: str | None = None
     preprocessing: Preprocessing = field(default_factory=Preprocessing)
     alignment: Alignment = field(default_factory=Alignment)
     warp: WarpState = field(default_factory=WarpState)
@@ -74,8 +100,6 @@ class Section:
             "serial_number": self.serial_number,
             "original_path": self.original_path,
             "thumbnail_path": self.thumbnail_path,
-            "channels": self.channels,
-            "registration_channel": self.registration_channel,
             "preprocessing": self.preprocessing.to_dict(),
             "alignment": self.alignment.to_dict(),
             "warp": self.warp.to_dict(),
@@ -89,8 +113,6 @@ class Section:
             serial_number=d["serial_number"],
             original_path=d["original_path"],
             thumbnail_path=d["thumbnail_path"],
-            channels=d.get("channels", []),
-            registration_channel=d.get("registration_channel"),
             preprocessing=Preprocessing.from_dict(d.get("preprocessing", {})),
             alignment=Alignment.from_dict(d.get("alignment", {})),
             warp=WarpState.from_dict(d.get("warp", {})),
@@ -105,6 +127,7 @@ class Project:
     name: str
     atlas: AtlasRef
     sections: list[Section] = field(default_factory=list)
+    channels: list[ChannelSpec] = field(default_factory=list)
     version: str = "1.0"
 
     def to_dict(self) -> dict[str, Any]:
@@ -112,6 +135,7 @@ class Project:
             "version": self.version,
             "name": self.name,
             "atlas": self.atlas.to_dict(),
+            "channels": [c.to_dict() for c in self.channels],
             "sections": [s.to_dict() for s in self.sections],
         }
 
@@ -125,6 +149,7 @@ class Project:
             name=d["name"],
             atlas=AtlasRef.from_dict(d["atlas"]),
             sections=[Section.from_dict(s) for s in d.get("sections", [])],
+            channels=[ChannelSpec.from_dict(c) for c in d.get("channels", [])],
             version=d.get("version", "1.0"),
         )
 

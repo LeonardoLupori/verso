@@ -5,7 +5,7 @@ from pathlib import Path
 
 from verso.engine.model.alignment import Alignment, AlignmentStatus, ControlPoint, WarpState
 from verso.engine.model.mask import Mask, MaskType
-from verso.engine.model.project import AtlasRef, Preprocessing, Project, Section
+from verso.engine.model.project import AtlasRef, ChannelSpec, Preprocessing, Project, Section
 
 # ---------------------------------------------------------------------------
 # ControlPoint
@@ -87,9 +87,7 @@ def _make_section() -> Section:
         id="s001",
         serial_number=1,
         original_path="/data/raw/IMG_0234.tif",
-        thumbnail_path="thumbnails/s001.png",
-        channels=["DAPI", "GFP"],
-        registration_channel="GFP",
+        thumbnail_path="thumbnails/s001.ome.tif",
         preprocessing=Preprocessing(flip_horizontal=True),
         alignment=Alignment(
             anchoring=[0.0, 160.0, 228.0, 456.0, 0.0, 0.0, 0.0, 320.0, 0.0],
@@ -117,7 +115,27 @@ def _make_project() -> Project:
         name="My Experiment",
         atlas=AtlasRef(name="allen_mouse_25um"),
         sections=[_make_section()],
+        channels=[
+            ChannelSpec(name="DAPI", color=(0, 100, 255), scale=0.8, visible=True),
+            ChannelSpec(name="GFP", color=(0, 255, 0), scale=1.0, visible=True),
+        ],
     )
+
+
+# ---------------------------------------------------------------------------
+# ChannelSpec
+# ---------------------------------------------------------------------------
+
+def test_channel_spec_round_trip():
+    c = ChannelSpec(name="DAPI", color=(0, 100, 255), scale=0.6, visible=False)
+    assert ChannelSpec.from_dict(c.to_dict()) == c
+
+
+def test_channel_spec_defaults():
+    c = ChannelSpec(name="GFP")
+    assert c.color == (255, 255, 255)
+    assert c.scale == 1.0
+    assert c.visible is True
 
 
 def test_project_round_trip_in_memory():

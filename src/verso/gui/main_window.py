@@ -310,7 +310,8 @@ class MainWindow(QMainWindow):
         # Properties
         self._props.flip_h_changed.connect(self._on_flip_h_changed)
         self._props.flip_v_changed.connect(self._on_flip_v_changed)
-        self._props.channel_luminance_changed.connect(self._on_channel_luminance_changed)
+        self._props.channels_changed.connect(self._on_channels_changed)
+        self._props.channels_committed.connect(self._on_channels_committed)
         self._props.mask_visibility_changed.connect(self._prep.set_mask_visible)
         self._props.mask_opacity_changed.connect(self._prep.set_mask_opacity)
         self._props.mask_color_changed.connect(self._prep.set_mask_color)
@@ -497,7 +498,10 @@ class MainWindow(QMainWindow):
 
         self._project_label.setText(project.name)
         self._overview.load_project(project)
-        self._filmstrip.populate(project.sections)
+        self._filmstrip.populate(project.sections, project.channels)
+        self._prep.set_channels(project.channels)
+        self._align.set_channels(project.channels)
+        self._props.set_channels(project.channels)
         self._update_reverse_order_enabled()
         self._update_deepslice_enabled()
 
@@ -617,10 +621,24 @@ class MainWindow(QMainWindow):
     def _on_opacity_changed(self, opacity: float) -> None:
         self._align.canvas.set_overlay_opacity(opacity)
 
-    def _on_channel_luminance_changed(self, red: float, green: float) -> None:
-        self._prep.set_channel_luminance(red, green)
-        self._align.set_channel_luminance(red, green)
-        self._props.set_luminance(red, green)
+    def _on_channels_changed(self, channels: list) -> None:
+        """Live updates while the user drags a brightness slider."""
+        project = self._state.project
+        if project is not None:
+            project.channels = list(channels)
+        self._prep.set_channels(channels)
+        self._align.set_channels(channels)
+        self._props.set_channels(channels)
+
+    def _on_channels_committed(self, channels: list) -> None:
+        """Fires only after the user releases the slider or makes a discrete edit
+        (color pick, visibility toggle). Used for the expensive filmstrip
+        recomposite so it doesn't run on every drag tick."""
+        project = self._state.project
+        if project is None:
+            return
+        project.channels = list(channels)
+        self._filmstrip.populate(project.sections, project.channels)
 
     def _on_prep_autodetect_requested(self) -> None:
         self._prep.autodetect_mask()

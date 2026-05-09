@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import numpy as np
 
-from verso.engine.model.project import Preprocessing
+from verso.engine.model.project import ChannelSpec, Preprocessing
 from verso.engine.preprocessing import (
     _sensitive_threshold,
-    apply_channel_luminance,
     apply_flip,
     apply_freehand_stroke,
     apply_mask,
+    composite_channels,
     detect_foreground,
     load_mask,
     mask_to_rgba,
@@ -37,27 +37,62 @@ def test_apply_mask_zeros_background_pixels() -> None:
     np.testing.assert_array_equal(masked[1, 0], [0, 0, 0])
 
 
-def test_channel_luminance_matches_imadjust_direction() -> None:
-    rgb = np.zeros((1, 3, 3), dtype=np.uint8)
-    rgb[0, :, 0] = [25, 50, 100]
-    rgb[0, :, 1] = [10, 40, 80]
-    rgb[0, :, 2] = [7, 8, 9]
+def test_composite_channels_max_blends_visible_channels() -> None:
+    image = np.zeros((1, 3, 2), dtype=np.uint8)
+    image[0, :, 0] = [200, 0, 0]      # bright in channel 0
+    image[0, :, 1] = [0, 200, 0]      # bright in channel 1
+    channels = [
+        ChannelSpec(name="ch0", color=(255, 0, 0), scale=1.0, visible=True),
+        ChannelSpec(name="ch1", color=(0, 255, 0), scale=1.0, visible=True),
+    ]
 
-    adjusted = apply_channel_luminance(rgb, red=0.5, green=0.25)
+    rgb = composite_channels(image, channels)
 
-    np.testing.assert_array_equal(adjusted[0, :, 0], [50, 100, 200])
-    np.testing.assert_array_equal(adjusted[0, :, 1], [40, 160, 255])
-    np.testing.assert_array_equal(adjusted[0, :, 2], [7, 8, 9])
+    assert rgb.shape == (1, 3, 3)
+    # First pixel: channel 0 is bright → red contribution.
+    assert rgb[0, 0, 0] > 100 and rgb[0, 0, 1] == 0
+    # Second pixel: channel 1 is bright → green contribution.
+    assert rgb[0, 1, 1] > 100 and rgb[0, 1, 0] == 0
+    # Third pixel: nothing bright in either channel.
+    assert rgb[0, 2, 0] == 0 and rgb[0, 2, 1] == 0
 
 
-def test_channel_luminance_zero_hides_channel() -> None:
-    rgb = np.full((2, 2, 3), 100, dtype=np.uint8)
+def test_composite_channels_invisible_channel_contributes_nothing() -> None:
+    image = np.full((1, 1, 2), 200, dtype=np.uint8)
+    channels = [
+        ChannelSpec(name="ch0", color=(255, 0, 0), scale=1.0, visible=False),
+        ChannelSpec(name="ch1", color=(0, 255, 0), scale=1.0, visible=True),
+    ]
+    rgb = composite_channels(image, channels)
+    assert rgb[0, 0, 0] == 0
+    assert rgb[0, 0, 1] > 100
 
-    adjusted = apply_channel_luminance(rgb, red=0.0, green=1.0)
 
-    assert np.all(adjusted[:, :, 0] == 0)
-    assert np.all(adjusted[:, :, 1] == 100)
-    assert np.all(adjusted[:, :, 2] == 100)
+def test_composite_channels_scale_brightens_channel() -> None:
+    image = np.full((1, 1, 1), 50, dtype=np.uint8)
+    full_scale = composite_channels(
+        image, [ChannelSpec(name="x", color=(255, 0, 0), scale=1.0)]
+    )
+    boosted = composite_channels(
+        image, [ChannelSpec(name="x", color=(255, 0, 0), scale=0.5)]
+    )
+    assert boosted[0, 0, 0] > full_scale[0, 0, 0]
+
+
+def test_composite_channels_handles_2d_input() -> None:
+    image = np.full((2, 2), 128, dtype=np.uint8)
+    rgb = composite_channels(
+        image, [ChannelSpec(name="x", color=(255, 255, 255), scale=1.0)]
+    )
+    assert rgb.shape == (2, 2, 3)
+    assert rgb[0, 0, 0] == 128
+
+
+def test_composite_channels_empty_specs_returns_black() -> None:
+    image = np.full((2, 2, 3), 200, dtype=np.uint8)
+    rgb = composite_channels(image, [])
+    assert rgb.shape == (2, 2, 3)
+    assert np.all(rgb == 0)
 
 
 def test_mask_save_load_roundtrip_and_resize(tmp_path) -> None:
