@@ -595,8 +595,8 @@ class _AlignProperties(QWidget):
 
         self._cp_shape_combo = QComboBox()
         self._cp_shape_combo.addItems(_CP_SHAPES)
-        self._cp_shape_combo.currentTextChanged.connect(self._emit_cp_style)
         self._cp_shape_combo.setCurrentText("Cross")
+        self._cp_shape_combo.currentTextChanged.connect(self._emit_cp_style)
         cp_form.addRow("Shape:", self._cp_shape_combo)
 
         self._cp_color_combo = QComboBox()
@@ -607,13 +607,13 @@ class _AlignProperties(QWidget):
                 name,
                 Qt.ItemDataRole.ToolTipRole,
             )
-        self._cp_color_combo.currentIndexChanged.connect(self._emit_cp_style)
         self._cp_color_combo.setCurrentIndex(
             next(
                 (i for i, k in enumerate(_CP_COLORS) if k == "Yellow"),
                 0,
             )
         )
+        self._cp_color_combo.currentIndexChanged.connect(self._emit_cp_style)
         self._cp_color_combo.setFixedSize(56, 26)
         self._cp_color_combo.setIconSize(QPixmap(18, 18).size())
         self._cp_color_combo.setStyleSheet(
