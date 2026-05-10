@@ -596,6 +596,7 @@ class _AlignProperties(QWidget):
         self._cp_shape_combo = QComboBox()
         self._cp_shape_combo.addItems(_CP_SHAPES)
         self._cp_shape_combo.currentTextChanged.connect(self._emit_cp_style)
+        self._cp_shape_combo.setCurrentText("Cross")
         cp_form.addRow("Shape:", self._cp_shape_combo)
 
         self._cp_color_combo = QComboBox()
@@ -607,6 +608,12 @@ class _AlignProperties(QWidget):
                 Qt.ItemDataRole.ToolTipRole,
             )
         self._cp_color_combo.currentIndexChanged.connect(self._emit_cp_style)
+        self._cp_color_combo.setCurrentIndex(
+            next(
+                (i for i, k in enumerate(_CP_COLORS) if k == "Yellow"),
+                0,
+            )
+        )
         self._cp_color_combo.setFixedSize(56, 26)
         self._cp_color_combo.setIconSize(QPixmap(18, 18).size())
         self._cp_color_combo.setStyleSheet(
@@ -824,14 +831,16 @@ class PropertiesPanel(QWidget):
         layout.addWidget(self._stack)
 
     def set_mode(self, mode: str) -> None:
-        self._stack.setCurrentIndex(self._MODES.index(mode))
+        # "warp" shares the align properties page
+        page = "align" if mode == "warp" else mode
+        self._stack.setCurrentIndex(self._MODES.index(page))
 
     def update_section(self, section, mode: str) -> None:
         if mode == "overview":
             self._overview_page.update_section(section)
         elif mode == "prep":
             self._prep_page.update_section(section)
-        elif mode == "align":
+        elif mode in ("align", "warp"):
             self._align_page.update_section(section)
 
     def set_atlas_name(self, name: str) -> None:

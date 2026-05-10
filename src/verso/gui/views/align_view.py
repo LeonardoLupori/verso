@@ -128,28 +128,6 @@ class AlignView(QWidget):
         h.setContentsMargins(8, 2, 8, 2)
         h.setSpacing(4)
 
-        # Align / Warp mode toggle
-        self._mode_group = QButtonGroup()
-        for label, mode in [("Align", "align"), ("Warp", "warp")]:
-            btn = QPushButton(label)
-            btn.setCheckable(True)
-            btn.setFixedHeight(28)
-            btn.setStyleSheet(
-                "QPushButton { border-radius: 4px; padding: 2px 12px; color: #ccc;"
-                " background: #333; }"
-                "QPushButton:checked { background: #1e5a8a; color: #fff; }"
-                "QPushButton:hover { background: #444; }"
-            )
-            btn.setProperty("mode", mode)
-            btn.clicked.connect(lambda checked, m=mode: self._set_mode(m))
-            self._mode_group.addButton(btn)
-            h.addWidget(btn)
-
-        if self._mode_group.buttons():
-            self._mode_group.buttons()[0].setChecked(True)
-
-        h.addSpacing(8)
-
         # Outline toggle
         self._outline_btn = QPushButton("Outline")
         self._outline_btn.setCheckable(True)
@@ -346,11 +324,14 @@ class AlignView(QWidget):
 
         return bar
 
-    def _set_mode(self, mode: str) -> None:
+    def set_mode(self, mode: str) -> None:
         self._mode = mode
         self._cp_hovered = -1
         self._cp_dragging = -1
         is_align = (mode == "align")
+        self._navigator.setVisible(is_align)
+        for btn in self._scale_btns + self._move_btns + self._rotate_btns:
+            btn.setVisible(is_align)
         self._reverse_btn.setVisible(is_align)
         self._deepslice_btn.setVisible(is_align)
         self._default_btn.setVisible(is_align)

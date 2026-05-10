@@ -51,13 +51,13 @@ from verso.engine.model.project import (
 # Default per-channel pseudo-color palettes used when seeding Project.channels
 # at project creation time.
 _FLUORESCENCE_PALETTE: list[tuple[int, int, int]] = [
-    (0, 100, 255),    # DAPI / blue
-    (0, 255, 0),      # GFP / green
-    (255, 0, 0),      # RFP / red
-    (255, 0, 200),    # far-red / magenta
-    (255, 255, 255),  # white
-    (255, 255, 0),    # yellow
-    (0, 255, 255),    # cyan
+    (255, 0, 0),      # Ch 0 — red
+    (0, 255, 0),      # Ch 1 — green
+    (0, 100, 255),    # Ch 2 — blue / DAPI
+    (255, 0, 200),    # Ch 3 — far-red / magenta
+    (255, 255, 255),  # Ch 4 — white
+    (255, 255, 0),    # Ch 5 — yellow
+    (0, 255, 255),    # Ch 6 — cyan
 ]
 
 _RGB_IDENTITY_PALETTE: list[tuple[int, int, int]] = [

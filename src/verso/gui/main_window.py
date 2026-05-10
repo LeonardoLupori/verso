@@ -53,6 +53,7 @@ from verso.gui.widgets.properties import PropertiesPanel
 _VIEW_OVERVIEW = 0
 _VIEW_PREP = 1
 _VIEW_ALIGN = 2
+_VIEW_WARP = 3
 _DEEPSLICE_PATH_KEY = "deepslice/env_path"
 
 
@@ -245,7 +246,8 @@ class MainWindow(QMainWindow):
         view_specs = [
             ("Overview", _VIEW_OVERVIEW),
             ("Prep", _VIEW_PREP),
-            ("Align / Warp", _VIEW_ALIGN),
+            ("Align", _VIEW_ALIGN),
+            ("Warp", _VIEW_WARP),
         ]
         for label, idx in view_specs:
             btn = QPushButton(label)
@@ -366,17 +368,20 @@ class MainWindow(QMainWindow):
         leaving_prep = self._current_mode == "prep" and index != _VIEW_PREP
         if leaving_prep:
             self._save_prep_mask_before_transition()
-        self._stack.setCurrentIndex(index)
-        modes = ("overview", "prep", "align")
+
+        # Align and Warp share the same QStackedWidget page (AlignView)
+        stack_index = _VIEW_ALIGN if index == _VIEW_WARP else index
+        self._stack.setCurrentIndex(stack_index)
+
+        modes = ("overview", "prep", "align", "warp")
         self._current_mode = modes[index]
 
         for i, btn in enumerate(self._view_buttons):
             btn.setChecked(i == index)
 
-        # Show filmstrip only outside Overview; enable stored-alignment badges in align view
+        # Show filmstrip outside Overview; enable stored-alignment badges in Align/Warp
         self._bottom_dock.setVisible(index != _VIEW_OVERVIEW)
-        self._filmstrip.set_align_mode(index == _VIEW_ALIGN)
-        self._props.set_mode(self._current_mode)
+        self._filmstrip.set_align_mode(index in (_VIEW_ALIGN, _VIEW_WARP))
         if self._current_mode == "overview":
             self._overview.refresh()
 
@@ -387,13 +392,15 @@ class MainWindow(QMainWindow):
                 self._prep.refresh_display()
             else:
                 self._prep.load_section(section)
-        elif self._current_mode == "align":
+        elif self._current_mode in ("align", "warp"):
+            self._align.set_mode(self._current_mode)   # emits mode_changed → updates props sub-widgets
             if self._align._section is section:
                 self._align.refresh_display()
             else:
                 self._align.load_section(section)
 
         # Refresh properties with current section
+        self._props.set_mode(self._current_mode)
         self._refresh_properties()
         self._update_reverse_order_enabled()
         self._update_deepslice_enabled()
@@ -515,6 +522,13 @@ class MainWindow(QMainWindow):
         self._sync_ap_mm(project.sections)
 
         self._project_label.setText(project.name)
+
+        # Old project files stored channels per-section rather than at project
+        # level, so project.channels may be empty on load.  Probe the first
+        # available image to seed defaults so the canvas shows something.
+        if not project.channels and project.sections:
+            self._seed_channels_from_first_section(project)
+
         self._overview.load_project(project)
         self._filmstrip.populate(project.sections, project.channels)
         self._prep.set_channels(project.channels)
@@ -529,6 +543,30 @@ class MainWindow(QMainWindow):
             self._state.load_atlas(project.atlas.name)
 
         self._switch_view(_VIEW_OVERVIEW)
+
+    def _seed_channels_from_first_section(self, project) -> None:
+        """Populate project.channels when loading an old project that lacks them."""
+        from pathlib import Path
+
+        from verso.engine.io.image_io import probe_channels
+        from verso.gui.dialogs.new_project import _default_channel_specs
+
+        for section in project.sections:
+            # Prefer the canonical thumbnail (fast metadata read); fall back to original.
+            candidates = [
+                Path(section.thumbnail_path) if section.thumbnail_path else None,
+                Path(section.original_path),
+            ]
+            for probe_path in candidates:
+                if probe_path and probe_path.exists():
+                    try:
+                        names = probe_channels(probe_path)
+                    except Exception:
+                        names = ["Ch 0"]
+                    project.channels = _default_channel_specs(
+                        names, Path(section.original_path).suffix
+                    )
+                    return
 
     def _on_atlas_loaded(self) -> None:
         atlas = self._state.atlas
@@ -558,7 +596,7 @@ class MainWindow(QMainWindow):
 
         if self._current_mode == "prep":
             self._prep.load_section(section)
-        elif self._current_mode == "align":
+        elif self._current_mode in ("align", "warp"):
             self._align.load_section(section)
 
         self._refresh_properties()
@@ -628,7 +666,7 @@ class MainWindow(QMainWindow):
                 )
         if self._current_mode == "prep":
             self._prep.refresh_display()
-        elif self._current_mode == "align":
+        elif self._current_mode in ("align", "warp"):
             self._align.refresh_display()
         self._overview.refresh_row(self._state.section_index)
         self._update_ap_plot()
@@ -657,7 +695,7 @@ class MainWindow(QMainWindow):
                 )
         if self._current_mode == "prep":
             self._prep.refresh_display()
-        elif self._current_mode == "align":
+        elif self._current_mode in ("align", "warp"):
             self._align.refresh_display()
         self._overview.refresh_row(self._state.section_index)
         self._update_ap_plot()
