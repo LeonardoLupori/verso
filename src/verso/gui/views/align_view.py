@@ -291,6 +291,19 @@ class AlignView(QWidget):
         self._store_btn.clicked.connect(self._store_anchoring)
         h.addWidget(self._store_btn)
 
+        self._revert_btn = QPushButton("Revert")
+        self._revert_btn.setFixedHeight(28)
+        self._revert_btn.setToolTip("Restore the last stored plane, discarding unsaved edits")
+        self._revert_btn.setStyleSheet(
+            "QPushButton { border-radius: 4px; padding: 2px 10px; color: #ccc;"
+            " background: #3a3a1a; border: 1px solid #666; }"
+            "QPushButton:hover { background: #4a4a2a; }"
+            "QPushButton:disabled { color: #555; background: #2a2a2a; border-color: #333; }"
+        )
+        self._revert_btn.setEnabled(False)
+        self._revert_btn.clicked.connect(self._revert_to_stored)
+        h.addWidget(self._revert_btn)
+
         self._clear_btn = QPushButton("Clear")
         self._clear_btn.setFixedHeight(28)
         self._clear_btn.setToolTip("Remove stored plane and revert to interpolated")
@@ -337,6 +350,7 @@ class AlignView(QWidget):
         self._default_btn.setVisible(is_align)
         self._clear_all_btn.setVisible(is_align)
         self._store_btn.setVisible(is_align)
+        self._revert_btn.setVisible(is_align)
         self._clear_btn.setVisible(is_align)
         self._clear_cps_btn.setVisible(not is_align)
         self._update_clear_cps_enabled()
@@ -408,6 +422,7 @@ class AlignView(QWidget):
             v != 0.0 for v in section.alignment.anchoring
         )
         self._clear_btn.setEnabled(has_anchoring)
+        self._update_revert_enabled()
         for btn in self._scale_btns + self._move_btns + self._rotate_btns:
             btn.setEnabled(True)
 
@@ -643,8 +658,28 @@ class AlignView(QWidget):
         self.anchoring_changed.emit(new_anchoring)
 
     # ------------------------------------------------------------------
-    # Store / Clear
+    # Store / Revert / Clear
     # ------------------------------------------------------------------
+
+    def _update_revert_enabled(self) -> None:
+        has_stored = (
+            self._section is not None
+            and self._section.alignment.stored_anchoring is not None
+            and any(v != 0.0 for v in self._section.alignment.stored_anchoring)
+        )
+        self._revert_btn.setEnabled(has_stored)
+
+    def _revert_to_stored(self) -> None:
+        if self._section is None:
+            return
+        stored = self._section.alignment.stored_anchoring
+        if not stored or all(v == 0.0 for v in stored):
+            return
+        self._section.alignment.anchoring = list(stored)
+        self._sync_ap_from_anchoring(stored)
+        self._update_overlay()
+        self.anchoring_changed.emit(list(stored))
+        self.section_modified.emit()
 
     def _store_anchoring(self) -> None:
         if self._section is None or self._atlas is None:
@@ -654,8 +689,10 @@ class AlignView(QWidget):
         ):
             h, w = self._raw_image.shape[:2]
             self._section.alignment.anchoring = self._atlas.default_anchoring(w / h)
+        self._section.alignment.stored_anchoring = list(self._section.alignment.anchoring)
         self._section.alignment.status = AlignmentStatus.COMPLETE
         self._clear_btn.setEnabled(True)
+        self._update_revert_enabled()
         self.section_modified.emit()
         self.alignments_updated.emit()
 
@@ -666,11 +703,13 @@ class AlignView(QWidget):
         self._section.alignment.ap_position_mm = None
         self._section.alignment.status = AlignmentStatus.NOT_STARTED
         self._section.alignment.source = None
+        self._section.alignment.stored_anchoring = None
         self._section.alignment.proposal_anchoring = None
         self._section.alignment.proposal_confidence = None
         self._section.alignment.proposal_run_id = None
         self.alignments_updated.emit()
         self._clear_btn.setEnabled(True)
+        self._update_revert_enabled()
 
     def _clear_all_cps(self) -> None:
         if self._section is None:
