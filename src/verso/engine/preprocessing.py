@@ -106,6 +106,58 @@ def composite_channels(
     return out.clip(0, 255).astype(np.uint8)
 
 
+def compute_channel_layer(
+    image: np.ndarray,
+    channel_index: int,
+    spec,
+) -> np.ndarray | None:
+    """Compute the tinted (H, W, 3) float32 contribution for a single channel.
+
+    Unlike composite_channels(), this does NOT check spec.visible so callers
+    can store the layer and selectively include it via composite_from_layers().
+
+    Returns:
+        (H, W, 3) float32 array, or None if spec.scale <= 0 (disabled channel).
+    """
+    scale = float(spec.scale)
+    if scale <= 0:
+        return None
+    plane = image[:, :, channel_index].astype(np.float32) / min(scale, 1.0)
+    np.clip(plane, 0, 255, out=plane)
+    color = np.array(spec.color, dtype=np.float32) / 255.0
+    return plane[:, :, np.newaxis] * color
+
+
+def composite_from_layers(
+    layers: list,
+    channels,
+) -> np.ndarray:
+    """Max-blend precomputed per-channel layers into a displayable RGB image.
+
+    Use together with compute_channel_layer() to avoid re-running per-pixel
+    math when only channel visibility changes — only the max-reduce runs.
+
+    Args:
+        layers: one (H, W, 3) float32 array per channel (None = disabled).
+        channels: channel list matching *layers*, consulted only for ``visible``.
+
+    Returns:
+        uint8 (H, W, 3) RGB image.
+    """
+    specs = list(channels)
+    visible = [
+        layers[i]
+        for i in range(min(len(layers), len(specs)))
+        if layers[i] is not None and getattr(specs[i], "visible", True)
+    ]
+    if not visible:
+        ref = next((layer for layer in layers if layer is not None), None)
+        shape = ref.shape if ref is not None else (1, 1, 3)
+        return np.zeros(shape, dtype=np.uint8)
+    out = np.maximum.reduce(visible)
+    return np.clip(out, 0, 255).astype(np.uint8)
+
+
 def load_mask(path: str | Path, shape: tuple[int, int]) -> np.ndarray:
     """Load a PNG mask and resize to working-resolution shape (H, W) bool."""
     from PIL import Image

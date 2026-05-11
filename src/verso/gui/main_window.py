@@ -722,14 +722,10 @@ class MainWindow(QMainWindow):
         self._props.set_channels(channels)
 
     def _on_channels_committed(self, channels: list) -> None:
-        """Fires only after the user releases the slider or makes a discrete edit
-        (color pick, visibility toggle). Used for the expensive filmstrip
-        recomposite so it doesn't run on every drag tick."""
+        """Fires after the user releases a slider or makes a discrete edit."""
         project = self._state.project
-        if project is None:
-            return
-        project.channels = list(channels)
-        self._filmstrip.populate(project.sections, project.channels)
+        if project is not None:
+            project.channels = list(channels)
 
     def _on_prep_autodetect_requested(self) -> None:
         self._prep.autodetect_mask()

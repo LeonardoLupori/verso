@@ -411,17 +411,18 @@ def load_filmstrip_thumbnail(
     section,
     channels=None,
 ) -> np.ndarray | None:
-    """Return a tiny (≤ FILMSTRIP_MAX_SIDE) RGB tile for the filmstrip.
+    """Return a tiny (≤ FILMSTRIP_MAX_SIDE) grayscale RGB tile for the filmstrip.
 
-    The working multichannel copy is loaded, composited to RGB using the
-    project-level ``channels`` list, and resized.
+    Uses a max-projection across channels so any signal channel contributes.
+    The ``channels`` parameter is accepted for API compatibility but ignored —
+    filmstrip thumbnails are always grayscale to avoid recompositing on every
+    channel change.
     """
     arr = ensure_working_copy(section)
     if arr is None:
         return None
 
-    from verso.engine.preprocessing import composite_channels
-
-    rgb = composite_channels(arr, channels or [])
+    gray = arr if arr.ndim == 2 else arr.max(axis=2)
+    rgb = np.stack([gray, gray, gray], axis=2)
     rgb, _ = resize_to_max_side(rgb, FILMSTRIP_MAX_SIDE)
     return rgb
