@@ -718,6 +718,12 @@ class AlignView(QWidget):
         self._section.alignment.proposal_anchoring = None
         self._section.alignment.proposal_confidence = None
         self._section.alignment.proposal_run_id = None
+        self._section.warp.control_points.clear()
+        self._cp_hovered = -1
+        self._cp_dragging = -1
+        self._cp_drag_start_norm = None
+        self._cp_drag_start_dst = None
+        self._update_clear_cps_enabled()
         self.alignments_updated.emit()
         self._clear_btn.setEnabled(True)
         self._update_revert_enabled()
