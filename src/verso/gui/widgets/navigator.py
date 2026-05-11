@@ -103,6 +103,7 @@ class _SliceView(QWidget):
         self._dims = dims
         self._anchoring: list[float] | None = None
         self._view_h = _view_height(axis, dims)
+        self._reverse_ap: bool = False
 
         # drag state
         self._drag_mode: str | None = None
@@ -134,6 +135,9 @@ class _SliceView(QWidget):
 
     # ------------------------------------------------------------------
     # Resize when atlas loads
+
+    def set_reverse_ap(self, reverse: bool) -> None:
+        self._reverse_ap = reverse
 
     def update_dims(self, dims: tuple[int, int, int]) -> None:
         """Update atlas dimensions and resize the widget to preserve proportions."""
@@ -300,6 +304,10 @@ class _SliceView(QWidget):
         start_angle = math.atan2(sy - ccy, sx - ccx)
         cur_angle = math.atan2(cy - ccy, cx - ccx)
         deg = math.degrees(cur_angle - start_angle) * self._ANGLE_SIGNS[self._axis]
+        # Sagittal (axis=0) and horizontal (axis=2) rotate around axes that tilt
+        # the plane in the AP direction — invert when the series is AP-reversed.
+        if self._reverse_ap and self._axis != 1:
+            deg = -deg
 
         o = np.array(self._drag_start_anchoring[:3])
         u = np.array(self._drag_start_anchoring[3:6])
@@ -354,6 +362,10 @@ class NavigatorPanel(QWidget):
             layout.addWidget(view)
 
         layout.addStretch()
+
+    def set_reverse_ap(self, reverse: bool) -> None:
+        for view in (self._sag, self._cor, self._hor):
+            view.set_reverse_ap(reverse)
 
     def set_atlas(self, atlas: AtlasVolume | None) -> None:
         self._atlas = atlas

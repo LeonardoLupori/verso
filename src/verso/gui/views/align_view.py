@@ -53,6 +53,7 @@ class AlignView(QWidget):
         self._raw_image = None
         self._atlas: AtlasVolume | None = None
         self._mode = "align"
+        self._reverse_ap: bool = False
         self._outline_mode = False
         # Warp interaction state
         self._cp_hovered: int = -1    # index of CP under cursor (-1 = none)
@@ -369,6 +370,11 @@ class AlignView(QWidget):
     def canvas(self) -> ImageCanvas:
         return self._canvas
 
+    def set_reverse_ap(self, reverse: bool) -> None:
+        """Invert AP movement and tilt directions when the series is AP-reversed."""
+        self._reverse_ap = reverse
+        self._navigator.set_reverse_ap(reverse)
+
     def set_atlas(self, atlas: AtlasVolume | None) -> None:
         self._atlas = atlas
         self._navigator.set_atlas(atlas)
@@ -605,6 +611,8 @@ class AlignView(QWidget):
         anchoring = self._section.alignment.anchoring
         if not anchoring or all(v == 0.0 for v in anchoring):
             return
+        if axis == 1 and self._reverse_ap:
+            delta = -delta
         new_anchoring = list(anchoring)
         new_anchoring[axis] += delta
         self._section.alignment.anchoring = new_anchoring
@@ -638,14 +646,17 @@ class AlignView(QWidget):
         v_n = v / np.linalg.norm(v)
         n = np.cross(u_n, v_n)
 
+        # tilt_dv and tilt_ap both tilt the plane into the AP direction;
+        # invert their sense when the series is AP-reversed.
+        ap_degrees = -degrees if self._reverse_ap else degrees
         if axis == "roll":
             u_new = rot_around(u, n, degrees)
             v_new = rot_around(v, n, degrees)
         elif axis == "tilt_dv":
             u_new = u
-            v_new = rot_around(v, u_n, degrees)
+            v_new = rot_around(v, u_n, ap_degrees)
         elif axis == "tilt_ap":
-            u_new = rot_around(u, v_n, degrees)
+            u_new = rot_around(u, v_n, ap_degrees)
             v_new = v
         else:
             return

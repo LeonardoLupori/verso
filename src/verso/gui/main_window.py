@@ -507,6 +507,7 @@ class MainWindow(QMainWindow):
             return
 
         self._reverse_ap_proposal = False
+        self._align.set_reverse_ap(False)
 
         # QuickNII interpolation needs atlas dimensions for the no-anchor and
         # one-anchor endpoint controls. If the atlas is still loading,
@@ -892,6 +893,7 @@ class MainWindow(QMainWindow):
             return
 
         self._reverse_ap_proposal = not self._reverse_ap_proposal
+        self._align.set_reverse_ap(self._reverse_ap_proposal)
         for section in project.sections:
             section.alignment.anchoring = [0.0] * 9
             section.alignment.ap_position_mm = None
