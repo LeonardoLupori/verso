@@ -87,9 +87,10 @@ class _SliceView(QWidget):
         1: np.array([0.0, 1.0, 0.0]),
         2: np.array([0.0, 0.0, 1.0]),
     }
-    # Match QuickNII's Slice.mxml rotation commands:
-    # x/z plane views rotate with the opposite sign to the coronal y view.
-    _ANGLE_SIGNS = {0: -1, 1: 1, 2: -1}
+    # Drag-clockwise → plane-rotates-clockwise in each view.
+    # Derived from Rodrigues applied to the cut-plane center: positive θ moves
+    # the leading edge in the clockwise direction in each view's screen space.
+    _ANGLE_SIGNS = {0: +1, 1: -1, 2: +1}
 
     def __init__(
         self,
