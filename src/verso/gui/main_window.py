@@ -1262,6 +1262,31 @@ class MainWindow(QMainWindow):
             return
         self._props.update_ap_plot(project.sections, self._state.section_index)
 
+    def _maybe_create_pngs(self, export_path: str) -> None:
+        """Offer to create PNG copies if any are missing next to the export."""
+        project = self._state.project
+        if project is None:
+            return
+        out_dir = Path(export_path).resolve().parent
+        missing = [
+            s for s in project.sections
+            if not (out_dir / f"{Path(s.original_path).stem}.png").exists()
+        ]
+        if not missing:
+            return
+        reply = QMessageBox.question(
+            self,
+            "PNG images required",
+            f"QuickNII and VisuAlign require PNG image files.\n\n"
+            f"{len(missing)} of {len(project.sections)} section images are not "
+            f"present as PNG in the export folder.\n\n"
+            f"Create PNG copies now?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            from verso.engine.io.quint_io import write_section_pngs
+            write_section_pngs(project, out_dir)
+
     def _export_quicknii_xml(self) -> None:
         self._save_prep_mask_before_transition()
         if self._state.project is None:
@@ -1273,6 +1298,7 @@ class MainWindow(QMainWindow):
             from verso.engine.io.quint_io import save_quicknii_xml
             atlas_shape = self._state.atlas.shape if self._state.atlas else None
             save_quicknii_xml(self._state.project, Path(path), atlas_shape=atlas_shape)
+            self._maybe_create_pngs(path)
 
     def _export_quicknii(self) -> None:
         self._save_prep_mask_before_transition()
@@ -1286,6 +1312,7 @@ class MainWindow(QMainWindow):
             atlas_shape = self._state.atlas.shape if self._state.atlas else None
             from verso.engine.io.quint_io import save_quicknii
             save_quicknii(self._state.project, Path(path), atlas_shape=atlas_shape)
+            self._maybe_create_pngs(path)
 
     def _export_visualign(self) -> None:
         self._save_prep_mask_before_transition()
@@ -1299,3 +1326,4 @@ class MainWindow(QMainWindow):
             atlas_shape = self._state.atlas.shape if self._state.atlas else None
             from verso.engine.io.quint_io import save_visualign
             save_visualign(self._state.project, Path(path), atlas_shape=atlas_shape)
+            self._maybe_create_pngs(path)
