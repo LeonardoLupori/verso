@@ -639,6 +639,20 @@ class _AlignProperties(QWidget):
     def set_channels(self, channels: list[ChannelSpec]) -> None:
         self._brightness.set_channels(channels)
 
+    def apply_cp_style(self, size: int, shape: str, color: str) -> None:
+        """Set CP style widgets silently (no signal emitted)."""
+        for widget in (self._cp_size_spin, self._cp_shape_combo, self._cp_color_combo):
+            widget.blockSignals(True)
+        self._cp_size_spin.setValue(size)
+        self._cp_shape_combo.setCurrentText(shape)
+        color_index = next(
+            (i for i, k in enumerate(_CP_COLORS) if k == color),
+            self._cp_color_combo.currentIndex(),
+        )
+        self._cp_color_combo.setCurrentIndex(color_index)
+        for widget in (self._cp_size_spin, self._cp_shape_combo, self._cp_color_combo):
+            widget.blockSignals(False)
+
     def _emit_cp_style(self) -> None:
         self.cp_style_changed.emit(
             self._cp_size_spin.value(),
@@ -870,3 +884,7 @@ class PropertiesPanel(QWidget):
     def set_channels(self, channels: list[ChannelSpec]) -> None:
         self._prep_page.set_channels(channels)
         self._align_page.set_channels(channels)
+
+    def apply_cp_style(self, size: int, shape: str, color: str) -> None:
+        """Initialise CP style widgets from saved settings (no signal emitted)."""
+        self._align_page.apply_cp_style(size, shape, color)
