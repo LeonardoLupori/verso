@@ -128,6 +128,9 @@ class Project:
     atlas: AtlasRef
     sections: list[Section] = field(default_factory=list)
     channels: list[ChannelSpec] = field(default_factory=list)
+    cp_size: int = 10
+    cp_shape: str = "Cross"
+    cp_color: str = "Yellow"
     version: str = "1.0"
 
     def to_dict(self) -> dict[str, Any]:
@@ -136,6 +139,9 @@ class Project:
             "name": self.name,
             "atlas": self.atlas.to_dict(),
             "channels": [c.to_dict() for c in self.channels],
+            "cp_size": self.cp_size,
+            "cp_shape": self.cp_shape,
+            "cp_color": self.cp_color,
             "sections": [s.to_dict() for s in self.sections],
         }
 
@@ -150,6 +156,9 @@ class Project:
             atlas=AtlasRef.from_dict(d["atlas"]),
             sections=[Section.from_dict(s) for s in d.get("sections", [])],
             channels=[ChannelSpec.from_dict(c) for c in d.get("channels", [])],
+            cp_size=int(d.get("cp_size", 10)),
+            cp_shape=str(d.get("cp_shape", "Cross")),
+            cp_color=str(d.get("cp_color", "Yellow")),
             version=d.get("version", "1.0"),
         )
 

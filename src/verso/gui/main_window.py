@@ -42,7 +42,6 @@ from PyQt6.QtWidgets import (
 from verso.engine.io.quint_io import load_quicknii, load_visualign
 from verso.engine.model.alignment import AlignmentStatus
 from verso.engine.model.project import DEFAULT_PROJECT_FILENAME, Project
-from verso.engine.model.user_settings import UserSettings
 from verso.gui.dialogs.new_project import NewProjectDialog
 from verso.gui.state import AppState
 from verso.gui.views.align_view import AlignView
@@ -144,7 +143,6 @@ class MainWindow(QMainWindow):
         self._build_docks()
         self._connect_signals()
         self._build_shortcuts()
-        self._load_user_settings()
 
         self._switch_view(_VIEW_OVERVIEW)
 
@@ -304,14 +302,13 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, bottom_dock)
         self._bottom_dock = bottom_dock
 
-    def _load_user_settings(self) -> None:
-        s = UserSettings.load()
-        self._props.apply_cp_style(s.cp_size, s.cp_shape, s.cp_color)
-        self._align.set_cp_style(s.cp_size, s.cp_shape, s.cp_color)
-
     def _on_cp_style_changed(self, size: int, shape: str, color: str) -> None:
         self._align.set_cp_style(size, shape, color)
-        UserSettings(cp_size=size, cp_shape=shape, cp_color=color).save()
+        project = self._state.project
+        if project is not None:
+            project.cp_size = size
+            project.cp_shape = shape
+            project.cp_color = color
 
     def _build_shortcuts(self) -> None:
         self._section_shortcuts: list[QShortcut] = []
@@ -544,6 +541,8 @@ class MainWindow(QMainWindow):
         self._prep.set_channels(project.channels)
         self._align.set_channels(project.channels)
         self._props.set_channels(project.channels)
+        self._props.apply_cp_style(project.cp_size, project.cp_shape, project.cp_color)
+        self._align.set_cp_style(project.cp_size, project.cp_shape, project.cp_color)
         self._update_reverse_order_enabled()
         self._update_deepslice_enabled()
 
