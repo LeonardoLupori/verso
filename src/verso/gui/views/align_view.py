@@ -66,6 +66,9 @@ class AlignView(QWidget):
         self._cp_color = "Yellow"
         # Per-channel display state (project-level, synced via main_window)
         self._channels: list = []
+        self._channel_layers: list[np.ndarray | None] = []
+        self._cached_channel_specs: list[tuple] = []
+        self._layer_image_key: tuple = ()
         # Real-time warp throttle: fires _update_overlay at ~30fps during CP drag
         self._warp_timer = QTimer(self)
         self._warp_timer.setInterval(33)
@@ -432,17 +435,37 @@ class AlignView(QWidget):
         for btn in self._scale_btns + self._move_btns + self._rotate_btns:
             btn.setEnabled(True)
 
+    def _update_channel_layers(self, img: np.ndarray, flip_h: bool, flip_v: bool) -> None:
+        from verso.engine.preprocessing import compute_channel_layer
+        if img.ndim == 2:
+            img = img[..., np.newaxis]
+        n = min(img.shape[2], len(self._channels))
+        image_key = (id(self._raw_image), flip_h, flip_v, n)
+        if image_key != self._layer_image_key:
+            self._layer_image_key = image_key
+            self._channel_layers = [compute_channel_layer(img, i, self._channels[i]) for i in range(n)]
+            self._cached_channel_specs = [(self._channels[i].scale, tuple(self._channels[i].color)) for i in range(n)]
+            return
+        for i in range(n):
+            spec = self._channels[i]
+            key = (spec.scale, tuple(spec.color))
+            if key != self._cached_channel_specs[i]:
+                self._channel_layers[i] = compute_channel_layer(img, i, spec)
+                self._cached_channel_specs[i] = key
+
     def _display_image(self) -> None:
         if self._raw_image is None:
             return
+        from verso.engine.preprocessing import composite_from_layers
         img = self._raw_image
-        if self._section and self._section.preprocessing.flip_horizontal:
+        flip_h = bool(self._section and self._section.preprocessing.flip_horizontal)
+        flip_v = bool(self._section and self._section.preprocessing.flip_vertical)
+        if flip_h:
             img = np.fliplr(img)
-        if self._section and self._section.preprocessing.flip_vertical:
+        if flip_v:
             img = np.flipud(img)
-        from verso.engine.preprocessing import composite_channels
-
-        rgb = composite_channels(img, self._channels)
+        self._update_channel_layers(img, flip_h, flip_v)
+        rgb = composite_from_layers(self._channel_layers, self._channels)
         self._canvas.set_background(np.ascontiguousarray(rgb))
 
     def set_channels(self, channels: list) -> None:

@@ -32,7 +32,6 @@ conversion functions here handle the normalisation/denormalisation.
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from typing import Any
 
@@ -299,27 +298,48 @@ def _flip_control_points(
     ]
 
 
-def _export_image_filename(section, output_path: Path) -> str:
-    """Return the image filename QuickNII/VisuAlign should load for a section.
+def _export_image_filename(section) -> str:
+    """Return the PNG filename for a section in a QuickNII/VisuAlign export.
 
-    QuickNII resolves image filenames relative to the XML/JSON file location by
-    concatenating the series folder and the stored filename.  VERSO aligns
-    against the registration thumbnail when present, and the exported
-    ``width``/``height`` fields describe that same image, so the filename must
-    point to the thumbnail rather than the original high-resolution source.
-
-    If the chosen image is on the same drive as the export, write a relative
-    path.  If it is on a different drive, fall back to the native absolute path:
-    QuickNII can still load it as a file path, while a bare basename would
-    almost certainly point at a non-existent file beside the export.
+    QuickNII and VisuAlign do not support OME-TIFF natively, so the exported
+    filename always uses a ``.png`` extension regardless of the source format.
+    The caller is responsible for ensuring that PNG file exists next to the
+    exported JSON/XML.
     """
-    thumbnail = Path(section.thumbnail_path)
-    src = thumbnail if thumbnail.exists() else Path(section.original_path)
-    out_dir = Path(output_path).resolve().parent
-    try:
-        return Path(os.path.relpath(src.resolve(), out_dir)).as_posix()
-    except ValueError:
-        return str(src)
+    return f"{Path(section.original_path).stem}.png"
+
+
+def write_section_pngs(project: Project, output_dir: Path) -> None:
+    """Write RGB PNG copies of each section's working image into *output_dir*.
+
+    Only sections whose PNG is not already present are written.  Uses the
+    project channel specs to composite multichannel images to RGB.
+
+    Args:
+        project: VERSO project whose sections will be exported.
+        output_dir: Folder that will receive the PNG files.
+    """
+    import numpy as np
+    from PIL import Image
+
+    from verso.engine.io.image_io import ensure_working_copy
+    from verso.engine.preprocessing import composite_channels
+
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for section in project.sections:
+        png_path = output_dir / _export_image_filename(section)
+        if png_path.exists():
+            continue
+        img = ensure_working_copy(section)
+        if img is None:
+            continue
+        if project.channels:
+            rgb = composite_channels(img, project.channels)
+        else:
+            plane = img[:, :, 0] if img.ndim == 3 else img
+            rgb = np.stack([plane, plane, plane], axis=-1)
+        Image.fromarray(rgb).save(str(png_path))
 
 
 def _registration_dims(section) -> tuple[int, int]:
@@ -400,7 +420,7 @@ def save_quicknii_xml(
                 "&amp;uy=", "&amp;uz=", "&amp;vx=", "&amp;vy=", "&amp;vz="]
     for section in project.sections:
         w, h = _registration_dims(section)
-        filename = _export_image_filename(section, path)
+        filename = _export_image_filename(section)
         line = (
             f"    <slice filename='{filename}'"
             f" nr='{section.serial_number}'"
@@ -443,7 +463,7 @@ def save_quicknii(
     for section in project.sections:
         w, h = _registration_dims(section)
         entry: dict[str, Any] = {
-            "filename": _export_image_filename(section, path),
+            "filename": _export_image_filename(section),
             "nr": section.serial_number,
             "width": w,
             "height": h,
@@ -489,7 +509,7 @@ def save_visualign(
     for section in project.sections:
         w, h = _registration_dims(section)
         entry: dict[str, Any] = {
-            "filename": _export_image_filename(section, path),
+            "filename": _export_image_filename(section),
             "nr": section.serial_number,
             "width": w,
             "height": h,

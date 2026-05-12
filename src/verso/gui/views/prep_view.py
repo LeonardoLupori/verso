@@ -19,7 +19,8 @@ from PyQt6.QtWidgets import (
 from verso.engine.model.project import ChannelSpec, Section
 from verso.engine.preprocessing import (
     apply_freehand_stroke,
-    composite_channels,
+    composite_from_layers,
+    compute_channel_layer,
     detect_foreground,
     load_mask,
     mask_to_rgba,
@@ -49,6 +50,9 @@ class PrepView(QWidget):
         self._negative_mask = False
         self._mask_visible = True
         self._channels: list[ChannelSpec] = []
+        self._channel_layers: list[np.ndarray | None] = []
+        self._cached_channel_specs: list[tuple] = []
+        self._layer_image_key: tuple = ()
         self._undo_stack: list[np.ndarray] = []
         self._stroke_points: list[tuple[float, float]] = []
         self._stroke_active = False
@@ -266,15 +270,35 @@ class PrepView(QWidget):
     # Display / mask state
     # ------------------------------------------------------------------
 
+    def _update_channel_layers(self, img: np.ndarray, flip_h: bool, flip_v: bool) -> None:
+        if img.ndim == 2:
+            img = img[..., np.newaxis]
+        n = min(img.shape[2], len(self._channels))
+        image_key = (id(self._raw_image), flip_h, flip_v, n)
+        if image_key != self._layer_image_key:
+            self._layer_image_key = image_key
+            self._channel_layers = [compute_channel_layer(img, i, self._channels[i]) for i in range(n)]
+            self._cached_channel_specs = [(self._channels[i].scale, tuple(self._channels[i].color)) for i in range(n)]
+            return
+        for i in range(n):
+            spec = self._channels[i]
+            key = (spec.scale, tuple(spec.color))
+            if key != self._cached_channel_specs[i]:
+                self._channel_layers[i] = compute_channel_layer(img, i, spec)
+                self._cached_channel_specs[i] = key
+
     def _display_image(self) -> None:
         if self._raw_image is None:
             return
         img = self._raw_image
-        if self._section and self._section.preprocessing.flip_horizontal:
+        flip_h = bool(self._section and self._section.preprocessing.flip_horizontal)
+        flip_v = bool(self._section and self._section.preprocessing.flip_vertical)
+        if flip_h:
             img = np.fliplr(img)
-        if self._section and self._section.preprocessing.flip_vertical:
+        if flip_v:
             img = np.flipud(img)
-        rgb = composite_channels(img, self._channels)
+        self._update_channel_layers(img, flip_h, flip_v)
+        rgb = composite_from_layers(self._channel_layers, self._channels)
         self._canvas.set_background(np.ascontiguousarray(rgb))
 
     def _load_or_init_mask(self) -> None:
