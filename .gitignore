@@ -8,3 +8,4 @@ tmp_pytest/
 QuickNII-master*
 Visualign-master*
 *.m
+.vscode/*
