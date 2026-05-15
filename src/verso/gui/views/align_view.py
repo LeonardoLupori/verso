@@ -599,6 +599,8 @@ class AlignView(QWidget):
             )
             return
         s, t = x / w_bg, y / h_bg
+        if self._mode == "warp":
+            s, t = self._current_src_at(s, t)
         name, (r, g, b) = self._atlas.get_region_info(anchoring, s, t)
         # Darken the region colour slightly so white text stays legible
         br = int(r * 0.55)

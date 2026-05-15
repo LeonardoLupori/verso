@@ -303,10 +303,10 @@ def _export_image_filename(section) -> str:
 
     QuickNII and VisuAlign do not support OME-TIFF natively, so the exported
     filename always uses a ``.png`` extension regardless of the source format.
-    The caller is responsible for ensuring that PNG file exists next to the
-    exported JSON/XML.
+    The path is relative to the exported JSON/XML, pointing into a ``thumbnails/``
+    subfolder (forward-slash separator, cross-platform).
     """
-    return f"{Path(section.original_path).stem}.png"
+    return f"thumbnails/{Path(section.original_path).stem}.png"
 
 
 def write_section_pngs(project: Project, output_dir: Path) -> None:
@@ -329,6 +329,7 @@ def write_section_pngs(project: Project, output_dir: Path) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     for section in project.sections:
         png_path = output_dir / _export_image_filename(section)
+        png_path.parent.mkdir(parents=True, exist_ok=True)
         if png_path.exists():
             continue
         img = ensure_working_copy(section)

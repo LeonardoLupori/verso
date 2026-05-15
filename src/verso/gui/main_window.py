@@ -1264,9 +1264,10 @@ class MainWindow(QMainWindow):
         if project is None:
             return
         out_dir = Path(export_path).resolve().parent
+        from verso.engine.io.quint_io import _export_image_filename
         missing = [
             s for s in project.sections
-            if not (out_dir / f"{Path(s.original_path).stem}.png").exists()
+            if not (out_dir / _export_image_filename(s)).exists()
         ]
         if not missing:
             return
