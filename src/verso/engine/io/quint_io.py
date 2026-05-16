@@ -306,7 +306,7 @@ def _export_image_filename(section) -> str:
     The path is relative to the exported JSON/XML, pointing into a ``thumbnails/``
     subfolder (forward-slash separator, cross-platform).
     """
-    return f"thumbnails/{Path(section.original_path).stem}.png"
+    return f"thumbnails/{Path(section.original_path).stem}-thumb.png"
 
 
 def write_section_pngs(project: Project, output_dir: Path) -> None:
