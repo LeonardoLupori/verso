@@ -808,7 +808,10 @@ class PropertiesPanel(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setFixedWidth(220)
+        # Allow horizontal resize via the dock's splitter handle.  The
+        # minimum keeps the inner sliders / combos legible; no maximum so
+        # the user can widen the panel as much as they want.
+        self.setMinimumWidth(180)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)

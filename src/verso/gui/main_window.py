@@ -47,8 +47,10 @@ from verso.gui.state import AppState
 from verso.gui.views.align_view import AlignView
 from verso.gui.views.overview_view import OverviewView
 from verso.gui.views.prep_view import PrepView
+from verso.gui.views.warp_view import WarpView
 from verso.gui.widgets.filmstrip import Filmstrip
 from verso.gui.widgets.properties import PropertiesPanel
+from verso.gui.widgets.section_canvas_panel import SectionCanvasPanel
 
 _VIEW_OVERVIEW = 0
 _VIEW_PREP = 1
@@ -277,11 +279,23 @@ class MainWindow(QMainWindow):
 
         self._overview = OverviewView()
         self._prep = PrepView()
-        self._align = AlignView()
+        # Shared canvas + region bar + section/atlas/channels state.  Reparented
+        # into whichever of AlignView / WarpView is currently active so zoom,
+        # pan, and the channel-layer cache survive mode switches.
+        self._panel = SectionCanvasPanel()
+        self._align = AlignView(self._panel)
+        self._warp = WarpView(self._panel)
 
         self._stack.addWidget(self._overview)   # 0
         self._stack.addWidget(self._prep)       # 1
         self._stack.addWidget(self._align)      # 2
+        self._stack.addWidget(self._warp)       # 3
+
+        # Park the panel inside AlignView's slot immediately.  If we left it as
+        # a free-floating child of MainWindow (the default when ``SectionCanvasPanel``
+        # is constructed without a layout parent), it renders at (0, 0) of the
+        # main window and covers the menubar until the first Align/Warp switch.
+        self._align.activate()
 
     def _build_docks(self) -> None:
         # Right: properties panel
@@ -302,8 +316,13 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, bottom_dock)
         self._bottom_dock = bottom_dock
 
+        # PropertiesPanel no longer pins its width, so its sizeHint inflates
+        # the dock past what we want at launch.  Force the initial width here;
+        # the user can still drag the splitter to resize.
+        self.resizeDocks([right_dock], [220], Qt.Orientation.Horizontal)
+
     def _on_cp_style_changed(self, size: int, shape: str, color: str) -> None:
-        self._align.set_cp_style(size, shape, color)
+        self._warp.set_cp_style(size, shape, color)
         project = self._state.project
         if project is not None:
             project.cp_size = size
@@ -355,15 +374,17 @@ class MainWindow(QMainWindow):
         self._prep.section_modified.connect(self._on_prep_modified)
         self._prep.mask_negative_changed.connect(self._props.set_mask_negative)
 
-        # AlignView navigator + store/clear + sub-mode
+        # AlignView navigator + store/clear; WarpView edits.  Both views share
+        # the same SectionCanvasPanel, so section-modified signals from either
+        # collapse to the same handler.
         self._align.section_modified.connect(self._on_align_modified)
         self._align.anchoring_changed.connect(self._on_anchoring_changed)
         self._align.alignments_updated.connect(self._on_alignments_updated)
-        self._align.mode_changed.connect(self._props.set_align_warp_mode)
         self._align.reverse_requested.connect(self._reverse_section_order)
         self._align.deepslice_requested.connect(self._run_deepslice)
         self._align.default_proposal_requested.connect(self._revert_to_default_proposal)
         self._align.clear_all_alignments_requested.connect(self._clear_all_alignments)
+        self._warp.section_modified.connect(self._on_align_modified)
         self._props.cp_style_changed.connect(self._on_cp_style_changed)
 
     # ------------------------------------------------------------------
@@ -375,9 +396,13 @@ class MainWindow(QMainWindow):
         if leaving_prep:
             self._save_prep_mask_before_transition()
 
-        # Align and Warp share the same QStackedWidget page (AlignView)
-        stack_index = _VIEW_ALIGN if index == _VIEW_WARP else index
-        self._stack.setCurrentIndex(stack_index)
+        # Release panel hooks from whichever Align/Warp view currently owns it.
+        if self._current_mode == "align":
+            self._align.deactivate()
+        elif self._current_mode == "warp":
+            self._warp.deactivate()
+
+        self._stack.setCurrentIndex(index)
 
         modes = ("overview", "prep", "align", "warp")
         self._current_mode = modes[index]
@@ -399,11 +424,15 @@ class MainWindow(QMainWindow):
             else:
                 self._prep.load_section(section)
         elif self._current_mode in ("align", "warp"):
-            self._align.set_mode(self._current_mode)   # emits mode_changed → updates props sub-widgets
-            if self._align._section is section:
-                self._align.refresh_display()
+            # Activate the new view (reparents the shared panel + installs hooks),
+            # then ensure the section state is current.
+            if self._current_mode == "align":
+                self._align.activate()
             else:
-                self._align.load_section(section)
+                self._warp.activate()
+            if self._panel.section is not section:
+                self._panel.load_section(section)
+            self._props.set_align_warp_mode(self._current_mode)
 
         # Refresh properties with current section
         self._props.set_mode(self._current_mode)
@@ -538,10 +567,10 @@ class MainWindow(QMainWindow):
         self._overview.load_project(project)
         self._filmstrip.populate(project.sections, project.channels)
         self._prep.set_channels(project.channels)
-        self._align.set_channels(project.channels)
+        self._panel.set_channels(project.channels)
         self._props.set_channels(project.channels)
         self._props.apply_cp_style(project.cp_size, project.cp_shape, project.cp_color)
-        self._align.set_cp_style(project.cp_size, project.cp_shape, project.cp_color)
+        self._warp.set_cp_style(project.cp_size, project.cp_shape, project.cp_color)
         self._update_reverse_order_enabled()
         self._update_deepslice_enabled()
 
@@ -578,7 +607,7 @@ class MainWindow(QMainWindow):
 
     def _on_atlas_loaded(self) -> None:
         atlas = self._state.atlas
-        self._align.set_atlas(atlas)
+        self._panel.set_atlas(atlas)
         self._props.set_atlas_loading(False)
         if atlas is not None:
             self._props.set_ap_range(0.0, atlas.ap_extent_mm)
@@ -587,7 +616,7 @@ class MainWindow(QMainWindow):
             if project is not None:
                 self._initialize_quicknii_anchorings(project.sections)
                 self._sync_ap_mm(project.sections)
-                self._align.update_overlay()
+                self._panel.update_overlay()
                 self._update_ap_plot()
                 self._update_reverse_order_enabled()
                 self._update_deepslice_enabled()
@@ -605,7 +634,7 @@ class MainWindow(QMainWindow):
         if self._current_mode == "prep":
             self._prep.load_section(section)
         elif self._current_mode in ("align", "warp"):
-            self._align.load_section(section)
+            self._panel.load_section(section)
 
         self._refresh_properties()
         self._update_ap_plot()
@@ -675,7 +704,7 @@ class MainWindow(QMainWindow):
         if self._current_mode == "prep":
             self._prep.refresh_display()
         elif self._current_mode in ("align", "warp"):
-            self._align.refresh_display()
+            self._panel.refresh_display()
         self._overview.refresh_row(self._state.section_index)
         self._update_ap_plot()
 
@@ -704,12 +733,12 @@ class MainWindow(QMainWindow):
         if self._current_mode == "prep":
             self._prep.refresh_display()
         elif self._current_mode in ("align", "warp"):
-            self._align.refresh_display()
+            self._panel.refresh_display()
         self._overview.refresh_row(self._state.section_index)
         self._update_ap_plot()
 
     def _on_opacity_changed(self, opacity: float) -> None:
-        self._align.canvas.set_overlay_opacity(opacity)
+        self._panel.canvas.set_overlay_opacity(opacity)
 
     def _on_channels_changed(self, channels: list) -> None:
         """Live updates while the user drags a brightness slider."""
@@ -717,7 +746,7 @@ class MainWindow(QMainWindow):
         if project is not None:
             project.channels = list(channels)
         self._prep.set_channels(channels)
-        self._align.set_channels(channels)
+        self._panel.set_channels(channels)
         self._props.set_channels(channels)
 
     def _on_channels_committed(self, channels: list) -> None:
@@ -832,14 +861,14 @@ class MainWindow(QMainWindow):
             from verso.engine.registration import set_ap_center_position
             anchoring = section.alignment.anchoring
             if not anchoring or all(v == 0.0 for v in anchoring):
-                raw_img = self._align._raw_image
+                raw_img = self._panel.raw_image
                 aspect = (raw_img.shape[1] / raw_img.shape[0]) if raw_img is not None else 1.0
                 anchoring = atlas.default_anchoring(aspect_ratio=aspect)
             ap_voxel = atlas.ap_mm_to_voxel(ap_mm)
             section.alignment.anchoring = set_ap_center_position(
                 anchoring, ap_voxel, atlas.ap_axis
             )
-            self._align.update_overlay()
+            self._panel.update_overlay()
         self._overview.refresh_row(self._state.section_index)
         self._update_ap_plot()
         self._update_reverse_order_enabled()
@@ -867,7 +896,7 @@ class MainWindow(QMainWindow):
             return
         self._initialize_quicknii_anchorings(project.sections)
         self._sync_ap_mm(project.sections)
-        self._align.update_overlay()
+        self._panel.update_overlay()
         for i in range(len(project.sections)):
             self._overview.refresh_row(i)
         self._filmstrip.refresh_stored()
@@ -1198,7 +1227,7 @@ class MainWindow(QMainWindow):
             self._sync_ap_mm(project.sections)
         self._overview.refresh()
         self._filmstrip.refresh_stored()
-        self._align.refresh_display()
+        self._panel.refresh_display()
         self._refresh_properties()
         self._update_ap_plot()
         self.statusBar().showMessage(f"Applied {applied} DeepSlice suggestions", 5000)
