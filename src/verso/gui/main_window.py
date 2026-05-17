@@ -693,10 +693,6 @@ class MainWindow(QMainWindow):
                 section.alignment.ap_position_mm = self._anchoring_ap_mm(
                     section.alignment.anchoring
                 )
-        if section.alignment.stored_anchoring is not None:
-            section.alignment.stored_anchoring = flip_anchoring_horizontal(
-                section.alignment.stored_anchoring
-            )
         if section.alignment.proposal_anchoring is not None:
             section.alignment.proposal_anchoring = flip_anchoring_horizontal(
                 section.alignment.proposal_anchoring
@@ -726,10 +722,6 @@ class MainWindow(QMainWindow):
                 section.alignment.ap_position_mm = self._anchoring_ap_mm(
                     section.alignment.anchoring
                 )
-        if section.alignment.stored_anchoring is not None:
-            section.alignment.stored_anchoring = flip_anchoring_vertical(
-                section.alignment.stored_anchoring
-            )
         if section.alignment.proposal_anchoring is not None:
             section.alignment.proposal_anchoring = flip_anchoring_vertical(
                 section.alignment.proposal_anchoring
@@ -1019,27 +1011,20 @@ class MainWindow(QMainWindow):
         if not usable:
             return
 
-        from verso.engine.registration import flip_anchoring_horizontal, flip_anchoring_vertical
+        from verso.engine.registration import (
+            _original_space_anchoring,
+            flip_anchoring_horizontal,
+            flip_anchoring_vertical,
+        )
 
-        stored_anchorings = []
         canonical_anchorings = []
         for section, _, _ in usable:
-            stored = section.alignment.stored_anchoring or section.alignment.anchoring
             is_complete = (
                 section.alignment.status == AlignmentStatus.COMPLETE
-                and stored
-                and any(v != 0.0 for v in stored)
             )
-            stored_anchorings.append(stored if is_complete else None)
-            if is_complete:
-                anch = list(stored)
-                if section.preprocessing.flip_horizontal:
-                    anch = flip_anchoring_horizontal(anch)
-                if section.preprocessing.flip_vertical:
-                    anch = flip_anchoring_vertical(anch)
-                canonical_anchorings.append(anch)
-            else:
-                canonical_anchorings.append(None)
+            canonical_anchorings.append(
+                _original_space_anchoring(section) if is_complete else None
+            )
         propagated = quicknii_coronal_series_anchorings(
             image_sizes=[(w, h) for _, w, h in usable],
             serial_numbers=[section.serial_number for section, _, _ in usable],
@@ -1051,14 +1036,14 @@ class MainWindow(QMainWindow):
 
         stored_serials = {
             section.serial_number
-            for (section, _, _), stored in zip(usable, stored_anchorings)
-            if stored is not None
+            for (section, _, _), original in zip(usable, canonical_anchorings)
+            if original is not None
         }
 
-        for (section, _, _), anchoring, stored in zip(
-            usable, propagated, stored_anchorings
+        for (section, _, _), anchoring, original in zip(
+            usable, propagated, canonical_anchorings
         ):
-            if stored is not None:
+            if original is not None:
                 continue
             # Always sync sections that share a serial with a stored section —
             # they represent the same physical slice and must show the same image.

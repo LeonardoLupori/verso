@@ -506,6 +506,7 @@ def test_interpolate_anchorings_handles_horizontally_flipped_stored_keyframe(
             preprocessing=Preprocessing(flip_horizontal=True),
             alignment=Alignment(
                 anchoring=right_display,
+                stored_anchoring=right,
                 status=AlignmentStatus.COMPLETE,
             ),
         ),

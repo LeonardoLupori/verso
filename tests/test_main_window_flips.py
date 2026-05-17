@@ -52,3 +52,33 @@ def test_horizontal_flip_updates_in_progress_default_anchoring_before_store():
     np.testing.assert_allclose(o, old_o + old_u)
     np.testing.assert_allclose(u, -old_u)
     np.testing.assert_allclose(v, old_v)
+
+
+def test_horizontal_flip_does_not_update_stored_anchoring():
+    anchoring = [
+        10.0, 20.0, 30.0,
+        100.0, 12.0, 0.0,
+        0.0, 0.0, 80.0,
+    ]
+    section = Section(
+        id="s001",
+        serial_number=1,
+        original_path="s001.png",
+        thumbnail_path="s001.png",
+        alignment=Alignment(
+            anchoring=list(anchoring),
+            stored_anchoring=list(anchoring),
+            status=AlignmentStatus.COMPLETE,
+        ),
+    )
+    original_stored = list(anchoring)
+    window = _NoopMainWindow(
+        _state=SimpleNamespace(current_section=section, atlas=None, section_index=0),
+        _current_mode="overview",
+        _overview=_NoopOverview(),
+    )
+
+    MainWindow._on_flip_h_changed(window, True)
+
+    np.testing.assert_allclose(section.alignment.anchoring, flip_anchoring_horizontal(anchoring))
+    np.testing.assert_allclose(section.alignment.stored_anchoring, original_stored)

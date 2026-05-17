@@ -234,6 +234,24 @@ def flip_anchoring_vertical(anchoring: list[float]) -> list[float]:
     return vectors_to_anchoring(o + v, u, -v)
 
 
+def _original_space_anchoring(section) -> list[float]:
+    """Return the section's anchoring in original (unflipped) image space.
+
+    ``stored_anchoring`` is always in original space (new invariant).
+    Falls back to un-flipping the display-space ``anchoring`` field when
+    ``stored_anchoring`` is absent.
+    """
+    stored = section.alignment.stored_anchoring
+    if stored and any(v != 0.0 for v in stored):
+        return list(stored)
+    anch = list(section.alignment.anchoring)
+    if section.preprocessing.flip_horizontal:
+        anch = flip_anchoring_horizontal(anch)
+    if section.preprocessing.flip_vertical:
+        anch = flip_anchoring_vertical(anch)
+    return anch
+
+
 # ---------------------------------------------------------------------------
 # Pixel ↔ Normalised (convenience wrappers for the GUI)
 # ---------------------------------------------------------------------------
@@ -592,37 +610,17 @@ def interpolate_anchorings(
     unpacked_by_index: dict[int, list[float]] = {}
     stored_indices: list[int] = []
     for idx, (section, w, h) in enumerate(sorted_usable):
-        stored_anchoring = (
-            section.alignment.stored_anchoring
-            if section.alignment.stored_anchoring
-            and any(v != 0.0 for v in section.alignment.stored_anchoring)
-            else section.alignment.anchoring
-        )
-        if (
-            section.alignment.status == AlignmentStatus.COMPLETE
-            and stored_anchoring
-            and any(v != 0.0 for v in stored_anchoring)
-        ):
-            canonical = list(stored_anchoring)
-            if section.preprocessing.flip_horizontal:
-                canonical = flip_anchoring_horizontal(canonical)
-            if section.preprocessing.flip_vertical:
-                canonical = flip_anchoring_vertical(canonical)
-            unpacked_by_index[idx] = quicknii_unpack_anchoring(canonical, w, h)
-            stored_indices.append(idx)
+        if section.alignment.status == AlignmentStatus.COMPLETE:
+            original = _original_space_anchoring(section)
+            if any(v != 0.0 for v in original):
+                unpacked_by_index[idx] = quicknii_unpack_anchoring(original, w, h)
+                stored_indices.append(idx)
 
     if atlas_shape is not None:
-        stored_anchorings_for_series = []
-        for idx, (section, _, _) in enumerate(sorted_usable):
-            if idx in stored_indices:
-                anch = list(section.alignment.stored_anchoring or section.alignment.anchoring)
-                if section.preprocessing.flip_horizontal:
-                    anch = flip_anchoring_horizontal(anch)
-                if section.preprocessing.flip_vertical:
-                    anch = flip_anchoring_vertical(anch)
-                stored_anchorings_for_series.append(anch)
-            else:
-                stored_anchorings_for_series.append(None)
+        stored_anchorings_for_series = [
+            _original_space_anchoring(section) if idx in stored_indices else None
+            for idx, (section, _, _) in enumerate(sorted_usable)
+        ]
         propagated_anchorings = quicknii_coronal_series_anchorings(
             image_sizes=[(w, h) for _, w, h in sorted_usable],
             serial_numbers=serial_numbers,

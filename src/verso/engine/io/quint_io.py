@@ -365,30 +365,24 @@ def _registration_dims(section) -> tuple[int, int]:
 
 def _export_anchoring(
     anchoring: list[float],
-    flip_horizontal: bool,
     atlas_shape: tuple[int, int, int] | None,
 ) -> list[float]:
-    """Apply all export-time anchoring transforms.
+    """Apply export-time anchoring transforms.
 
-    1. Horizontal-flip correction (if the section was displayed flipped).
-    2. Atlas-axis convention conversion from brainglobe/VERSO to QuickNII,
-       which requires knowing the atlas dimensions.
+    ``anchoring`` must already be in original image space (stored_anchoring
+    invariant). Only the atlas-axis convention conversion is applied.
 
     Args:
-        anchoring: Internal VERSO anchoring in brainglobe convention.
-        flip_horizontal: Whether the section was displayed horizontally flipped.
+        anchoring: Anchoring in original image space (brainglobe convention).
         atlas_shape: Atlas dimensions ``(AP, DV, LR)``. Pass ``None`` to skip
             atlas convention conversion.
 
     Returns:
         Anchoring ready to write into a QuickNII/VisuAlign file.
     """
-    a = anchoring
-    if flip_horizontal:
-        a = _flip_anchoring(a)
     if atlas_shape is not None:
-        a = _to_quicknii_convention(a, atlas_shape)
-    return a
+        return _to_quicknii_convention(anchoring, atlas_shape)
+    return list(anchoring)
 
 
 def save_quicknii_xml(
@@ -417,6 +411,7 @@ def save_quicknii_xml(
     atlas_name = project.atlas.name if project.atlas else ""
     lines.append(f"<series name='{project.name}' target='{atlas_name}'{res_attr}>")
 
+    from verso.engine.registration import _original_space_anchoring
     prefixes = ["' anchoring='ox=", "&amp;oy=", "&amp;oz=", "&amp;ux=",
                 "&amp;uy=", "&amp;uz=", "&amp;vx=", "&amp;vy=", "&amp;vz="]
     for section in project.sections:
@@ -427,17 +422,12 @@ def save_quicknii_xml(
             f" nr='{section.serial_number}'"
             f" width='{w}' height='{h}"
         )
-        anchoring = section.alignment.stored_anchoring or section.alignment.anchoring
-        if (section.alignment.status == AlignmentStatus.COMPLETE
-                and anchoring
-                and any(anchoring)):
-            a = _export_anchoring(
-                anchoring,
-                section.preprocessing.flip_horizontal,
-                atlas_shape,
-            )
-            for prefix, val in zip(prefixes, [round(v, 4) for v in a]):
-                line += f"{prefix}{val}"
+        if section.alignment.status == AlignmentStatus.COMPLETE:
+            original = _original_space_anchoring(section)
+            if any(original):
+                a = _export_anchoring(original, atlas_shape)
+                for prefix, val in zip(prefixes, [round(v, 4) for v in a]):
+                    line += f"{prefix}{val}"
         line += "'/>"
         lines.append(line)
 
@@ -460,6 +450,7 @@ def save_quicknii(
         atlas_shape: ``(AP, DV, LR)`` voxel dimensions used for the DV-convention
             conversion. Pass *None* to skip conversion (non-standard output).
     """
+    from verso.engine.registration import _original_space_anchoring
     slices_out: list[dict[str, Any]] = []
     for section in project.sections:
         w, h = _registration_dims(section)
@@ -469,16 +460,10 @@ def save_quicknii(
             "width": w,
             "height": h,
         }
-        anchoring = section.alignment.stored_anchoring or section.alignment.anchoring
-        if (section.alignment.status == AlignmentStatus.COMPLETE
-                and anchoring
-                and any(anchoring)):
-            a = _export_anchoring(
-                anchoring,
-                section.preprocessing.flip_horizontal,
-                atlas_shape,
-            )
-            entry["anchoring"] = [round(v, 4) for v in a]
+        if section.alignment.status == AlignmentStatus.COMPLETE:
+            original = _original_space_anchoring(section)
+            if any(original):
+                entry["anchoring"] = [round(v, 4) for v in _export_anchoring(original, atlas_shape)]
         slices_out.append(entry)
 
     data: dict[str, Any] = {
@@ -506,6 +491,7 @@ def save_visualign(
         atlas_shape: ``(AP, DV, LR)`` voxel dimensions used for the DV-convention
             conversion. Pass *None* to skip conversion (non-standard output).
     """
+    from verso.engine.registration import _original_space_anchoring
     slices_out: list[dict[str, Any]] = []
     for section in project.sections:
         w, h = _registration_dims(section)
@@ -515,16 +501,10 @@ def save_visualign(
             "width": w,
             "height": h,
         }
-        anchoring = section.alignment.stored_anchoring or section.alignment.anchoring
-        if (section.alignment.status == AlignmentStatus.COMPLETE
-                and anchoring
-                and any(anchoring)):
-            a = _export_anchoring(
-                anchoring,
-                section.preprocessing.flip_horizontal,
-                atlas_shape,
-            )
-            entry["anchoring"] = [round(v, 4) for v in a]
+        if section.alignment.status == AlignmentStatus.COMPLETE:
+            original = _original_space_anchoring(section)
+            if any(original):
+                entry["anchoring"] = [round(v, 4) for v in _export_anchoring(original, atlas_shape)]
         if section.warp.control_points:
             cps = section.warp.control_points
             if section.preprocessing.flip_horizontal:

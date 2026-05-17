@@ -275,7 +275,7 @@ def test_reset_default_proposals_interpolates_flipped_keyframe_in_canonical_spac
     project.sections[0].alignment.stored_anchoring = list(left)
     project.sections[0].alignment.status = AlignmentStatus.COMPLETE
     project.sections[2].alignment.anchoring = right_display
-    project.sections[2].alignment.stored_anchoring = list(right_display)
+    project.sections[2].alignment.stored_anchoring = list(right)
     project.sections[2].alignment.status = AlignmentStatus.COMPLETE
 
     changed = reset_in_progress_to_default_proposals(
