@@ -986,21 +986,32 @@ class MainWindow(QMainWindow):
         if not usable:
             return
 
+        from verso.engine.registration import flip_anchoring_horizontal, flip_anchoring_vertical
+
         stored_anchorings = []
+        canonical_anchorings = []
         for section, _, _ in usable:
             stored = section.alignment.stored_anchoring or section.alignment.anchoring
-            stored_anchorings.append(
-                stored
-                if section.alignment.status == AlignmentStatus.COMPLETE
+            is_complete = (
+                section.alignment.status == AlignmentStatus.COMPLETE
                 and stored
                 and any(v != 0.0 for v in stored)
-                else None
             )
+            stored_anchorings.append(stored if is_complete else None)
+            if is_complete:
+                anch = list(stored)
+                if section.preprocessing.flip_horizontal:
+                    anch = flip_anchoring_horizontal(anch)
+                if section.preprocessing.flip_vertical:
+                    anch = flip_anchoring_vertical(anch)
+                canonical_anchorings.append(anch)
+            else:
+                canonical_anchorings.append(None)
         propagated = quicknii_coronal_series_anchorings(
             image_sizes=[(w, h) for _, w, h in usable],
             serial_numbers=[section.serial_number for section, _, _ in usable],
             atlas_shape=atlas.shape,
-            stored_anchorings=stored_anchorings,
+            stored_anchorings=canonical_anchorings,
             reverse_ap=self._reverse_ap_proposal,
             center_proposals=True,
         )
@@ -1029,6 +1040,10 @@ class MainWindow(QMainWindow):
                 and section.alignment.source != "quicknii_default"
             ):
                 continue
+            if section.preprocessing.flip_horizontal:
+                anchoring = flip_anchoring_horizontal(anchoring)
+            if section.preprocessing.flip_vertical:
+                anchoring = flip_anchoring_vertical(anchoring)
             section.alignment.anchoring = anchoring
             if section.alignment.status == AlignmentStatus.NOT_STARTED:
                 section.alignment.status = AlignmentStatus.IN_PROGRESS
