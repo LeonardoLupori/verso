@@ -16,7 +16,7 @@ from typing import Literal
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import QEvent, QObject, Qt, pyqtSignal
-from PyQt6.QtWidgets import QApplication, QSizePolicy, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QAbstractButton, QApplication, QSizePolicy, QVBoxLayout, QWidget
 
 # ---------------------------------------------------------------------------
 # Application-level space-key tracker (singleton, installed once)
@@ -34,10 +34,14 @@ class _SpaceFilter(QObject):
         if t == QEvent.Type.KeyPress and not event.isAutoRepeat():
             if event.key() == Qt.Key.Key_Space:
                 _SpaceState.held = True
+                # Consume the event when a button has focus so spacebar doesn't
+                # re-trigger the last clicked button while panning.
+                if isinstance(QApplication.focusWidget(), QAbstractButton):
+                    return True
         elif t == QEvent.Type.KeyRelease and not event.isAutoRepeat():
             if event.key() == Qt.Key.Key_Space:
                 _SpaceState.held = False
-        return False   # never consume events
+        return False
 
 
 def _ensure_space_filter() -> None:
