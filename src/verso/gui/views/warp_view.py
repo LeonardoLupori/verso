@@ -116,6 +116,7 @@ class WarpView(QWidget):
     def activate(self) -> None:
         """Reparent the shared panel into this view and install warp hooks."""
         self._panel_slot.layout().addWidget(self._panel)
+        self._panel.canvas.set_interaction_mode("warp")
         self._panel.overlay_post_processor = self._warp_overlay
         self._panel.cursor_to_atlas_mapper = self._cursor_to_src
         self._cp_hovered = -1

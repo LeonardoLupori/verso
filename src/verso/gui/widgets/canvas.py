@@ -66,7 +66,7 @@ class _OverlayViewBox(pg.ViewBox):
     canvas_dragged = pyqtSignal(float, float)        # drag update
     canvas_drag_ended = pyqtSignal(float, float)     # drag finish
 
-    _InteractionMode = Literal["align", "prep", "view"]
+    _InteractionMode = Literal["align", "warp", "prep", "view"]
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -77,7 +77,7 @@ class _OverlayViewBox(pg.ViewBox):
 
     def mouseClickEvent(self, ev) -> None:
         if (
-            self._interaction_mode in ("align", "prep")
+            self._interaction_mode in ("warp", "prep")
             and ev.button() == Qt.MouseButton.LeftButton
             and not _SpaceState.held
             and not ev.double()
@@ -90,7 +90,7 @@ class _OverlayViewBox(pg.ViewBox):
 
     def mouseDragEvent(self, ev, axis=None) -> None:
         if (
-            self._interaction_mode == "align"
+            self._interaction_mode in ("align", "warp")
             and _SpaceState.held
             and ev.button() == Qt.MouseButton.LeftButton
         ):
@@ -99,7 +99,7 @@ class _OverlayViewBox(pg.ViewBox):
             p2 = self.mapSceneToView(ev.scenePos())
             self.overlay_panned.emit(p2.x() - p1.x(), p2.y() - p1.y())
         elif (
-            self._interaction_mode in ("align", "prep")
+            self._interaction_mode in ("warp", "prep")
             and not _SpaceState.held
             and ev.button() == Qt.MouseButton.LeftButton
         ):
@@ -133,7 +133,7 @@ class ImageCanvas(QWidget):
     canvas_dragged = pyqtSignal(float, float)
     canvas_drag_ended = pyqtSignal(float, float)
 
-    _InteractionMode = Literal["align", "prep", "view"]
+    _InteractionMode = Literal["align", "warp", "prep", "view"]
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
