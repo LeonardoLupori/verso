@@ -1,7 +1,9 @@
 import json
+import math
 import subprocess
 from pathlib import Path
 
+import numpy as np
 from PIL import Image
 
 from verso.engine.deepslice import (
@@ -13,7 +15,12 @@ from verso.engine.deepslice import (
     run_deepslice_suggestions,
 )
 from verso.engine.model.alignment import AlignmentStatus, ControlPoint
-from verso.engine.model.project import AtlasRef, Project, Section
+from verso.engine.model.project import AtlasRef, Preprocessing, Project, Section
+from verso.engine.registration import (
+    flip_anchoring_horizontal,
+    quicknii_pack_anchoring,
+    quicknii_unpack_anchoring,
+)
 
 
 def _make_project(tmp_path: Path) -> Project:
@@ -214,6 +221,72 @@ def test_reset_in_progress_to_default_proposals_clears_deepslice_metadata(tmp_pa
         assert section.alignment.proposal_anchoring is None
         assert section.alignment.proposal_confidence is None
         assert section.warp.control_points == []
+
+
+def test_reset_default_proposals_interpolates_flipped_keyframe_in_canonical_space(
+    tmp_path: Path,
+):
+    atlas_shape = (528, 320, 456)
+    image_paths = []
+    for i in range(3):
+        path = tmp_path / f"s{i + 1:03d}.png"
+        Image.new("RGB", (1000, 800)).save(path)
+        image_paths.append(path)
+
+    angle = math.radians(18.0)
+    unpacked_left = [
+        228.0, 500.0, 160.0,
+        math.cos(angle), math.sin(angle), 0.0,
+        0.0, 0.0, 1.0,
+        0.456, 0.4,
+    ]
+    unpacked_right = list(unpacked_left)
+    unpacked_right[1] = 100.0
+    left = quicknii_pack_anchoring(unpacked_left, 1000, 800)
+    right = quicknii_pack_anchoring(unpacked_right, 1000, 800)
+    right_display = flip_anchoring_horizontal(right)
+
+    project = Project(
+        name="deep",
+        atlas=AtlasRef(name="allen_mouse_25um"),
+        sections=[
+            Section(
+                "s001",
+                1,
+                str(image_paths[0]),
+                str(image_paths[0]),
+            ),
+            Section(
+                "s002",
+                2,
+                str(image_paths[1]),
+                str(image_paths[1]),
+            ),
+            Section(
+                "s003",
+                3,
+                str(image_paths[2]),
+                str(image_paths[2]),
+                preprocessing=Preprocessing(flip_horizontal=True),
+            ),
+        ],
+    )
+    project.sections[0].alignment.anchoring = left
+    project.sections[0].alignment.stored_anchoring = list(left)
+    project.sections[0].alignment.status = AlignmentStatus.COMPLETE
+    project.sections[2].alignment.anchoring = right_display
+    project.sections[2].alignment.stored_anchoring = list(right_display)
+    project.sections[2].alignment.status = AlignmentStatus.COMPLETE
+
+    changed = reset_in_progress_to_default_proposals(
+        project.sections,
+        atlas_shape=atlas_shape,
+    )
+
+    assert changed == 1
+    middle = quicknii_unpack_anchoring(project.sections[1].alignment.anchoring, 1000, 800)
+    np.testing.assert_allclose(middle[4], math.sin(angle), atol=1e-9)
+    np.testing.assert_allclose(middle[1], 300.0, atol=1e-9)
 
 
 def test_reset_to_default_can_clear_complete_alignments(tmp_path: Path):

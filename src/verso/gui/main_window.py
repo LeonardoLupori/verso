@@ -683,24 +683,24 @@ class MainWindow(QMainWindow):
         if value == was_flipped:
             return
         section.preprocessing.flip_horizontal = value
-        if (
-            section.alignment.status == AlignmentStatus.COMPLETE
-            and section.alignment.anchoring
-            and any(section.alignment.anchoring)
-        ):
-            from verso.engine.registration import flip_anchoring_horizontal
+        from verso.engine.registration import flip_anchoring_horizontal
 
+        if section.alignment.anchoring and any(section.alignment.anchoring):
             section.alignment.anchoring = flip_anchoring_horizontal(
                 section.alignment.anchoring
             )
-            if section.alignment.stored_anchoring is not None:
-                section.alignment.stored_anchoring = flip_anchoring_horizontal(
-                    section.alignment.stored_anchoring
-                )
             if self._state.atlas is not None:
                 section.alignment.ap_position_mm = self._anchoring_ap_mm(
                     section.alignment.anchoring
                 )
+        if section.alignment.stored_anchoring is not None:
+            section.alignment.stored_anchoring = flip_anchoring_horizontal(
+                section.alignment.stored_anchoring
+            )
+        if section.alignment.proposal_anchoring is not None:
+            section.alignment.proposal_anchoring = flip_anchoring_horizontal(
+                section.alignment.proposal_anchoring
+            )
         if self._current_mode == "prep":
             self._prep.refresh_display()
         elif self._current_mode in ("align", "warp"):
@@ -716,13 +716,9 @@ class MainWindow(QMainWindow):
         if value == was_flipped:
             return
         section.preprocessing.flip_vertical = value
-        if (
-            section.alignment.status == AlignmentStatus.COMPLETE
-            and section.alignment.anchoring
-            and any(section.alignment.anchoring)
-        ):
-            from verso.engine.registration import flip_anchoring_vertical
+        from verso.engine.registration import flip_anchoring_vertical
 
+        if section.alignment.anchoring and any(section.alignment.anchoring):
             section.alignment.anchoring = flip_anchoring_vertical(
                 section.alignment.anchoring
             )
@@ -730,6 +726,14 @@ class MainWindow(QMainWindow):
                 section.alignment.ap_position_mm = self._anchoring_ap_mm(
                     section.alignment.anchoring
                 )
+        if section.alignment.stored_anchoring is not None:
+            section.alignment.stored_anchoring = flip_anchoring_vertical(
+                section.alignment.stored_anchoring
+            )
+        if section.alignment.proposal_anchoring is not None:
+            section.alignment.proposal_anchoring = flip_anchoring_vertical(
+                section.alignment.proposal_anchoring
+            )
         if self._current_mode == "prep":
             self._prep.refresh_display()
         elif self._current_mode in ("align", "warp"):

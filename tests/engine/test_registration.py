@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from verso.engine.model.alignment import Alignment, AlignmentStatus
-from verso.engine.model.project import Section
+from verso.engine.model.project import Preprocessing, Section
 from verso.engine.registration import (
     anchoring_to_vectors,
     atlas_to_normalized,
@@ -456,6 +456,66 @@ def test_interpolate_anchorings_with_one_keyframe_matches_quicknii(tmp_path):
         stored_anchorings=[SAMPLE_ANCHORING, None],
     )
     np.testing.assert_allclose(sections[1].alignment.anchoring, expected[1])
+    assert sections[1].alignment.status == AlignmentStatus.IN_PROGRESS
+
+
+def test_interpolate_anchorings_handles_horizontally_flipped_stored_keyframe(
+    tmp_path,
+):
+    from PIL import Image
+
+    atlas_shape = (528, 320, 456)
+    paths = []
+    for i in range(3):
+        path = tmp_path / f"s{i + 1}.png"
+        Image.new("RGB", (1000, 800)).save(path)
+        paths.append(path)
+
+    angle = math.radians(18.0)
+    unpacked_left = [
+        228.0, 500.0, 160.0,
+        math.cos(angle), math.sin(angle), 0.0,
+        0.0, 0.0, 1.0,
+        0.456, 0.4,
+    ]
+    unpacked_right = list(unpacked_left)
+    unpacked_right[1] = 100.0
+    left = quicknii_pack_anchoring(unpacked_left, 1000, 800)
+    right = quicknii_pack_anchoring(unpacked_right, 1000, 800)
+    right_display = flip_anchoring_horizontal(right)
+
+    sections = [
+        Section(
+            id="s001",
+            serial_number=1,
+            original_path=str(paths[0]),
+            thumbnail_path=str(paths[0]),
+            alignment=Alignment(anchoring=left, status=AlignmentStatus.COMPLETE),
+        ),
+        Section(
+            id="s002",
+            serial_number=2,
+            original_path=str(paths[1]),
+            thumbnail_path=str(paths[1]),
+        ),
+        Section(
+            id="s003",
+            serial_number=3,
+            original_path=str(paths[2]),
+            thumbnail_path=str(paths[2]),
+            preprocessing=Preprocessing(flip_horizontal=True),
+            alignment=Alignment(
+                anchoring=right_display,
+                status=AlignmentStatus.COMPLETE,
+            ),
+        ),
+    ]
+
+    interpolate_anchorings(sections, atlas_shape=atlas_shape)
+
+    middle = quicknii_unpack_anchoring(sections[1].alignment.anchoring, 1000, 800)
+    np.testing.assert_allclose(middle[4], math.sin(angle), atol=1e-9)
+    np.testing.assert_allclose(middle[1], 300.0, atol=1e-9)
     assert sections[1].alignment.status == AlignmentStatus.IN_PROGRESS
 
 

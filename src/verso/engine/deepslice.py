@@ -189,7 +189,11 @@ def reset_in_progress_to_default_proposals(
 ) -> int:
     """Clear editable suggestions and regenerate QuickNII-style default proposals."""
     from verso.engine.io.image_io import registration_dimensions
-    from verso.engine.registration import quicknii_coronal_series_anchorings
+    from verso.engine.registration import (
+        flip_anchoring_horizontal,
+        flip_anchoring_vertical,
+        quicknii_coronal_series_anchorings,
+    )
 
     usable: list[tuple[Section, int, int]] = []
     for section in sections:
@@ -206,14 +210,21 @@ def reset_in_progress_to_default_proposals(
     stored_anchorings = []
     for section, _, _ in usable:
         stored = section.alignment.stored_anchoring or section.alignment.anchoring
-        stored_anchorings.append(
-            stored
-            if not include_complete
+        is_stored = (
+            not include_complete
             and section.alignment.status == AlignmentStatus.COMPLETE
             and stored
             and any(v != 0.0 for v in stored)
-            else None
         )
+        if not is_stored:
+            stored_anchorings.append(None)
+            continue
+        anchoring = list(stored)
+        if section.preprocessing.flip_horizontal:
+            anchoring = flip_anchoring_horizontal(anchoring)
+        if section.preprocessing.flip_vertical:
+            anchoring = flip_anchoring_vertical(anchoring)
+        stored_anchorings.append(anchoring)
     propagated = quicknii_coronal_series_anchorings(
         image_sizes=[(w, h) for _, w, h in usable],
         serial_numbers=[section.serial_number for section, _, _ in usable],
@@ -227,6 +238,10 @@ def reset_in_progress_to_default_proposals(
     for (section, _, _), anchoring, stored in zip(usable, propagated, stored_anchorings):
         if stored is not None:
             continue
+        if section.preprocessing.flip_horizontal:
+            anchoring = flip_anchoring_horizontal(anchoring)
+        if section.preprocessing.flip_vertical:
+            anchoring = flip_anchoring_vertical(anchoring)
         section.alignment.anchoring = anchoring
         section.alignment.ap_position_mm = None
         section.alignment.status = AlignmentStatus.IN_PROGRESS
