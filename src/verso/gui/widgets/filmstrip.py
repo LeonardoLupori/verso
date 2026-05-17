@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QScrollArea,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -125,8 +126,13 @@ class Filmstrip(QWidget):
         self._build_ui()
 
     def _build_ui(self) -> None:
-        outer = QHBoxLayout(self)
+        # Outer layout is vertical with stretches above and below the scroll
+        # area so that when the dock is resized taller than the thumbnail row,
+        # the row stays at its fixed height and is centered in the dock.
+        outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        outer.addStretch()
 
         scroll = QScrollArea()
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
@@ -144,6 +150,7 @@ class Filmstrip(QWidget):
 
         scroll.setWidget(self._container)
         outer.addWidget(scroll)
+        outer.addStretch()
         self._scroll = scroll
 
     def populate(self, sections: list, channels: list | None = None) -> None:
