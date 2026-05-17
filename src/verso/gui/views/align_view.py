@@ -16,6 +16,8 @@ import numpy as np
 from PyQt6.QtWidgets import (
     QHBoxLayout,
     QPushButton,
+    QSizePolicy,
+    QToolBar,
     QVBoxLayout,
     QWidget,
 )
@@ -84,91 +86,23 @@ class AlignView(QWidget):
         root.addLayout(body, stretch=1)
 
     def _make_toolbar(self) -> QWidget:
-        bar = QWidget()
-        bar.setFixedHeight(36)
-        bar.setStyleSheet("background: #252525;")
-        h = QHBoxLayout(bar)
-        h.setContentsMargins(8, 2, 8, 2)
-        h.setSpacing(4)
+        """Build the align toolbar.
 
-        h.addWidget(self._panel.make_outline_button())
-        h.addSpacing(8)
+        Uses a real :class:`QToolBar` so Qt's built-in overflow extension
+        (the ``>>`` button) kicks in when the window is too narrow to fit
+        every button — without this, the sum of ``setFixedWidth`` buttons
+        pins the window's minimum width at ~1400 px.
 
+        The status label is placed *outside* the toolbar so the section
+        filename remains visible even when buttons spill into the extension
+        popup.
+        """
         small_btn_qss = (
             "QPushButton { border-radius: 3px; padding: 2px 7px; color: #ccc;"
             " background: #383838; border: 1px solid #555; font-size: 11px; }"
             "QPushButton:hover { background: #484848; }"
             "QPushButton:disabled { color: #555; background: #2a2a2a; border-color: #333; }"
         )
-
-        scale_specs = [
-            ("↔+", "Wider (2%)",    1.0 / _SCALE_STEP,  1.0),
-            ("↔−", "Narrower (2%)", _SCALE_STEP,   1.0),
-            ("↕+", "Taller (2%)",   1.0,        1.0 / _SCALE_STEP),
-            ("↕−", "Shorter (2%)", 1.0,    _SCALE_STEP),
-        ]
-        self._scale_btns: list[QPushButton] = []
-        for sym, tip, su, sv in scale_specs:
-            btn = QPushButton(sym)
-            btn.setFixedHeight(28)
-            btn.setFixedWidth(32)
-            btn.setToolTip(tip)
-            btn.setStyleSheet(small_btn_qss)
-            btn.setEnabled(False)
-            btn.clicked.connect(lambda _, s=su, t=sv: self._scale_overlay(s, t))
-            h.addWidget(btn)
-            self._scale_btns.append(btn)
-
-        h.addSpacing(8)
-
-        move_specs = [
-            ("AP−", "Move posterior (AP−)", 1, -_MOVE_STEP),
-            ("AP+",      "Move anterior (AP+)",      1, +_MOVE_STEP),
-            ("DV−", "Move dorsal (DV−)",   2, -_MOVE_STEP),
-            ("DV+",      "Move ventral (DV+)",       2, +_MOVE_STEP),
-            ("LR−", "Move left (LR−)",     0, -_MOVE_STEP),
-            ("LR+",      "Move right (LR+)",         0, +_MOVE_STEP),
-        ]
-        self._move_btns: list[QPushButton] = []
-        for i, (sym, tip, axis, step) in enumerate(move_specs):
-            if i % 2 == 0 and i > 0:
-                h.addSpacing(4)
-            btn = QPushButton(sym)
-            btn.setFixedHeight(28)
-            btn.setFixedWidth(46)
-            btn.setToolTip(tip)
-            btn.setStyleSheet(small_btn_qss)
-            btn.setEnabled(False)
-            btn.clicked.connect(lambda _, a=axis, s=step: self._move_plane(a, s))
-            h.addWidget(btn)
-            self._move_btns.append(btn)
-
-        h.addSpacing(8)
-
-        rotate_specs = [
-            ("⟲R", "Roll clockwise (1°)", "roll", -_ROTATE_STEP_DEG),
-            ("R⟳", "Roll counter-clockwise (1°)", "roll", +_ROTATE_STEP_DEG),
-            ("⟲DV", "Tilt DV negative (1°)", "tilt_dv", -_ROTATE_STEP_DEG),
-            ("DV⟳", "Tilt DV positive (1°)", "tilt_dv", +_ROTATE_STEP_DEG),
-            ("⟲AP", "Tilt AP negative (1°)", "tilt_ap", -_ROTATE_STEP_DEG),
-            ("AP⟳", "Tilt AP positive (1°)", "tilt_ap", +_ROTATE_STEP_DEG),
-        ]
-        self._rotate_btns: list[QPushButton] = []
-        for i, (sym, tip, axis, step) in enumerate(rotate_specs):
-            if i % 2 == 0 and i > 0:
-                h.addSpacing(4)
-            btn = QPushButton(sym)
-            btn.setFixedHeight(28)
-            btn.setFixedWidth(48)
-            btn.setToolTip(tip)
-            btn.setStyleSheet(small_btn_qss)
-            btn.setEnabled(False)
-            btn.clicked.connect(lambda _, a=axis, s=step: self._rotate_plane(a, s))
-            h.addWidget(btn)
-            self._rotate_btns.append(btn)
-
-        h.addStretch()
-
         plain_btn_qss = (
             "QPushButton { border-radius: 4px; padding: 2px 10px; color: #ccc;"
             " background: #383838; border: 1px solid #555; }"
@@ -194,13 +128,98 @@ class AlignView(QWidget):
             "QPushButton:disabled { color: #555; background: #2a2a2a; border-color: #333; }"
         )
 
+        tb = QToolBar()
+        tb.setMovable(False)
+        tb.setFloatable(False)
+        tb.setIconSize(tb.iconSize())  # no-op, but ensures size-hint is computed
+        tb.setStyleSheet(
+            "QToolBar { background: #252525; spacing: 4px; padding: 2px 6px;"
+            " border: none; }"
+            "QToolBar::separator { background: #444; width: 1px;"
+            " margin: 6px 4px; }"
+        )
+        # Let the toolbar shrink horizontally; Qt will surface a `>>` extension
+        # button for any items that don't fit.
+        tb.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+
+        tb.addWidget(self._panel.make_outline_button())
+        tb.addSeparator()
+
+        scale_specs = [
+            ("↔+", "Wider (2%)",    1.0 / _SCALE_STEP,  1.0),
+            ("↔−", "Narrower (2%)", _SCALE_STEP,   1.0),
+            ("↕+", "Taller (2%)",   1.0,        1.0 / _SCALE_STEP),
+            ("↕−", "Shorter (2%)", 1.0,    _SCALE_STEP),
+        ]
+        self._scale_btns: list[QPushButton] = []
+        for sym, tip, su, sv in scale_specs:
+            btn = QPushButton(sym)
+            btn.setFixedHeight(28)
+            btn.setFixedWidth(32)
+            btn.setToolTip(tip)
+            btn.setStyleSheet(small_btn_qss)
+            btn.setEnabled(False)
+            btn.clicked.connect(lambda _, s=su, t=sv: self._scale_overlay(s, t))
+            tb.addWidget(btn)
+            self._scale_btns.append(btn)
+
+        tb.addSeparator()
+
+        move_specs = [
+            ("AP−", "Move posterior (AP−)", 1, -_MOVE_STEP),
+            ("AP+", "Move anterior (AP+)",  1, +_MOVE_STEP),
+            ("DV−", "Move dorsal (DV−)",    2, -_MOVE_STEP),
+            ("DV+", "Move ventral (DV+)",   2, +_MOVE_STEP),
+            ("LR−", "Move left (LR−)",      0, -_MOVE_STEP),
+            ("LR+", "Move right (LR+)",     0, +_MOVE_STEP),
+        ]
+        self._move_btns: list[QPushButton] = []
+        for i, (sym, tip, axis, step) in enumerate(move_specs):
+            if i % 2 == 0 and i > 0:
+                tb.addSeparator()
+            btn = QPushButton(sym)
+            btn.setFixedHeight(28)
+            btn.setFixedWidth(46)
+            btn.setToolTip(tip)
+            btn.setStyleSheet(small_btn_qss)
+            btn.setEnabled(False)
+            btn.clicked.connect(lambda _, a=axis, s=step: self._move_plane(a, s))
+            tb.addWidget(btn)
+            self._move_btns.append(btn)
+
+        tb.addSeparator()
+
+        rotate_specs = [
+            ("⟲R", "Roll clockwise (1°)", "roll", -_ROTATE_STEP_DEG),
+            ("R⟳", "Roll counter-clockwise (1°)", "roll", +_ROTATE_STEP_DEG),
+            ("⟲DV", "Tilt DV negative (1°)", "tilt_dv", -_ROTATE_STEP_DEG),
+            ("DV⟳", "Tilt DV positive (1°)", "tilt_dv", +_ROTATE_STEP_DEG),
+            ("⟲AP", "Tilt AP negative (1°)", "tilt_ap", -_ROTATE_STEP_DEG),
+            ("AP⟳", "Tilt AP positive (1°)", "tilt_ap", +_ROTATE_STEP_DEG),
+        ]
+        self._rotate_btns: list[QPushButton] = []
+        for i, (sym, tip, axis, step) in enumerate(rotate_specs):
+            if i % 2 == 0 and i > 0:
+                tb.addSeparator()
+            btn = QPushButton(sym)
+            btn.setFixedHeight(28)
+            btn.setFixedWidth(48)
+            btn.setToolTip(tip)
+            btn.setStyleSheet(small_btn_qss)
+            btn.setEnabled(False)
+            btn.clicked.connect(lambda _, a=axis, s=step: self._rotate_plane(a, s))
+            tb.addWidget(btn)
+            self._rotate_btns.append(btn)
+
+        tb.addSeparator()
+
         self._deepslice_btn = QPushButton("Run DeepSlice")
         self._deepslice_btn.setFixedHeight(28)
         self._deepslice_btn.setToolTip("Generate editable affine suggestions with DeepSlice")
         self._deepslice_btn.setStyleSheet(plain_btn_qss)
         self._deepslice_btn.setEnabled(False)
         self._deepslice_btn.clicked.connect(self.deepslice_requested)
-        h.addWidget(self._deepslice_btn)
+        tb.addWidget(self._deepslice_btn)
 
         self._default_btn = QPushButton("Default proposal")
         self._default_btn.setFixedHeight(28)
@@ -208,7 +227,7 @@ class AlignView(QWidget):
         self._default_btn.setStyleSheet(plain_btn_qss)
         self._default_btn.setEnabled(False)
         self._default_btn.clicked.connect(self.default_proposal_requested)
-        h.addWidget(self._default_btn)
+        tb.addWidget(self._default_btn)
 
         self._clear_all_btn = QPushButton("Clear all")
         self._clear_all_btn.setFixedHeight(28)
@@ -218,7 +237,7 @@ class AlignView(QWidget):
         self._clear_all_btn.setStyleSheet(red_btn_qss)
         self._clear_all_btn.setEnabled(False)
         self._clear_all_btn.clicked.connect(self.clear_all_alignments_requested)
-        h.addWidget(self._clear_all_btn)
+        tb.addWidget(self._clear_all_btn)
 
         self._reverse_btn = QPushButton("Reverse proposal")
         self._reverse_btn.setFixedHeight(28)
@@ -228,7 +247,7 @@ class AlignView(QWidget):
         self._reverse_btn.setStyleSheet(plain_btn_qss)
         self._reverse_btn.setEnabled(False)
         self._reverse_btn.clicked.connect(self.reverse_requested)
-        h.addWidget(self._reverse_btn)
+        tb.addWidget(self._reverse_btn)
 
         self._store_btn = QPushButton("Store")
         self._store_btn.setFixedHeight(28)
@@ -236,7 +255,7 @@ class AlignView(QWidget):
         self._store_btn.setStyleSheet(green_btn_qss)
         self._store_btn.setEnabled(False)
         self._store_btn.clicked.connect(self._store_anchoring)
-        h.addWidget(self._store_btn)
+        tb.addWidget(self._store_btn)
 
         self._revert_btn = QPushButton("Revert")
         self._revert_btn.setFixedHeight(28)
@@ -244,7 +263,7 @@ class AlignView(QWidget):
         self._revert_btn.setStyleSheet(yellow_btn_qss)
         self._revert_btn.setEnabled(False)
         self._revert_btn.clicked.connect(self._revert_to_stored)
-        h.addWidget(self._revert_btn)
+        tb.addWidget(self._revert_btn)
 
         self._clear_btn = QPushButton("Clear")
         self._clear_btn.setFixedHeight(28)
@@ -252,10 +271,19 @@ class AlignView(QWidget):
         self._clear_btn.setStyleSheet(red_btn_qss)
         self._clear_btn.setEnabled(False)
         self._clear_btn.clicked.connect(self._clear_anchoring)
-        h.addWidget(self._clear_btn)
+        tb.addWidget(self._clear_btn)
 
-        h.addWidget(self._panel.make_status_label())
-        return bar
+        # Wrap the toolbar + a status label so the filename stays visible even
+        # when buttons overflow into the extension popup.
+        container = QWidget()
+        container.setFixedHeight(36)
+        container.setStyleSheet("background: #252525;")
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(0, 0, 8, 0)
+        layout.setSpacing(0)
+        layout.addWidget(tb, stretch=1)
+        layout.addWidget(self._panel.make_status_label())
+        return container
 
     def _wire_panel(self) -> None:
         self._panel.overlay_panned.connect(self._on_overlay_panned)
