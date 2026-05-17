@@ -521,8 +521,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Cannot save project", str(exc))
 
     def _save_prep_mask_before_transition(self) -> None:
-        if not self._prep.save_current_mask_if_dirty():
-            return
+        self._prep.save_current_mask_if_dirty()
         if self._state.project is not None and self._state.project_path is not None:
             self._write_project(self._state.project_path)
 
@@ -765,6 +764,8 @@ class MainWindow(QMainWindow):
 
     def _on_prep_modified(self) -> None:
         self._overview.refresh_row(self._state.section_index)
+        if self._state.project is not None and self._state.project_path is not None:
+            self._write_project(self._state.project_path)
 
     def _batch_autodetect_masks(self) -> None:
         project = self._state.project
