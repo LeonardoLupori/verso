@@ -299,6 +299,7 @@ class AlignView(QWidget):
         """Reparent the shared panel into this view."""
         self._panel_slot.layout().addWidget(self._panel)
         self._panel.canvas.set_interaction_mode("align")
+        self._panel.canvas.clear_control_points()
         # Align view has no overlay post-processing
         self._panel.overlay_post_processor = None
         self._panel.cursor_to_atlas_mapper = None

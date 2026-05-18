@@ -32,6 +32,8 @@ class WarpView(QWidget):
         super().__init__(parent)
         self._panel = panel
 
+        self._active = False
+
         # CP interaction state
         self._cp_hovered: int = -1
         self._cp_dragging: int = -1
@@ -115,6 +117,7 @@ class WarpView(QWidget):
 
     def activate(self) -> None:
         """Reparent the shared panel into this view and install warp hooks."""
+        self._active = True
         self._panel_slot.layout().addWidget(self._panel)
         self._panel.canvas.set_interaction_mode("warp")
         self._panel.overlay_post_processor = self._warp_overlay
@@ -126,6 +129,7 @@ class WarpView(QWidget):
 
     def deactivate(self) -> None:
         """Release warp hooks so other views see a clean panel."""
+        self._active = False
         self._panel.overlay_post_processor = None
         self._panel.cursor_to_atlas_mapper = None
         self._warp_timer.stop()
@@ -142,7 +146,7 @@ class WarpView(QWidget):
         self._cp_size = size
         self._cp_shape = shape
         self._cp_color = color
-        if self._panel.overlay_post_processor is self._warp_overlay:
+        if self._active:
             self._draw_control_points()
 
     # ------------------------------------------------------------------
@@ -186,10 +190,14 @@ class WarpView(QWidget):
         self._update_clear_cps_enabled()
 
     def _on_overlay_updated(self, _anchoring, _display_w, _display_h) -> None:
+        if not self._active:
+            return
         self._draw_control_points()
         self._update_clear_cps_enabled()
 
     def _on_canvas_mouse_moved(self, x: float, y: float) -> None:
+        if not self._active:
+            return
         if self._cp_dragging >= 0:
             return
         new_hov = self._pick_cp(x, y)
