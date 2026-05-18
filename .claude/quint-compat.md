@@ -67,10 +67,18 @@ atlas_voxel = [ox, oy, oz] + s * [ux, uy, uz] + t * [vx, vy, vz]
 - `(ux, uy, uz)` — u-vector: atlas displacement across the full section width (s: 0→1)
 - `(vx, vy, vz)` — v-vector: atlas displacement across the full section height (t: 0→1)
 
-Atlas coordinate convention (Allen Mouse 25µm):
-- x axis: posterior → anterior (AP axis); 0 = most posterior
-- y axis: inferior → superior (DV axis)
-- z axis: left → right (ML axis)
+Atlas coordinate convention (Allen Mouse 25µm) — QuickNII voxel space:
+- x (component 0): left → right (LR axis); 0 = leftmost, 455 = rightmost
+- y (component 1): posterior → anterior (AP axis); 0 = most posterior, 527 = most anterior
+- z (component 2): inferior → superior (DV axis); 0 = most inferior
+
+VERSO internal convention (BrainGlobe) uses the same component ordering [LR, AP, DV]
+but with the AP and DV axes inverted:
+- component 1: 0 = most anterior (opposite to QuickNII y)
+- component 2: 0 = most dorsal (opposite to QuickNII z)
+
+`_to_quicknii_convention()` converts between the two: `[LR, AP_bg, DV_bg] → [LR, AP_max−AP_bg, DV_max−DV_bg]`.
+The function is self-inverse so it also converts QuickNII → BrainGlobe.
 
 ### QuickNII interpolation (internal)
 

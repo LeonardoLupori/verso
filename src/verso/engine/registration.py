@@ -92,7 +92,7 @@ def atlas_to_normalized(
 def set_ap_position(
     anchoring: list[float],
     ap_voxel: float,
-    ap_axis: int = 2,
+    ap_axis: int = 1,
 ) -> list[float]:
     """Return a new anchoring with the origin shifted to ``ap_voxel`` along ``ap_axis``.
 
@@ -103,8 +103,8 @@ def set_ap_position(
     Args:
         anchoring: Current 9-element anchoring vector.
         ap_voxel: New position along the AP axis in atlas voxel units.
-        ap_axis: Index of the AP axis in atlas voxel space (default 2 for Allen
-            Mouse Atlas where the z-axis is AP).
+        ap_axis: Index of the AP axis in atlas voxel space (default 1 — the AP
+            component in VERSO's internal [LR, AP, DV] convention).
 
     Returns:
         New 9-element anchoring vector.
@@ -124,7 +124,7 @@ def anchoring_center(anchoring: list[float]) -> np.ndarray:
 def set_ap_center_position(
     anchoring: list[float],
     ap_voxel: float,
-    ap_axis: int = 2,
+    ap_axis: int = 1,
 ) -> list[float]:
     """Return a new anchoring whose plane center lies at ``ap_voxel``.
 

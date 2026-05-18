@@ -60,6 +60,15 @@ _VA_TARGET_RESOLUTION: dict[str, list[float]] = {
 }
 
 
+# BrainGlobe annotation volume shape (AP, DV, LR) for known atlases — used to
+# apply the inverse QuickNII→BrainGlobe convention conversion on load.
+_BG_ATLAS_SHAPE: dict[str, tuple[int, int, int]] = {
+    "allen_mouse_25um": (528, 320, 456),
+    "allen_mouse_10um": (1320, 800, 1140),
+    "allen_mouse_50um": (264, 160, 228),
+}
+
+
 def _visualign_target(atlas_name: str) -> tuple[str, list[float] | None]:
     """Return (VisuAlign target string, target-resolution or None) for an atlas."""
     va_name = _BG_TO_VA_TARGET.get(atlas_name, atlas_name)
@@ -190,16 +199,24 @@ def load_quicknii(path: Path, atlas_name: str = "allen_mouse_25um") -> Project:
     # QuickNII/VisuAlign use "slices"; accept "sections" for forward compatibility
     raw_sections = data.get("slices") or data.get("sections", [])
 
+    # QuickNII files store anchoring in QuickNII convention; convert to the
+    # BrainGlobe (VERSO internal) convention so atlas slicing is correct.
+    # _to_quicknii_convention is self-inverse, so it also converts QN→BG.
+    bg_shape = _BG_ATLAS_SHAPE.get(atlas_name)
+
     sections: list[Section] = []
     for i, raw in enumerate(raw_sections):
         parsed = _parse_section_quicknii(raw)
+        anchoring = parsed["anchoring"]
+        if bg_shape is not None and any(anchoring):
+            anchoring = _to_quicknii_convention(anchoring, bg_shape)
         status = (
             AlignmentStatus.COMPLETE
-            if any(parsed["anchoring"])
+            if any(anchoring)
             else AlignmentStatus.NOT_STARTED
         )
         alignment = Alignment(
-            anchoring=parsed["anchoring"],
+            anchoring=anchoring,
             status=status,
         )
         section = Section(
@@ -495,9 +512,12 @@ def save_quicknii(
     Args:
         project: VERSO project to export.
         path: Destination ``*.json`` path.
-        atlas_shape: ``(AP, DV, LR)`` voxel dimensions used for the DV-convention
-            conversion. Pass *None* to skip conversion (non-standard output).
+        atlas_shape: ``(AP, DV, LR)`` voxel dimensions used for the BrainGlobe→
+            QuickNII axis convention conversion. When *None*, inferred from the
+            project atlas name using the built-in lookup table.
     """
+    if atlas_shape is None and project.atlas:
+        atlas_shape = _BG_ATLAS_SHAPE.get(project.atlas.name)
     from verso.engine.registration import _original_space_anchoring
     slices_out: list[dict[str, Any]] = []
     for section in project.sections:
@@ -522,6 +542,94 @@ def save_quicknii(
     Path(path).write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
+def export_brainglobe_atlas_for_visualign(
+    atlas_name: str,
+    output_dir: Path,
+) -> Path:
+    """Export a BrainGlobe atlas as a VisuAlign-compatible ``.cutlas`` directory.
+
+    Creates ``{output_dir}/{atlas_name}.cutlas/`` containing:
+
+    - ``labels.nii.gz`` — annotation volume in QuickNII/VisuAlign axis order
+    - ``labels.txt`` — ITK-SNAP region labels with RGB colours
+
+    The atlas volume is stored with axes ``(LR=x, AP=y, DV=z)`` as expected
+    by VisuAlign, with AP and DV flipped to match QuickNII indexing convention
+    (AP 0 = posterior, DV 0 = inferior) but the **LR axis is not flipped**
+    (index 0 = right hemisphere).  This is consistent with the anchoring
+    coordinates VERSO exports: ``anchoring[0] = LR_brainglobe`` with 0 = right.
+
+    Place the generated ``.cutlas`` folder in VisuAlign's atlas directory.
+    When the target name in the exported JSON matches the folder name,
+    VisuAlign will load the BrainGlobe atlas, giving an exact match with
+    VERSO's atlas overlay.
+
+    Args:
+        atlas_name: BrainGlobe atlas identifier (e.g. ``"allen_mouse_25um"``).
+        output_dir: Directory that will receive the ``.cutlas`` folder.
+
+    Returns:
+        Path to the generated ``{atlas_name}.cutlas`` directory.
+    """
+    import gzip
+    import struct
+
+    import numpy as np
+    from brainglobe_atlasapi import BrainGlobeAtlas
+
+    output_dir = Path(output_dir)
+    bg = BrainGlobeAtlas(atlas_name, check_latest=False)
+    annotation = bg.annotation   # (AP, DV, LR) uint32
+    structures = bg.structures   # {id: {"name": ..., "rgb_triplet": [r, g, b], ...}}
+
+    # Flip AP (0→posterior) and DV (0→inferior); preserve LR direction
+    # (0→right, matching BrainGlobe "asr" convention and VERSO's exported
+    # anchoring where anchoring[0] = LR_bg with 0 = right hemisphere).
+    # Reorder from BrainGlobe (AP, DV, LR) to VisuAlign (LR, AP, DV).
+    qn_volume = np.ascontiguousarray(
+        np.transpose(annotation[::-1, ::-1, :], (2, 0, 1)),
+        dtype=np.uint32,
+    )
+
+    cutlas_dir = output_dir / f"{atlas_name}.cutlas"
+    cutlas_dir.mkdir(parents=True, exist_ok=True)
+
+    # --- labels.nii.gz ---
+    x, y, z = qn_volume.shape
+    hdr = bytearray(348)
+    struct.pack_into('<i', hdr, 0, 348)       # sizeof_hdr
+    struct.pack_into('<h', hdr, 40, 3)        # dim[0] = ndims
+    struct.pack_into('<h', hdr, 42, x)        # dim[1] = LR
+    struct.pack_into('<h', hdr, 44, y)        # dim[2] = AP
+    struct.pack_into('<h', hdr, 46, z)        # dim[3] = DV
+    struct.pack_into('<h', hdr, 70, 768)      # datatype = uint32
+    struct.pack_into('<h', hdr, 72, 32)       # bitpix
+    struct.pack_into('<f', hdr, 76, 1.0)      # pixdim[0]
+    struct.pack_into('<f', hdr, 108, 352.0)   # vox_offset (348 header + 4 pad)
+    hdr[344:348] = b'n+1\x00'                 # NIfTI-1 magic
+    with gzip.open(cutlas_dir / "labels.nii.gz", 'wb', compresslevel=6) as f:
+        f.write(bytes(hdr))
+        f.write(b'\x00' * 4)                  # padding to reach byte offset 352
+        f.write(qn_volume.tobytes())
+
+    # --- labels.txt ---
+    txt_lines = [
+        "################################################\n",
+        "# ITK-SnAP Label Description File\n",
+        "# File format:\n",
+        "# IDX   -R-  -G-  -B-  -A--  VIS MSH  LABEL\n",
+        "################################################\n",
+        '    0     0    0    0        0  0  0    "Clear Label"\n',
+    ]
+    for label_id, info in sorted(structures.items()):
+        r, g, b = info.get("rgb_triplet", [128, 128, 128])
+        name = str(info.get("name", f"Region {label_id}")).replace('"', "'")
+        txt_lines.append(f'{label_id}  {int(r)}  {int(g)}  {int(b)}  1  1  1    "{name}"\n')
+    (cutlas_dir / "labels.txt").write_text("".join(txt_lines), encoding="utf-8")
+
+    return cutlas_dir
+
+
 def save_visualign(
     project: Project,
     path: Path,
@@ -536,9 +644,12 @@ def save_visualign(
     Args:
         project: VERSO project to export.
         path: Destination ``*.json`` path.
-        atlas_shape: ``(AP, DV, LR)`` voxel dimensions used for the DV-convention
-            conversion. Pass *None* to skip conversion (non-standard output).
+        atlas_shape: ``(AP, DV, LR)`` voxel dimensions used for the BrainGlobe→
+            QuickNII axis convention conversion. When *None*, inferred from the
+            project atlas name using the built-in lookup table.
     """
+    if atlas_shape is None and project.atlas:
+        atlas_shape = _BG_ATLAS_SHAPE.get(project.atlas.name)
     from verso.engine.registration import _original_space_anchoring
     slices_out: list[dict[str, Any]] = []
     for section in project.sections:

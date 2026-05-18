@@ -26,6 +26,7 @@ from verso.engine.io.image_io import (
     registration_dimensions,
 )
 from verso.engine.io.quint_io import (
+    export_brainglobe_atlas_for_visualign,
     load_deepslice,
     load_quicknii,
     load_visualign,
@@ -106,6 +107,7 @@ __all__ = [
     "find_atlas_position",
     "warp_overlay",
     # I/O
+    "export_brainglobe_atlas_for_visualign",
     "load_deepslice",
     "load_quicknii",
     "load_visualign",
