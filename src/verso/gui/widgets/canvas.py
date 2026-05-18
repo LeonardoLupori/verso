@@ -294,7 +294,10 @@ class ImageCanvas(QWidget):
             return
 
         symbol = self._CP_SYMBOLS.get(cp_shape, "o")
-        r, g, b = self._CP_COLOR_RGB.get(cp_color, (255, 80, 0))
+        if cp_color.startswith("#") and len(cp_color) == 7:
+            r, g, b = int(cp_color[1:3], 16), int(cp_color[3:5], 16), int(cp_color[5:7], 16)
+        else:
+            r, g, b = self._CP_COLOR_RGB.get(cp_color, (255, 80, 0))
         hov_size = cp_size + 4
 
         # Displacement lines (src → dst)

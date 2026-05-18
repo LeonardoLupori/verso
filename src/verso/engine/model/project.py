@@ -120,6 +120,16 @@ class Section:
         )
 
 
+_LEGACY_CP_COLORS: dict[str, str] = {
+    "Orange": "#ff6000",
+    "Cyan": "#00ffff",
+    "Yellow": "#fff500",
+    "Red": "#ff2020",
+    "White": "#ffffff",
+    "Magenta": "#ff00ff",
+}
+
+
 @dataclass
 class Project:
     """Top-level project container."""
@@ -130,7 +140,7 @@ class Project:
     channels: list[ChannelSpec] = field(default_factory=list)
     cp_size: int = 10
     cp_shape: str = "Cross"
-    cp_color: str = "Yellow"
+    cp_color: str = "#fff500"
     version: str = "1.0"
 
     def to_dict(self) -> dict[str, Any]:
@@ -151,6 +161,8 @@ class Project:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Project:
+        raw_color = str(d.get("cp_color", "#fff500"))
+        cp_color = raw_color if raw_color.startswith("#") else _LEGACY_CP_COLORS.get(raw_color, "#fff500")
         return cls(
             name=d["name"],
             atlas=AtlasRef.from_dict(d["atlas"]),
@@ -158,7 +170,7 @@ class Project:
             channels=[ChannelSpec.from_dict(c) for c in d.get("channels", [])],
             cp_size=int(d.get("cp_size", 10)),
             cp_shape=str(d.get("cp_shape", "Cross")),
-            cp_color=str(d.get("cp_color", "Yellow")),
+            cp_color=cp_color,
             version=d.get("version", "1.0"),
         )
 

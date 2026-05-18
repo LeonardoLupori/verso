@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pyqtgraph as pg
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QIcon, QPixmap
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QCheckBox,
     QColorDialog,
@@ -30,21 +30,6 @@ from PyQt6.QtWidgets import (
 )
 
 from verso.engine.model.project import ChannelSpec, Section
-
-_MASK_COLORS: dict[str, tuple[int, int, int]] = {
-    "White": (255, 255, 255),
-    "Cyan": (0, 210, 210),
-    "Yellow": (255, 230, 0),
-    "Magenta": (220, 0, 220),
-    "Green": (80, 220, 80),
-    "Orange": (255, 140, 0),
-}
-
-
-def _color_swatch_icon(rgb: tuple[int, int, int]) -> QIcon:
-    pixmap = QPixmap(18, 18)
-    pixmap.fill(QColor(*rgb))
-    return QIcon(pixmap)
 
 
 class _ChannelRow(QWidget):
@@ -372,24 +357,15 @@ class _PrepProperties(QWidget):
         opacity_row.addWidget(self._opacity_value)
         mask_layout.addLayout(opacity_row)
 
-        self._mask_color_combo = QComboBox()
-        for name, rgb in _MASK_COLORS.items():
-            self._mask_color_combo.addItem(_color_swatch_icon(rgb), "", rgb)
-            self._mask_color_combo.setItemData(
-                self._mask_color_combo.count() - 1,
-                name,
-                Qt.ItemDataRole.ToolTipRole,
-            )
-        self._mask_color_combo.currentIndexChanged.connect(self._emit_mask_color)
-        self._mask_color_combo.setFixedSize(56, 26)
-        self._mask_color_combo.setIconSize(QPixmap(18, 18).size())
-        self._mask_color_combo.setStyleSheet(
-            "QComboBox { padding-left: 4px; padding-right: 16px; }"
-            "QComboBox::drop-down { width: 16px; }"
-        )
+        self._mask_color_rgb: tuple[int, int, int] = (255, 255, 255)
+        self._mask_color_btn = QPushButton()
+        self._mask_color_btn.setFixedSize(20, 20)
+        self._mask_color_btn.setToolTip("Pick mask color")
+        self._mask_color_btn.clicked.connect(self._on_mask_color)
+        self._refresh_mask_color_btn()
         color_row = QHBoxLayout()
         color_row.addWidget(QLabel("Color"))
-        color_row.addWidget(self._mask_color_combo)
+        color_row.addWidget(self._mask_color_btn)
         color_row.addStretch()
         mask_layout.addLayout(color_row)
         layout.addWidget(mask_box)
@@ -463,8 +439,20 @@ class _PrepProperties(QWidget):
         self._opacity_value.setText(f"{opacity:.2f}")
         self.mask_opacity_changed.emit(opacity)
 
-    def _emit_mask_color(self) -> None:
-        self.mask_color_changed.emit(self._mask_color_combo.currentData())
+    def _refresh_mask_color_btn(self) -> None:
+        r, g, b = self._mask_color_rgb
+        self._mask_color_btn.setStyleSheet(
+            f"background-color: rgb({r}, {g}, {b}); border: 1px solid #555;"
+            " border-radius: 2px;"
+        )
+
+    def _on_mask_color(self) -> None:
+        current = QColor(*self._mask_color_rgb)
+        color = QColorDialog.getColor(current, self, "Mask color")
+        if color.isValid():
+            self._mask_color_rgb = (color.red(), color.green(), color.blue())
+            self._refresh_mask_color_btn()
+            self.mask_color_changed.emit(self._mask_color_rgb)
 
     def _section_dimensions(self, section: Section) -> str:
         try:
@@ -477,14 +465,6 @@ class _PrepProperties(QWidget):
 
 
 _CP_SHAPES = ["Circle", "Cross", "Square", "Diamond"]
-_CP_COLORS: dict[str, tuple[int, int, int]] = {
-    "Orange": (255, 96, 0),
-    "Cyan": (0, 255, 255),
-    "Yellow": (255, 245, 0),
-    "Red": (255, 32, 32),
-    "White": (255, 255, 255),
-    "Magenta": (255, 0, 255),
-}
 
 
 class _AlignProperties(QWidget):
@@ -599,28 +579,13 @@ class _AlignProperties(QWidget):
         self._cp_shape_combo.currentTextChanged.connect(self._emit_cp_style)
         cp_form.addRow("Shape:", self._cp_shape_combo)
 
-        self._cp_color_combo = QComboBox()
-        for name, rgb in _CP_COLORS.items():
-            self._cp_color_combo.addItem(_color_swatch_icon(rgb), "", name)
-            self._cp_color_combo.setItemData(
-                self._cp_color_combo.count() - 1,
-                name,
-                Qt.ItemDataRole.ToolTipRole,
-            )
-        self._cp_color_combo.setCurrentIndex(
-            next(
-                (i for i, k in enumerate(_CP_COLORS) if k == "Yellow"),
-                0,
-            )
-        )
-        self._cp_color_combo.currentIndexChanged.connect(self._emit_cp_style)
-        self._cp_color_combo.setFixedSize(56, 26)
-        self._cp_color_combo.setIconSize(QPixmap(18, 18).size())
-        self._cp_color_combo.setStyleSheet(
-            "QComboBox { padding-left: 4px; padding-right: 16px; }"
-            "QComboBox::drop-down { width: 16px; }"
-        )
-        cp_form.addRow("Color:", self._cp_color_combo)
+        self._cp_color_rgb: tuple[int, int, int] = (255, 245, 0)
+        self._cp_color_btn = QPushButton()
+        self._cp_color_btn.setFixedSize(20, 20)
+        self._cp_color_btn.setToolTip("Pick control point color")
+        self._cp_color_btn.clicked.connect(self._on_cp_color)
+        self._refresh_cp_color_btn()
+        cp_form.addRow("Color:", self._cp_color_btn)
 
         warp_layout.addWidget(cp_box)
         layout.addWidget(self._warp_widget)
@@ -641,23 +606,41 @@ class _AlignProperties(QWidget):
 
     def apply_cp_style(self, size: int, shape: str, color: str) -> None:
         """Set CP style widgets silently (no signal emitted)."""
-        for widget in (self._cp_size_spin, self._cp_shape_combo, self._cp_color_combo):
+        for widget in (self._cp_size_spin, self._cp_shape_combo):
             widget.blockSignals(True)
         self._cp_size_spin.setValue(size)
         self._cp_shape_combo.setCurrentText(shape)
-        color_index = next(
-            (i for i, k in enumerate(_CP_COLORS) if k == color),
-            self._cp_color_combo.currentIndex(),
-        )
-        self._cp_color_combo.setCurrentIndex(color_index)
-        for widget in (self._cp_size_spin, self._cp_shape_combo, self._cp_color_combo):
+        if color.startswith("#") and len(color) == 7:
+            self._cp_color_rgb = (
+                int(color[1:3], 16),
+                int(color[3:5], 16),
+                int(color[5:7], 16),
+            )
+        self._refresh_cp_color_btn()
+        for widget in (self._cp_size_spin, self._cp_shape_combo):
             widget.blockSignals(False)
 
+    def _refresh_cp_color_btn(self) -> None:
+        r, g, b = self._cp_color_rgb
+        self._cp_color_btn.setStyleSheet(
+            f"background-color: rgb({r}, {g}, {b}); border: 1px solid #555;"
+            " border-radius: 2px;"
+        )
+
+    def _on_cp_color(self) -> None:
+        current = QColor(*self._cp_color_rgb)
+        color = QColorDialog.getColor(current, self, "Control point color")
+        if color.isValid():
+            self._cp_color_rgb = (color.red(), color.green(), color.blue())
+            self._refresh_cp_color_btn()
+            self._emit_cp_style()
+
     def _emit_cp_style(self) -> None:
+        r, g, b = self._cp_color_rgb
         self.cp_style_changed.emit(
             self._cp_size_spin.value(),
             self._cp_shape_combo.currentText(),
-            self._cp_color_combo.currentData(),
+            f"#{r:02x}{g:02x}{b:02x}",
         )
 
     def update_section(self, section: Section | None) -> None:
