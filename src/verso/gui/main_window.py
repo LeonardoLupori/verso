@@ -1322,8 +1322,9 @@ class MainWindow(QMainWindow):
         self._save_prep_mask_before_transition()
         if self._state.project is None:
             return
+        name = self._state.project.name
         path, _ = QFileDialog.getSaveFileName(
-            self, "Export QuickNII XML", "quicknii.xml", "XML files (*.xml)"
+            self, "Export QuickNII XML", f"{name}-quicknii.xml", "XML files (*.xml)"
         )
         if path:
             from verso.engine.io.quint_io import save_quicknii_xml
@@ -1336,8 +1337,9 @@ class MainWindow(QMainWindow):
         if self._state.project is None:
             return
         from PyQt6.QtWidgets import QFileDialog
+        name = self._state.project.name
         path, _ = QFileDialog.getSaveFileName(
-            self, "Export QuickNII JSON", "quicknii.json", "JSON files (*.json)"
+            self, "Export QuickNII JSON", f"{name}-quicknii.json", "JSON files (*.json)"
         )
         if path:
             atlas_shape = self._state.atlas.shape if self._state.atlas else None
@@ -1350,8 +1352,9 @@ class MainWindow(QMainWindow):
         if self._state.project is None:
             return
         from PyQt6.QtWidgets import QFileDialog
+        name = self._state.project.name
         path, _ = QFileDialog.getSaveFileName(
-            self, "Export VisuAlign JSON", "visualign.json", "JSON files (*.json)"
+            self, "Export VisuAlign JSON", f"{name}-visualign.json", "JSON files (*.json)"
         )
         if path:
             atlas_shape = self._state.atlas.shape if self._state.atlas else None
