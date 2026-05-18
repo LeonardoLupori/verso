@@ -31,7 +31,7 @@ This is the single most important I/O compatibility requirement.
 {
   "name": "My Experiment",
   "target": "allen_mouse_25um",
-  "sections": [ ... ]
+  "slices": [ ... ]
 }
 ```
 

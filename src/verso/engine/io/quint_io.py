@@ -17,9 +17,9 @@ VisuAlign extends each section with a ``"markers"`` array:
     }
 
 Marker coordinates:
-    x, y  — normalised section position in [0, 1]²  (left=0, top=0)
-    dx, dy — displacement from (x, y) to the matching landmark on the
-              histological section, also in normalised section space.
+    x, y  — normalised atlas overlay position in [0, 1]²  (left=0, top=0)
+    dx, dy — displacement from atlas position (x, y) to the matching
+              position on the histological section (dst − src).
 
     In warp terms:
         src = (x, y)           — position on the atlas overlay
@@ -39,6 +39,35 @@ from verso.engine.model.alignment import Alignment, AlignmentStatus, ControlPoin
 from verso.engine.model.project import AtlasRef, Project, Section
 
 # ---------------------------------------------------------------------------
+# Atlas name mapping: brainglobe → VisuAlign target identifiers
+# ---------------------------------------------------------------------------
+
+# VisuAlign identifies atlases by the .cutlas bundle filename shipped with it.
+# This maps BrainGlobe atlas names to those identifiers so exported JSON files
+# can be opened by VisuAlign without a "labels.txt not found" error.
+_BG_TO_VA_TARGET: dict[str, str] = {
+    "allen_mouse_25um": "ABA_Mouse_CCFv3_2017_25um.cutlas",
+    "allen_mouse_10um": "ABA_Mouse_CCFv3_2017_10um.cutlas",
+    "allen_mouse_50um": "ABA_Mouse_CCFv3_2017_50um.cutlas",
+}
+
+# Volume dimensions [LR, AP, DV] voxels for each VisuAlign atlas target —
+# written as "target-resolution" in the JSON (mirrors the working CC4B example).
+_VA_TARGET_RESOLUTION: dict[str, list[float]] = {
+    "ABA_Mouse_CCFv3_2017_25um.cutlas": [456.0, 528.0, 320.0],
+    "ABA_Mouse_CCFv3_2017_10um.cutlas": [1140.0, 1320.0, 800.0],
+    "ABA_Mouse_CCFv3_2017_50um.cutlas": [228.0, 264.0, 160.0],
+}
+
+
+def _visualign_target(atlas_name: str) -> tuple[str, list[float] | None]:
+    """Return (VisuAlign target string, target-resolution or None) for an atlas."""
+    va_name = _BG_TO_VA_TARGET.get(atlas_name, atlas_name)
+    resolution = _VA_TARGET_RESOLUTION.get(va_name)
+    return va_name, resolution
+
+
+# ---------------------------------------------------------------------------
 # Low-level format helpers
 # ---------------------------------------------------------------------------
 
@@ -52,55 +81,69 @@ def _parse_section_quicknii(raw: dict[str, Any]) -> dict[str, Any]:
 
 
 def _markers_to_control_points(
-    markers: list[dict[str, float]],
+    markers: list,
+    width: int,
+    height: int,
 ) -> list[ControlPoint]:
-    """Convert VisuAlign normalised markers to VERSO control points.
+    """Convert VisuAlign pixel-coordinate markers to VERSO control points.
 
-    VisuAlign marker format (normalised [0, 1]):
-        x, y   — atlas overlay position (src in VERSO terms)
-        dx, dy — displacement to matching section position: dst = (x+dx, y+dy)
+    VisuAlign marker format: each marker is a 4-element array
+        [src_x_px, src_y_px, dst_x_px, dst_y_px]
+    where coordinates are in image pixels at the working resolution.
 
-    VERSO ControlPoint stores both src and dst as normalised [0, 1] coords,
-    so this is a direct pass-through with no scaling.
+    Also accepts the legacy VERSO dict format ``{"x", "y", "dx", "dy"}``
+    in normalised coords for backward compatibility when loading old exports.
 
     Args:
-        markers: List of ``{"x", "y", "dx", "dy"}`` dicts in normalised coords.
+        markers: List of 4-element arrays or legacy dicts.
+        width: Section image width in pixels (for normalisation).
+        height: Section image height in pixels (for normalisation).
 
     Returns:
         List of :class:`ControlPoint` with normalised [0, 1] coordinates.
     """
     cps: list[ControlPoint] = []
     for m in markers:
-        x, y = float(m["x"]), float(m["y"])
-        dx, dy = float(m["dx"]), float(m["dy"])
-        cps.append(ControlPoint(src_x=x, src_y=y, dst_x=x + dx, dst_y=y + dy))
+        if isinstance(m, (list, tuple)) and len(m) == 4:
+            sx, sy, dx, dy = float(m[0]), float(m[1]), float(m[2]), float(m[3])
+            w = float(width) if width else 1.0
+            h = float(height) if height else 1.0
+            cps.append(ControlPoint(src_x=sx / w, src_y=sy / h, dst_x=dx / w, dst_y=dy / h))
+        elif isinstance(m, dict):
+            x, y = float(m["x"]), float(m["y"])
+            ddx, ddy = float(m["dx"]), float(m["dy"])
+            cps.append(ControlPoint(src_x=x, src_y=y, dst_x=x + ddx, dst_y=y + ddy))
     return cps
 
 
 def _control_points_to_markers(
     control_points: list[ControlPoint],
-) -> list[dict[str, float]]:
-    """Convert VERSO control points to VisuAlign normalised markers.
+    width: int,
+    height: int,
+) -> list[list[float]]:
+    """Convert VERSO control points to VisuAlign pixel-coordinate markers.
 
-    VERSO ControlPoint stores normalised [0, 1] coords; the VisuAlign format
-    stores the atlas position (x, y) and the section displacement (dx, dy).
+    VisuAlign stores markers as 4-element arrays:
+        [src_x_px, src_y_px, dst_x_px, dst_y_px]
+    in image pixels at the working resolution.
 
     Args:
         control_points: List of :class:`ControlPoint` with normalised coords.
+        width: Section image width in pixels.
+        height: Section image height in pixels.
 
     Returns:
-        List of ``{"x", "y", "dx", "dy"}`` dicts in normalised [0, 1] coords.
+        List of ``[src_x_px, src_y_px, dst_x_px, dst_y_px]`` arrays.
     """
-    markers: list[dict[str, float]] = []
+    w, h = float(width), float(height)
+    markers: list[list[float]] = []
     for cp in control_points:
-        dx = cp.dst_x - cp.src_x
-        dy = cp.dst_y - cp.src_y
-        markers.append({
-            "x": round(cp.src_x, 6),
-            "y": round(cp.src_y, 6),
-            "dx": round(dx, 6),
-            "dy": round(dy, 6),
-        })
+        markers.append([
+            round(cp.src_x * w, 6),
+            round(cp.src_y * h, 6),
+            round(cp.dst_x * w, 6),
+            round(cp.dst_y * h, 6),
+        ])
     return markers
 
 
@@ -144,7 +187,7 @@ def load_quicknii(path: Path, atlas_name: str = "allen_mouse_25um") -> Project:
     atlas_name = data.get("target", atlas_name)
     project_name = data.get("name", Path(path).stem)
 
-    # QuickNII uses "slices"; VERSO project.json uses "sections"
+    # QuickNII/VisuAlign use "slices"; accept "sections" for forward compatibility
     raw_sections = data.get("slices") or data.get("sections", [])
 
     sections: list[Section] = []
@@ -198,7 +241,9 @@ def load_visualign(
     for section, raw in zip(project.sections, raw_sections):
         markers = raw.get("markers", [])
         if markers:
-            cps = _markers_to_control_points(markers)
+            w = int(raw.get("width", 0))
+            h = int(raw.get("height", 0))
+            cps = _markers_to_control_points(markers, w, h)
             section.warp = WarpState(
                 control_points=cps,
                 status=AlignmentStatus.COMPLETE,
@@ -301,12 +346,15 @@ def _flip_control_points(
 def _export_image_filename(section) -> str:
     """Return the PNG filename for a section in a QuickNII/VisuAlign export.
 
-    QuickNII and VisuAlign do not support OME-TIFF natively, so the exported
-    filename always uses a ``.png`` extension regardless of the source format.
-    The path is relative to the exported JSON/XML, pointing into a ``thumbnails/``
-    subfolder (forward-slash separator, cross-platform).
+    Strips all compound extensions (e.g. ``.ome.tif`` → bare stem) so the
+    exported name matches the original image name with a ``.png`` extension.
+    The path is relative to the exported JSON/XML and points into a
+    ``thumbnails/`` subfolder (forward-slash separator, cross-platform).
     """
-    return f"thumbnails/{Path(section.original_path).stem}-thumb.png"
+    p = Path(section.original_path)
+    while p.suffix:
+        p = p.with_suffix("")
+    return f"thumbnails/{p.name}-thumb.png"
 
 
 def write_section_pngs(project: Project, output_dir: Path) -> None:
@@ -509,12 +557,12 @@ def save_visualign(
             cps = section.warp.control_points
             if section.preprocessing.flip_horizontal:
                 cps = _flip_control_points(cps)
-            entry["markers"] = _control_points_to_markers(cps)
+            entry["markers"] = _control_points_to_markers(cps, w, h)
         slices_out.append(entry)
 
-    data: dict[str, Any] = {
-        "name": project.name,
-        "target": project.atlas.name if project.atlas else "",
-        "slices": slices_out,
-    }
+    va_target, va_resolution = _visualign_target(project.atlas.name if project.atlas else "")
+    data: dict[str, Any] = {"name": project.name, "target": va_target}
+    if va_resolution is not None:
+        data["target-resolution"] = va_resolution
+    data["slices"] = slices_out
     Path(path).write_text(json.dumps(data, indent=2), encoding="utf-8")
