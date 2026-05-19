@@ -2,8 +2,9 @@
 
 Composes the shared :class:`SectionCanvasPanel` (created by ``MainWindow``
 and reparented into whichever view is active) and contributes the affine
-toolbar (scale / translate / rotate / store / revert / clear) plus the
-orthogonal :class:`NavigatorPanel` on the left.
+toolbar (scale / store / revert / clear / proposals) plus the
+orthogonal :class:`NavigatorPanel` on the left, which carries the per-view
+translate / rotate buttons next to each slice.
 
 Warp-mode interaction lives in a sibling view, ``WarpView``.
 """
@@ -33,10 +34,6 @@ from PyQt6.QtCore import pyqtSignal
 
 # Scale increment per button click (2 %, matching QuickNII)
 _SCALE_STEP = 1.02
-# Translation per click in atlas voxels.  One voxel matches atlas-native resolution.
-_MOVE_STEP = 1
-# In-plane rotation per click, in degrees.
-_ROTATE_STEP_DEG = 1.0
 
 
 class AlignView(QWidget):
@@ -165,54 +162,6 @@ class AlignView(QWidget):
 
         tb.addSeparator()
 
-        move_specs = [
-            ("AP−", "Move posterior (AP−)", 1, -_MOVE_STEP),
-            ("AP+", "Move anterior (AP+)",  1, +_MOVE_STEP),
-            ("DV−", "Move dorsal (DV−)",    2, -_MOVE_STEP),
-            ("DV+", "Move ventral (DV+)",   2, +_MOVE_STEP),
-            ("LR−", "Move left (LR−)",      0, -_MOVE_STEP),
-            ("LR+", "Move right (LR+)",     0, +_MOVE_STEP),
-        ]
-        self._move_btns: list[QPushButton] = []
-        for i, (sym, tip, axis, step) in enumerate(move_specs):
-            if i % 2 == 0 and i > 0:
-                tb.addSeparator()
-            btn = QPushButton(sym)
-            btn.setFixedHeight(28)
-            btn.setFixedWidth(46)
-            btn.setToolTip(tip)
-            btn.setStyleSheet(small_btn_qss)
-            btn.setEnabled(False)
-            btn.clicked.connect(lambda _, a=axis, s=step: self._move_plane(a, s))
-            tb.addWidget(btn)
-            self._move_btns.append(btn)
-
-        tb.addSeparator()
-
-        rotate_specs = [
-            ("⟲R", "Roll clockwise (1°)", "roll", -_ROTATE_STEP_DEG),
-            ("R⟳", "Roll counter-clockwise (1°)", "roll", +_ROTATE_STEP_DEG),
-            ("⟲DV", "Tilt DV negative (1°)", "tilt_dv", -_ROTATE_STEP_DEG),
-            ("DV⟳", "Tilt DV positive (1°)", "tilt_dv", +_ROTATE_STEP_DEG),
-            ("⟲AP", "Tilt AP negative (1°)", "tilt_ap", -_ROTATE_STEP_DEG),
-            ("AP⟳", "Tilt AP positive (1°)", "tilt_ap", +_ROTATE_STEP_DEG),
-        ]
-        self._rotate_btns: list[QPushButton] = []
-        for i, (sym, tip, axis, step) in enumerate(rotate_specs):
-            if i % 2 == 0 and i > 0:
-                tb.addSeparator()
-            btn = QPushButton(sym)
-            btn.setFixedHeight(28)
-            btn.setFixedWidth(48)
-            btn.setToolTip(tip)
-            btn.setStyleSheet(small_btn_qss)
-            btn.setEnabled(False)
-            btn.clicked.connect(lambda _, a=axis, s=step: self._rotate_plane(a, s))
-            tb.addWidget(btn)
-            self._rotate_btns.append(btn)
-
-        tb.addSeparator()
-
         self._deepslice_btn = QPushButton("Run DeepSlice")
         self._deepslice_btn.setFixedHeight(28)
         self._deepslice_btn.setToolTip("Generate editable affine suggestions with DeepSlice")
@@ -333,7 +282,7 @@ class AlignView(QWidget):
     # ------------------------------------------------------------------
 
     def _on_section_loaded(self, section) -> None:
-        for btn in self._scale_btns + self._move_btns + self._rotate_btns:
+        for btn in self._scale_btns:
             btn.setEnabled(section is not None)
         self._store_btn.setEnabled(section is not None)
         if section is None:
@@ -407,71 +356,6 @@ class AlignView(QWidget):
             return
         from verso.engine.registration import scale_anchoring
         new_anchoring = scale_anchoring(anchoring, scale_u, scale_v)
-        section.alignment.anchoring = new_anchoring
-        self._sync_ap_from_anchoring(new_anchoring)
-        self._panel.update_overlay()
-        self.anchoring_changed.emit(new_anchoring)
-
-    def _move_plane(self, axis: int, delta: float) -> None:
-        """Translate the cut-plane origin along one atlas axis by delta voxels.
-
-        Axis convention (atlas voxel space):
-            0 = LR (left→right), 1 = AP (posterior→anterior), 2 = DV (dorsal→ventral)
-        """
-        section = self._panel.section
-        if section is None or self._panel.raw_image is None:
-            return
-        anchoring = section.alignment.anchoring
-        if not anchoring or all(v == 0.0 for v in anchoring):
-            return
-        if axis == 1 and self._reverse_ap:
-            delta = -delta
-        new_anchoring = list(anchoring)
-        new_anchoring[axis] += delta
-        section.alignment.anchoring = new_anchoring
-        self._sync_ap_from_anchoring(new_anchoring)
-        self._panel.update_overlay()
-        self.anchoring_changed.emit(new_anchoring)
-
-    def _rotate_plane(self, axis: str, degrees: float) -> None:
-        section = self._panel.section
-        if section is None or self._panel.raw_image is None:
-            return
-        anchoring = section.alignment.anchoring
-        if not anchoring or all(v == 0.0 for v in anchoring):
-            return
-
-        import math
-
-        from verso.engine.registration import anchoring_to_vectors, vectors_to_anchoring
-
-        def rot_around(vec, rot_axis, deg):
-            angle = math.radians(deg)
-            c, s = math.cos(angle), math.sin(angle)
-            k = rot_axis / np.linalg.norm(rot_axis)
-            return c * vec + s * np.cross(k, vec) + (1.0 - c) * np.dot(k, vec) * k
-
-        o, u, v = anchoring_to_vectors(anchoring)
-        center = o + u / 2.0 + v / 2.0
-        u_n = u / np.linalg.norm(u)
-        v_n = v / np.linalg.norm(v)
-        n = np.cross(u_n, v_n)
-
-        ap_degrees = -degrees if self._reverse_ap else degrees
-        if axis == "roll":
-            u_new = rot_around(u, n, degrees)
-            v_new = rot_around(v, n, degrees)
-        elif axis == "tilt_dv":
-            u_new = u
-            v_new = rot_around(v, u_n, ap_degrees)
-        elif axis == "tilt_ap":
-            u_new = rot_around(u, v_n, ap_degrees)
-            v_new = v
-        else:
-            return
-
-        new_o = center - u_new / 2.0 - v_new / 2.0
-        new_anchoring = vectors_to_anchoring(new_o, u_new, v_new)
         section.alignment.anchoring = new_anchoring
         self._sync_ap_from_anchoring(new_anchoring)
         self._panel.update_overlay()
