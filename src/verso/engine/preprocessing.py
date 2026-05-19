@@ -315,3 +315,193 @@ def _usable_mask(mask: np.ndarray) -> bool:
     if total == 0:
         return False
     return max(8, int(total * 0.001)) <= area <= int(total * 0.98)
+
+
+# ---------------------------------------------------------------------------
+# L/R hemisphere masks
+#
+# Tri-valued uint8 arrays:  0 = unlabeled, 1 = left, 2 = right.
+# Saved unflipped on disk; flip + value-swap are applied at display time via
+# flip_lr_mask().  See gui/views/prep_view.py for the consuming flow.
+# ---------------------------------------------------------------------------
+
+
+def save_lr_mask(mask: np.ndarray, path: str | Path) -> None:
+    """Write a tri-valued (0/1/2) uint8 H×W mask as a single-channel PNG.
+
+    Values are written literally — viewing the file in an external image
+    viewer will look almost black, which is acceptable for a non-user-facing
+    artefact.  Use NEAREST resize on load to preserve discrete values.
+    """
+    from PIL import Image
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    arr = np.asarray(mask, dtype=np.uint8)
+    Image.fromarray(arr, mode="L").save(str(path), format="PNG")
+
+
+def load_lr_mask(path: str | Path, shape: tuple[int, int]) -> np.ndarray:
+    """Load a tri-valued PNG and NEAREST-resize to *shape* = (H, W)."""
+    from PIL import Image
+
+    target_h, target_w = shape
+    with Image.open(str(path)) as im:
+        im = im.convert("L")
+        if im.size != (target_w, target_h):
+            im = im.resize((target_w, target_h), Image.Resampling.NEAREST)
+        arr = np.asarray(im, dtype=np.uint8)
+    return arr
+
+
+def rasterize_lr_line(
+    p0: tuple[float, float],
+    p1: tuple[float, float],
+    shape: tuple[int, int],
+) -> np.ndarray:
+    """Return a uint8 (H, W) mask split by the line p0→p1.
+
+    Side is determined by the sign of the 2-D cross product
+    ``(p1-p0) × (q-p0)``: negative → 1 (left), positive → 2 (right).
+    Pixels exactly on the line are assigned 2 (consistent with the strict
+    sign convention used by the hover-tint helper).
+    """
+    h, w = shape
+    dx = float(p1[0]) - float(p0[0])
+    dy = float(p1[1]) - float(p0[1])
+    x0 = float(p0[0])
+    y0 = float(p0[1])
+
+    # Pixel-centre coordinates: (x = col, y = row).
+    cols = np.arange(w, dtype=np.float32)
+    rows = np.arange(h, dtype=np.float32)
+    qx = cols[np.newaxis, :]
+    qy = rows[:, np.newaxis]
+
+    cross = dx * (qy - y0) - dy * (qx - x0)
+    out = np.where(cross < 0.0, np.uint8(1), np.uint8(2))
+    return out.astype(np.uint8)
+
+
+def flip_lr_mask(
+    mask: np.ndarray,
+    *,
+    horizontal: bool,
+    vertical: bool,
+) -> np.ndarray:
+    """Flip a tri-valued L/R mask for display.
+
+    Horizontal flip mirrors the array AND swaps the value labels 1↔2
+    (a left pixel that is mirrored across the vertical axis becomes a
+    right pixel).  Vertical flip mirrors the array but leaves the labels
+    intact (vertical flip does not change anatomical handedness).
+    """
+    out = np.asarray(mask, dtype=np.uint8)
+    if horizontal:
+        out = np.fliplr(out)
+        # Swap 1↔2; leave 0 untouched.
+        swapped = np.zeros_like(out)
+        swapped[out == 1] = 2
+        swapped[out == 2] = 1
+        out = swapped
+    if vertical:
+        out = np.flipud(out)
+    return np.ascontiguousarray(out)
+
+
+def lr_mask_to_rgba(
+    mask: np.ndarray,
+    opacity: float,
+    left_color: tuple[int, int, int] = (220, 60, 60),
+    right_color: tuple[int, int, int] = (60, 130, 220),
+) -> np.ndarray:
+    """Convert a tri-valued L/R mask to an RGBA overlay.
+
+    ``0`` pixels are fully transparent; ``1`` pixels are tinted *left_color*,
+    ``2`` pixels are tinted *right_color*.  Alpha is scaled by *opacity*.
+    """
+    arr = np.asarray(mask, dtype=np.uint8)
+    alpha = int(round(min(max(opacity, 0.0), 1.0) * 255))
+
+    rgba = np.zeros((*arr.shape, 4), dtype=np.uint8)
+    is_left = arr == 1
+    is_right = arr == 2
+    rgba[is_left, 0] = left_color[0]
+    rgba[is_left, 1] = left_color[1]
+    rgba[is_left, 2] = left_color[2]
+    rgba[is_left, 3] = alpha
+    rgba[is_right, 0] = right_color[0]
+    rgba[is_right, 1] = right_color[1]
+    rgba[is_right, 2] = right_color[2]
+    rgba[is_right, 3] = alpha
+    return rgba
+
+
+def line_side_polygons(
+    p0: tuple[float, float],
+    p1: tuple[float, float],
+    width: float,
+    height: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Clip the image rectangle (0, 0) → (width, height) by the line p0→p1.
+
+    Returns ``(left_polygon, right_polygon)`` — two (N, 2) float arrays of
+    polygon vertices in image-pixel coords.  "Left" follows the cross-product
+    convention used by :func:`rasterize_lr_line` (negative side).
+
+    Implementation: Sutherland–Hodgman convex polygon clip against each
+    half-plane defined by the line.  Each clip is O(8) for the 4-vertex rect.
+
+    If the line lies entirely outside the rect (or the polygon clips to
+    zero vertices), the corresponding output is an empty (0, 2) array.
+    """
+    rect = np.array(
+        [(0.0, 0.0), (float(width), 0.0),
+         (float(width), float(height)), (0.0, float(height))],
+        dtype=np.float64,
+    )
+
+    dx = float(p1[0]) - float(p0[0])
+    dy = float(p1[1]) - float(p0[1])
+    x0 = float(p0[0])
+    y0 = float(p0[1])
+
+    def cross(q: np.ndarray) -> float:
+        return dx * (q[1] - y0) - dy * (q[0] - x0)
+
+    def clip(poly: np.ndarray, keep_negative: bool) -> np.ndarray:
+        if len(poly) == 0:
+            return poly
+        # sign chosen so that "in" is always ca <= 0:
+        #   keep_negative → ca = cross(a),       in when cross <= 0
+        #   keep_positive → ca = -cross(a),      in when cross >= 0
+        sign = 1.0 if keep_negative else -1.0
+        result: list[tuple[float, float]] = []
+        n = len(poly)
+        for i in range(n):
+            a = poly[i]
+            b = poly[(i + 1) % n]
+            ca = cross(a) * sign
+            cb = cross(b) * sign
+            a_in = ca <= 0.0  # boundary counted as inside
+            b_in = cb <= 0.0
+            if a_in:
+                result.append((float(a[0]), float(a[1])))
+            if a_in != b_in:
+                # Intersection of segment a→b with the line p0→p1
+                denom = ca - cb
+                if abs(denom) > 1e-12:
+                    t = ca / denom
+                else:
+                    t = 0.0
+                ix = float(a[0]) + t * (float(b[0]) - float(a[0]))
+                iy = float(a[1]) + t * (float(b[1]) - float(a[1]))
+                result.append((ix, iy))
+        if not result:
+            return np.zeros((0, 2), dtype=np.float64)
+        return np.array(result, dtype=np.float64)
+
+    # "Left" = cross product is negative (matches rasterize_lr_line).
+    left_poly = clip(rect, keep_negative=True)
+    right_poly = clip(rect, keep_negative=False)
+    return left_poly, right_poly

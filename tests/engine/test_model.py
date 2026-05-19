@@ -89,6 +89,38 @@ def test_mask_round_trip():
 
 
 # ---------------------------------------------------------------------------
+# Preprocessing
+# ---------------------------------------------------------------------------
+
+def test_preprocessing_defaults_have_no_lr_line():
+    pp = Preprocessing()
+    assert pp.lr_line is None
+
+
+def test_preprocessing_lr_line_round_trip():
+    pp = Preprocessing(lr_line=[[10.5, 20.0], [100.0, 200.5]])
+    out = Preprocessing.from_dict(pp.to_dict())
+    assert out.lr_line == [[10.5, 20.0], [100.0, 200.5]]
+
+
+def test_preprocessing_lr_line_none_round_trip():
+    pp = Preprocessing(lr_mask_path="lr_masks/s001_lr.png")
+    out = Preprocessing.from_dict(pp.to_dict())
+    assert out.lr_line is None
+    assert out.lr_mask_path == "lr_masks/s001_lr.png"
+
+
+def test_preprocessing_legacy_dict_without_lr_line():
+    pp = Preprocessing.from_dict({
+        "flip_horizontal": True,
+        "flip_vertical": False,
+        "slice_mask_path": "masks/s001-slice-mask.png",
+        "lr_mask_path": None,
+    })
+    assert pp.lr_line is None
+
+
+# ---------------------------------------------------------------------------
 # Section
 # ---------------------------------------------------------------------------
 

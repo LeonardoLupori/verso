@@ -10,8 +10,14 @@ from verso.engine.preprocessing import (
     apply_mask,
     composite_channels,
     detect_foreground,
+    flip_lr_mask,
+    line_side_polygons,
+    load_lr_mask,
     load_mask,
+    lr_mask_to_rgba,
     mask_to_rgba,
+    rasterize_lr_line,
+    save_lr_mask,
     save_mask,
 )
 
@@ -198,3 +204,92 @@ def test_sensitive_threshold_includes_more_faint_bright_foreground() -> None:
     )
 
     assert sensitive < base
+
+
+# ---------------------------------------------------------------------------
+# L/R hemisphere masks
+# ---------------------------------------------------------------------------
+
+
+def test_rasterize_lr_line_vertical_default_splits_left_right() -> None:
+    # Vertical line down the centre (p0 above p1). Cross product convention:
+    # negative side is "left", which for a downward-pointing line is the +x side.
+    mask = rasterize_lr_line((50.0, 0.0), (50.0, 99.0), shape=(100, 100))
+    # p0 → p1 points downward (dy>0, dx=0); cross = dx*(y-y0) - dy*(x-x0) = -dy*(x-x0).
+    # x < 50 → cross > 0 → right (2); x > 50 → cross < 0 → left (1).
+    assert (mask[:, 0:49] == 2).all()
+    assert (mask[:, 51:] == 1).all()
+    # On the line itself (x=50): cross == 0 → assigned 2 by convention.
+    assert (mask[:, 50] == 2).all()
+
+
+def test_rasterize_lr_line_reversed_endpoints_swaps_sides() -> None:
+    a = rasterize_lr_line((50.0, 0.0), (50.0, 99.0), shape=(40, 100))
+    b = rasterize_lr_line((50.0, 99.0), (50.0, 0.0), shape=(40, 100))
+    # Reversing direction flips 1↔2 for every off-line pixel.
+    swap = np.where(a == 1, 2, np.where(a == 2, 1, 0)).astype(np.uint8)
+    # On-line pixels are 2 in both rasters by convention (cross == 0 → 2).
+    on_line = (a == 2) & (b == 2) & (np.arange(100)[np.newaxis, :] == 50)
+    off_line = ~on_line
+    np.testing.assert_array_equal(swap[off_line], b[off_line])
+
+
+def test_flip_lr_mask_horizontal_swaps_values_and_mirrors() -> None:
+    m = np.array([[1, 1, 2, 2]], dtype=np.uint8)
+    out = flip_lr_mask(m, horizontal=True, vertical=False)
+    # np.fliplr → [2, 2, 1, 1]; then 1↔2 swap → [1, 1, 2, 2]
+    np.testing.assert_array_equal(out, [[1, 1, 2, 2]])
+
+
+def test_flip_lr_mask_horizontal_is_involutive() -> None:
+    m = np.array([[0, 1, 2, 0, 1, 2]], dtype=np.uint8)
+    once = flip_lr_mask(m, horizontal=True, vertical=False)
+    twice = flip_lr_mask(once, horizontal=True, vertical=False)
+    np.testing.assert_array_equal(twice, m)
+
+
+def test_flip_lr_mask_vertical_mirrors_without_value_swap() -> None:
+    m = np.array([[1, 1, 2, 2], [1, 0, 0, 2]], dtype=np.uint8)
+    out = flip_lr_mask(m, horizontal=False, vertical=True)
+    np.testing.assert_array_equal(out, [[1, 0, 0, 2], [1, 1, 2, 2]])
+
+
+def test_save_load_lr_mask_round_trip(tmp_path) -> None:
+    mask = np.array([[0, 1, 2], [2, 1, 0]], dtype=np.uint8)
+    path = tmp_path / "lr.png"
+    save_lr_mask(mask, path)
+    loaded = load_lr_mask(path, shape=mask.shape)
+    np.testing.assert_array_equal(loaded, mask)
+
+
+def test_lr_mask_to_rgba_assigns_distinct_colors_and_alpha() -> None:
+    mask = np.array([[0, 1, 2]], dtype=np.uint8)
+    rgba = lr_mask_to_rgba(
+        mask, opacity=0.5,
+        left_color=(10, 20, 30),
+        right_color=(40, 50, 60),
+    )
+    # Unlabeled pixels: fully transparent.
+    np.testing.assert_array_equal(rgba[0, 0], [0, 0, 0, 0])
+    # Left pixels: red-ish tint at 50% alpha = 128 (round(0.5 * 255)).
+    np.testing.assert_array_equal(rgba[0, 1], [10, 20, 30, 128])
+    np.testing.assert_array_equal(rgba[0, 2], [40, 50, 60, 128])
+
+
+def test_line_side_polygons_vertical_midline_splits_rect() -> None:
+    left, right = line_side_polygons((50.0, 0.0), (50.0, 100.0), 100.0, 100.0)
+    # Each side should be a 4-vertex polygon (left/right halves of the rect).
+    assert len(left) == 4
+    assert len(right) == 4
+    # Left side (negative cross product) is +x side for a downward line.
+    assert (left[:, 0] >= 49.999).all()
+    assert (right[:, 0] <= 50.001).all()
+
+
+def test_line_side_polygons_horizontal_midline() -> None:
+    left, right = line_side_polygons((0.0, 50.0), (100.0, 50.0), 100.0, 100.0)
+    # Line points rightward (dx>0, dy=0); cross = dx*(y-y0) → negative for y<50.
+    assert len(left) == 4
+    assert len(right) == 4
+    assert (left[:, 1] <= 50.001).all()
+    assert (right[:, 1] >= 49.999).all()

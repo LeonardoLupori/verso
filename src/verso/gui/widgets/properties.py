@@ -304,6 +304,13 @@ class _PrepProperties(QWidget):
     autodetect_all_requested = pyqtSignal()
     save_mask_requested = pyqtSignal()
     clear_mask_requested = pyqtSignal()
+    # Hemisphere subpanel signals
+    lr_set_all_left_requested = pyqtSignal()
+    lr_set_all_right_requested = pyqtSignal()
+    lr_draw_mode_toggled = pyqtSignal(bool)
+    lr_apply_requested = pyqtSignal()
+    lr_cancel_requested = pyqtSignal()
+    lr_clear_requested = pyqtSignal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -389,6 +396,55 @@ class _PrepProperties(QWidget):
         edit_layout.addLayout(edit_row)
         layout.addWidget(edit_box)
 
+        # --- Hemisphere subpanel --------------------------------------
+        hemi_box = QGroupBox("Hemisphere")
+        hemi_layout = QVBoxLayout(hemi_box)
+
+        self._hemi_status = QLabel("Not set")
+        self._hemi_status.setStyleSheet("color: #aaa; font-style: italic;")
+        hemi_layout.addWidget(self._hemi_status)
+
+        hemi_uniform_row = QHBoxLayout()
+        self._btn_all_left = QPushButton("All left")
+        self._btn_all_left.setToolTip("Label the entire section as left hemisphere")
+        self._btn_all_left.clicked.connect(self.lr_set_all_left_requested)
+        hemi_uniform_row.addWidget(self._btn_all_left)
+        self._btn_all_right = QPushButton("All right")
+        self._btn_all_right.setToolTip("Label the entire section as right hemisphere")
+        self._btn_all_right.clicked.connect(self.lr_set_all_right_requested)
+        hemi_uniform_row.addWidget(self._btn_all_right)
+        hemi_layout.addLayout(hemi_uniform_row)
+
+        self._btn_draw_line = QPushButton("Draw separating line")
+        self._btn_draw_line.setCheckable(True)
+        self._btn_draw_line.setToolTip(
+            "Draw a line to split the section into left and right hemispheres. "
+            "L/R are determined by the line's direction — drag the start handle "
+            "past the end handle to swap sides."
+        )
+        self._btn_draw_line.toggled.connect(self.lr_draw_mode_toggled)
+        hemi_layout.addWidget(self._btn_draw_line)
+
+        # Apply/Cancel toolbar shown only while draw mode is active.
+        self._lr_draw_toolbar = QWidget()
+        draw_tb = QHBoxLayout(self._lr_draw_toolbar)
+        draw_tb.setContentsMargins(0, 0, 0, 0)
+        self._btn_lr_apply = QPushButton("✓ Apply")
+        self._btn_lr_apply.clicked.connect(self.lr_apply_requested)
+        self._btn_lr_cancel = QPushButton("✕ Cancel")
+        self._btn_lr_cancel.clicked.connect(self.lr_cancel_requested)
+        draw_tb.addWidget(self._btn_lr_apply)
+        draw_tb.addWidget(self._btn_lr_cancel)
+        self._lr_draw_toolbar.setVisible(False)
+        hemi_layout.addWidget(self._lr_draw_toolbar)
+
+        self._btn_clear_lr = QPushButton("Clear")
+        self._btn_clear_lr.setToolTip("Remove the L/R label for this section")
+        self._btn_clear_lr.clicked.connect(self.lr_clear_requested)
+        hemi_layout.addWidget(self._btn_clear_lr)
+
+        layout.addWidget(hemi_box)
+
         info_box = QGroupBox("Section info")
         info_layout = QFormLayout(info_box)
         self._lbl_dims = QLabel("-")
@@ -430,6 +486,25 @@ class _PrepProperties(QWidget):
         self._negative.blockSignals(True)
         self._negative.setChecked(negative)
         self._negative.blockSignals(False)
+
+    def set_lr_status(self, text: str) -> None:
+        """Update the hemisphere status label
+        (e.g. 'Not set', 'All left', 'All right', 'Line drawn')."""
+        self._hemi_status.setText(text)
+
+    def set_lr_draw_active(self, active: bool) -> None:
+        """Swap the Hemisphere subpanel between idle and drawing layouts."""
+        self._btn_draw_line.blockSignals(True)
+        self._btn_draw_line.setChecked(active)
+        self._btn_draw_line.blockSignals(False)
+        self._btn_draw_line.setText(
+            "Drawing — use Apply / Cancel" if active else "Draw separating line"
+        )
+        self._lr_draw_toolbar.setVisible(active)
+        # Disable competing actions while editing the line.
+        self._btn_all_left.setEnabled(not active)
+        self._btn_all_right.setEnabled(not active)
+        self._btn_clear_lr.setEnabled(not active)
 
     def set_channels(self, channels: list[ChannelSpec]) -> None:
         self._brightness.set_channels(channels)
@@ -783,6 +858,13 @@ class PropertiesPanel(QWidget):
     autodetect_all_requested = pyqtSignal()
     save_mask_requested = pyqtSignal()
     clear_mask_requested = pyqtSignal()
+    # Hemisphere subpanel signals (re-exposed from _PrepProperties)
+    lr_set_all_left_requested = pyqtSignal()
+    lr_set_all_right_requested = pyqtSignal()
+    lr_draw_mode_toggled = pyqtSignal(bool)
+    lr_apply_requested = pyqtSignal()
+    lr_cancel_requested = pyqtSignal()
+    lr_clear_requested = pyqtSignal()
     opacity_changed = pyqtSignal(float)
     ap_changed = pyqtSignal(float)
     cp_style_changed = pyqtSignal(int, str, str)  # size, shape, color
@@ -821,6 +903,12 @@ class PropertiesPanel(QWidget):
         self._prep_page.autodetect_all_requested.connect(self.autodetect_all_requested)
         self._prep_page.save_mask_requested.connect(self.save_mask_requested)
         self._prep_page.clear_mask_requested.connect(self.clear_mask_requested)
+        self._prep_page.lr_set_all_left_requested.connect(self.lr_set_all_left_requested)
+        self._prep_page.lr_set_all_right_requested.connect(self.lr_set_all_right_requested)
+        self._prep_page.lr_draw_mode_toggled.connect(self.lr_draw_mode_toggled)
+        self._prep_page.lr_apply_requested.connect(self.lr_apply_requested)
+        self._prep_page.lr_cancel_requested.connect(self.lr_cancel_requested)
+        self._prep_page.lr_clear_requested.connect(self.lr_clear_requested)
 
         self._align_page.opacity_changed.connect(self.opacity_changed)
         self._align_page.ap_changed.connect(self.ap_changed)
@@ -866,6 +954,12 @@ class PropertiesPanel(QWidget):
 
     def set_mask_negative(self, negative: bool) -> None:
         self._prep_page.set_mask_negative(negative)
+
+    def set_lr_status(self, text: str) -> None:
+        self._prep_page.set_lr_status(text)
+
+    def set_lr_draw_active(self, active: bool) -> None:
+        self._prep_page.set_lr_draw_active(active)
 
     def set_channels(self, channels: list[ChannelSpec]) -> None:
         self._prep_page.set_channels(channels)

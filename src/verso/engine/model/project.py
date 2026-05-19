@@ -61,6 +61,10 @@ class Preprocessing:
     flip_vertical: bool = False
     slice_mask_path: str | None = None
     lr_mask_path: str | None = None
+    # Endpoints of the user-drawn L/R separating line, in unflipped working-
+    # resolution pixel coords: [[x0, y0], [x1, y1]]. None means the L/R mask
+    # (if any) is uniform (all-left or all-right) or simply not yet edited.
+    lr_line: list[list[float]] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -68,15 +72,28 @@ class Preprocessing:
             "flip_vertical": self.flip_vertical,
             "slice_mask_path": self.slice_mask_path,
             "lr_mask_path": self.lr_mask_path,
+            "lr_line": (
+                [[float(self.lr_line[0][0]), float(self.lr_line[0][1])],
+                 [float(self.lr_line[1][0]), float(self.lr_line[1][1])]]
+                if self.lr_line is not None else None
+            ),
         }
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Preprocessing:
+        raw = d.get("lr_line")
+        line: list[list[float]] | None = None
+        if raw and len(raw) == 2 and len(raw[0]) == 2 and len(raw[1]) == 2:
+            line = [
+                [float(raw[0][0]), float(raw[0][1])],
+                [float(raw[1][0]), float(raw[1][1])],
+            ]
         return cls(
             flip_horizontal=d.get("flip_horizontal", False),
             flip_vertical=d.get("flip_vertical", False),
             slice_mask_path=d.get("slice_mask_path"),
             lr_mask_path=d.get("lr_mask_path"),
+            lr_line=line,
         )
 
 

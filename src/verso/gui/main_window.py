@@ -367,6 +367,15 @@ class MainWindow(QMainWindow):
         self._props.autodetect_all_requested.connect(self._batch_autodetect_masks)
         self._props.save_mask_requested.connect(self._on_prep_save_mask_requested)
         self._props.clear_mask_requested.connect(self._on_prep_clear_mask_requested)
+        # Hemisphere subpanel — non-draw actions.
+        self._props.lr_visibility_changed.connect(self._prep.set_lr_visible)
+        self._props.lr_set_all_left_requested.connect(self._on_lr_set_all_left)
+        self._props.lr_set_all_right_requested.connect(self._on_lr_set_all_right)
+        self._props.lr_clear_requested.connect(self._on_lr_clear_requested)
+        # Hemisphere — draw-mode lifecycle.
+        self._props.lr_draw_mode_toggled.connect(self._on_lr_draw_mode_toggled)
+        self._props.lr_apply_requested.connect(self._on_lr_draw_apply)
+        self._props.lr_cancel_requested.connect(self._on_lr_draw_cancel)
         self._props.opacity_changed.connect(self._on_opacity_changed)
         self._props.ap_changed.connect(self._on_ap_changed)
 
@@ -670,6 +679,12 @@ class MainWindow(QMainWindow):
 
     def _refresh_properties(self) -> None:
         self._props.update_section(self._state.current_section, self._current_mode)
+        if self._current_mode == "prep":
+            # Sync the draw button with PrepView's actual state — covers section
+            # navigation, view switches, or anything else that may have torn the
+            # editor down behind our back.
+            self._props.set_lr_draw_active(self._prep.is_lr_draw_active())
+            self._refresh_lr_status()
 
     # ------------------------------------------------------------------
     # Property change slots
@@ -682,6 +697,10 @@ class MainWindow(QMainWindow):
         was_flipped = section.preprocessing.flip_horizontal
         if value == was_flipped:
             return
+        # Cancel a live L/R draw before the flip — the line's display coords
+        # would otherwise become inconsistent with the flipped image.
+        if self._prep.cancel_lr_draw_if_active():
+            self._props.set_lr_draw_active(False)
         section.preprocessing.flip_horizontal = value
         from verso.engine.registration import flip_anchoring_horizontal
 
@@ -711,6 +730,8 @@ class MainWindow(QMainWindow):
         was_flipped = section.preprocessing.flip_vertical
         if value == was_flipped:
             return
+        if self._prep.cancel_lr_draw_if_active():
+            self._props.set_lr_draw_active(False)
         section.preprocessing.flip_vertical = value
         from verso.engine.registration import flip_anchoring_vertical
 
@@ -763,8 +784,50 @@ class MainWindow(QMainWindow):
         self._prep.clear_mask()
         self._overview.refresh_row(self._state.section_index)
 
+    def _on_lr_set_all_left(self) -> None:
+        self._prep.set_lr_all(1)
+        self._refresh_lr_status()
+        self._overview.refresh_row(self._state.section_index)
+
+    def _on_lr_set_all_right(self) -> None:
+        self._prep.set_lr_all(2)
+        self._refresh_lr_status()
+        self._overview.refresh_row(self._state.section_index)
+
+    def _on_lr_clear_requested(self) -> None:
+        self._prep.clear_lr_mask()
+        self._refresh_lr_status()
+        self._overview.refresh_row(self._state.section_index)
+
+    def _on_lr_draw_mode_toggled(self, active: bool) -> None:
+        """Draw-line button toggled by the user."""
+        if active:
+            self._prep.enter_lr_draw_mode()
+        else:
+            # User untoggled the button without using Apply/Cancel → treat as Cancel.
+            self._prep.exit_lr_draw_mode(apply=False)
+        self._props.set_lr_draw_active(active)
+        self._refresh_lr_status()
+
+    def _on_lr_draw_apply(self) -> None:
+        self._prep.exit_lr_draw_mode(apply=True)
+        self._props.set_lr_draw_active(False)
+        # section_modified emits inside exit_lr_draw_mode → status + project save
+        # are handled by _on_prep_modified.  Refresh overview row eagerly.
+        self._overview.refresh_row(self._state.section_index)
+
+    def _on_lr_draw_cancel(self) -> None:
+        self._prep.exit_lr_draw_mode(apply=False)
+        self._props.set_lr_draw_active(False)
+        self._refresh_lr_status()
+
+    def _refresh_lr_status(self) -> None:
+        """Push the current PrepView L/R state into the properties panel label."""
+        self._props.set_lr_status(self._prep.lr_status_text())
+
     def _on_prep_modified(self) -> None:
         self._overview.refresh_row(self._state.section_index)
+        self._refresh_lr_status()
         if self._state.project is not None and self._state.project_path is not None:
             self._write_project(self._state.project_path)
 

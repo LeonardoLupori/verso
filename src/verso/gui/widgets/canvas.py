@@ -163,6 +163,11 @@ class ImageCanvas(QWidget):
         self.overlay_item.setOpacity(0.5)
         self.overlay_item.setZValue(10)
 
+        # L/R hemisphere overlay (Prep mode) — sits above slice overlay,
+        # below the displacement halos / control points.
+        self.lr_overlay_item = pg.ImageItem()
+        self.lr_overlay_item.setZValue(11)
+
         # Control-point displacement lines (Warp mode) — drawn below the dots.
         self.disp_halo_item = pg.PlotCurveItem(
             pen=pg.mkPen((0, 0, 0, 220), width=5.0),
@@ -187,6 +192,7 @@ class ImageCanvas(QWidget):
 
         self.plot.addItem(self.bg_item)
         self.plot.addItem(self.overlay_item)
+        self.plot.addItem(self.lr_overlay_item)
         self.plot.addItem(self.disp_halo_item)
         self.plot.addItem(self.disp_item)
         self.plot.addItem(self.cp_item)
@@ -246,6 +252,25 @@ class ImageCanvas(QWidget):
         if display_w is not None and display_h is not None:
             from PyQt6.QtCore import QRectF
             self.overlay_item.setRect(QRectF(0, 0, display_w, display_h))
+
+    def set_lr_overlay(
+        self,
+        image: np.ndarray | None,
+        display_w: int | None = None,
+        display_h: int | None = None,
+    ) -> None:
+        """Set the L/R hemisphere overlay (H×W×4 RGBA uint8, or None to hide).
+
+        Mirrors :meth:`set_overlay` for the dedicated ``lr_overlay_item``
+        layer used in Prep mode.
+        """
+        if image is None:
+            self.lr_overlay_item.clear()
+            return
+        self.lr_overlay_item.setImage(image)
+        if display_w is not None and display_h is not None:
+            from PyQt6.QtCore import QRectF
+            self.lr_overlay_item.setRect(QRectF(0, 0, display_w, display_h))
 
     def _on_scene_mouse_moved(self, scene_pos) -> None:
         vb_pos = self._vb.mapSceneToView(scene_pos)
