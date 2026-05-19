@@ -29,11 +29,13 @@ from PyQt6.QtGui import (
     QPolygonF,
 )
 from PyQt6.QtWidgets import (
+    QApplication,
     QGridLayout,
     QHBoxLayout,
     QLabel,
     QPushButton,
     QScrollArea,
+    QStyle,
     QVBoxLayout,
     QWidget,
 )
@@ -42,11 +44,13 @@ if TYPE_CHECKING:
     from verso.engine.atlas import AtlasVolume
 
 # Fixed display width for every mini-view (height is computed per-axis from dims)
-_VIEW_W = 180
-# Width of the right-side column holding the ↑/↓ buttons
-_SIDE_BTN_W = 28
-# Height of the bottom row holding ← ⟲ ⟳ → buttons
-_BOTTOM_BTN_H = 24
+_VIEW_W = 150
+# Side ↑/↓ buttons: narrower than before, same height
+_SIDE_BTN_W = 14
+_SIDE_BTN_H = 24
+# Bottom ← ⟲ ⟳ → buttons: same width as before, shorter height
+_BOTTOM_BTN_W = 24
+_BOTTOM_BTN_H = 14
 # Title-bar height
 _TITLE_H = 16
 # Per-click translation step (atlas voxels)
@@ -188,14 +192,14 @@ class _SliceView(QWidget):
         layout.addWidget(self._canvas, 1, 0)
 
         # Row 1, col 1: ↑ / ↓ side column.
-        self._btn_up = self._make_btn("↑", "Move up (1 voxel)")
-        self._btn_down = self._make_btn("↓", "Move down (1 voxel)")
+        self._btn_up = self._make_btn("↑", "Move up (1 voxel)", _SIDE_BTN_W, _SIDE_BTN_H)
+        self._btn_down = self._make_btn("↓", "Move down (1 voxel)", _SIDE_BTN_W, _SIDE_BTN_H)
         side = QVBoxLayout()
         side.setContentsMargins(0, 0, 0, 0)
-        side.setSpacing(4)
+        side.setSpacing(2)
         side.addStretch()
         side.addWidget(self._btn_up)
-        side.addSpacing(6)
+        side.addSpacing(3)
         side.addWidget(self._btn_down)
         side.addStretch()
         side_widget = QWidget()
@@ -203,16 +207,22 @@ class _SliceView(QWidget):
         side_widget.setFixedWidth(_SIDE_BTN_W)
         layout.addWidget(side_widget, 1, 1)
 
-        # Row 2, col 0: ← ⟲ ⟳ → bottom row.
-        self._btn_left = self._make_btn("←", "Move left (1 voxel)")
-        self._btn_ccw = self._make_btn("⟲", "Rotate counter-clockwise (1°)")
-        self._btn_cw = self._make_btn("⟳", "Rotate clockwise (1°)")
-        self._btn_right = self._make_btn("→", "Move right (1 voxel)")
+        # Row 2, col 0: ← ⟲ ⟳ → bottom row, tightly grouped and centered under the canvas.
+        self._btn_left = self._make_btn("←", "Move left (1 voxel)", _BOTTOM_BTN_W, _BOTTOM_BTN_H)
+        self._btn_ccw = self._make_btn(
+            "⟲", "Rotate counter-clockwise (1°)", _BOTTOM_BTN_W, _BOTTOM_BTN_H
+        )
+        self._btn_cw = self._make_btn(
+            "⟳", "Rotate clockwise (1°)", _BOTTOM_BTN_W, _BOTTOM_BTN_H
+        )
+        self._btn_right = self._make_btn("→", "Move right (1 voxel)", _BOTTOM_BTN_W, _BOTTOM_BTN_H)
         bottom = QHBoxLayout()
         bottom.setContentsMargins(0, 0, 0, 0)
         bottom.setSpacing(2)
+        bottom.addStretch()
         for b in (self._btn_left, self._btn_ccw, self._btn_cw, self._btn_right):
-            bottom.addWidget(b, stretch=1)
+            bottom.addWidget(b)
+        bottom.addStretch()
         bottom_widget = QWidget()
         bottom_widget.setLayout(bottom)
         bottom_widget.setFixedHeight(_BOTTOM_BTN_H)
@@ -238,10 +248,9 @@ class _SliceView(QWidget):
         self._corners: list[tuple[float, float]] = []
         self._center_display: tuple[float, float] | None = None
 
-    def _make_btn(self, text: str, tooltip: str) -> QPushButton:
+    def _make_btn(self, text: str, tooltip: str, w: int, h: int) -> QPushButton:
         btn = QPushButton(text)
-        btn.setFixedHeight(_BOTTOM_BTN_H)
-        btn.setFixedWidth(_SIDE_BTN_W)
+        btn.setFixedSize(w, h)
         btn.setToolTip(tooltip)
         btn.setStyleSheet(_NAV_BTN_QSS)
         return btn
@@ -475,7 +484,11 @@ class NavigatorPanel(QWidget):
         super().__init__(parent)
         self._atlas: AtlasVolume | None = None
         self._anchoring: list[float] | None = None
-        self.setFixedWidth(_VIEW_W + _SIDE_BTN_W + 8)
+        # Reserve space for the vertical scrollbar so it never overlaps the
+        # rightmost ↑/↓ buttons when the panel becomes too short to fit all
+        # three slice views.
+        sb_extent = QApplication.style().pixelMetric(QStyle.PixelMetric.PM_ScrollBarExtent)
+        self.setFixedWidth(_VIEW_W + _SIDE_BTN_W + 8 + sb_extent)
         self.setStyleSheet("background: #1a1a1a;")
 
         # Outer layout holds a scroll area so the tall horizontal view is reachable
