@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
 
 from verso.engine.model.alignment import AlignmentStatus
 
-_THUMB_SIZE = 120  # px long side
+_THUMB_SIZE = 100  # px long side
 
 # Status border colours
 _COLOUR = {

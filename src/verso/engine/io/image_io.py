@@ -401,7 +401,8 @@ def registration_dimensions(section) -> tuple[int, int]:
     Checks the canonical OME-TIFF path first, then the stored thumbnail_path
     (legacy PNG), and falls back to the original image.
     """
-    for candidate in (_canonical_thumbnail(section), Path(section.thumbnail_path) if section.thumbnail_path else None):
+    thumbnail = Path(section.thumbnail_path) if section.thumbnail_path else None
+    for candidate in (_canonical_thumbnail(section), thumbnail):
         if candidate and candidate.exists():
             return image_dimensions(candidate)
     return image_dimensions(section.original_path)

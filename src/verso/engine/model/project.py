@@ -179,7 +179,9 @@ class Project:
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Project:
         raw_color = str(d.get("cp_color", "#fff500"))
-        cp_color = raw_color if raw_color.startswith("#") else _LEGACY_CP_COLORS.get(raw_color, "#fff500")
+        cp_color = (
+            raw_color if raw_color.startswith("#") else _LEGACY_CP_COLORS.get(raw_color, "#fff500")
+        )
         return cls(
             name=d["name"],
             atlas=AtlasRef.from_dict(d["atlas"]),

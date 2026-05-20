@@ -764,7 +764,6 @@ class MainWindow(QMainWindow):
             project.channels = list(channels)
         self._prep.set_channels(channels)
         self._panel.set_channels(channels)
-        self._props.set_channels(channels)
 
     def _on_channels_committed(self, channels: list) -> None:
         """Fires after the user releases a slider or makes a discrete edit."""

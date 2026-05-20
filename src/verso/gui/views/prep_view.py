@@ -67,6 +67,7 @@ class PrepView(QWidget):
         self._lr_mask: np.ndarray | None = None
         self._lr_dirty = False
         self._lr_visible = True
+        self._lr_overlay_needs_update = False
         # Draw-mode state — created/destroyed by enter/exit_lr_draw_mode().
         self._lr_editor: LRLineEditor | None = None
         self._lr_draw_mode = False
@@ -240,7 +241,13 @@ class PrepView(QWidget):
 
     def set_lr_visible(self, visible: bool) -> None:
         self._lr_visible = bool(visible)
-        self._update_lr_overlay()
+        if not visible:
+            self._canvas.set_lr_overlay_visible(False)
+        elif self._lr_mask is not None:
+            if self._lr_overlay_needs_update:
+                self._update_lr_overlay()
+            else:
+                self._canvas.set_lr_overlay_visible(True)
 
     def set_mask_negative(self, negative: bool) -> None:
         negative = bool(negative)
@@ -252,9 +259,8 @@ class PrepView(QWidget):
 
     def set_mask_opacity(self, opacity: float) -> None:
         self._mask_opacity = min(max(opacity, 0.0), 1.0)
-        self._update_mask_overlay()
-        # L/R overlay reuses the same opacity setting.
-        self._update_lr_overlay()
+        self._canvas.set_overlay_opacity(self._mask_opacity)
+        self._canvas.set_lr_overlay_opacity(self._mask_opacity)
 
     def set_mask_color(self, color: tuple[int, int, int]) -> None:
         self._mask_color = color
@@ -482,8 +488,12 @@ class PrepView(QWidget):
         image_key = (id(self._raw_image), flip_h, flip_v, n)
         if image_key != self._layer_image_key:
             self._layer_image_key = image_key
-            self._channel_layers = [compute_channel_layer(img, i, self._channels[i]) for i in range(n)]
-            self._cached_channel_specs = [(self._channels[i].scale, tuple(self._channels[i].color)) for i in range(n)]
+            self._channel_layers = [
+                compute_channel_layer(img, i, self._channels[i]) for i in range(n)
+            ]
+            self._cached_channel_specs = [
+                (self._channels[i].scale, tuple(self._channels[i].color)) for i in range(n)
+            ]
             return
         for i in range(n):
             spec = self._channels[i]
@@ -534,11 +544,12 @@ class PrepView(QWidget):
         rgba = mask_to_rgba(
             display_mask,
             negative=self._negative_mask,
-            opacity=self._mask_opacity,
+            opacity=1.0,
             color=self._mask_color,
         )
         h, w = display_mask.shape
         self._canvas.set_overlay(rgba, display_w=w, display_h=h)
+        self._canvas.set_overlay_opacity(self._mask_opacity)
 
     def _mask_for_display(self) -> np.ndarray:
         if self._current_mask is None:
@@ -595,15 +606,21 @@ class PrepView(QWidget):
         self._lr_mask = None  # "not edited" — no overlay, no file on disk yet
 
     def _update_lr_overlay(self) -> None:
-        if self._lr_mask is None or not self._lr_visible:
+        if self._lr_mask is None:
             self._canvas.set_lr_overlay(None)
+            self._lr_overlay_needs_update = False
             return
-
+        if not self._lr_visible:
+            self._canvas.set_lr_overlay_visible(False)
+            self._lr_overlay_needs_update = True
+            return
         display_mask = self._lr_mask_for_display()
-        # Reuse the mask-opacity slider for L/R; keeps the UI simple.
-        rgba = lr_mask_to_rgba(display_mask, opacity=self._mask_opacity)
+        rgba = lr_mask_to_rgba(display_mask, opacity=1.0)
         h, w = display_mask.shape
         self._canvas.set_lr_overlay(rgba, display_w=w, display_h=h)
+        self._canvas.set_lr_overlay_opacity(self._mask_opacity)
+        self._canvas.set_lr_overlay_visible(True)
+        self._lr_overlay_needs_update = False
 
     def _lr_mask_for_display(self) -> np.ndarray:
         if self._lr_mask is None:

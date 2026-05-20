@@ -138,6 +138,7 @@ class ImageCanvas(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         _ensure_space_filter()
+        self._last_bg_shape: tuple[int, int] | None = None
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -226,9 +227,13 @@ class ImageCanvas(QWidget):
         """Set the section image (H×W or H×W×C, uint8)."""
         if image is None:
             self.bg_item.clear()
+            self._last_bg_shape = None
             return
+        shape = image.shape[:2]
         self.bg_item.setImage(image)
-        self.plot.autoRange()
+        if shape != self._last_bg_shape:
+            self.plot.autoRange()
+            self._last_bg_shape = shape
 
     def set_overlay(
         self,
@@ -382,6 +387,14 @@ class ImageCanvas(QWidget):
     def set_overlay_opacity(self, opacity: float) -> None:
         """Set overlay opacity in [0, 1]."""
         self.overlay_item.setOpacity(opacity)
+
+    def set_lr_overlay_opacity(self, opacity: float) -> None:
+        """Set L/R hemisphere overlay opacity in [0, 1]."""
+        self.lr_overlay_item.setOpacity(opacity)
+
+    def set_lr_overlay_visible(self, visible: bool) -> None:
+        """Show or hide the L/R hemisphere overlay without discarding its image data."""
+        self.lr_overlay_item.setVisible(visible)
 
     def clear(self) -> None:
         self.bg_item.clear()

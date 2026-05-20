@@ -399,11 +399,9 @@ def flip_lr_mask(
     out = np.asarray(mask, dtype=np.uint8)
     if horizontal:
         out = np.fliplr(out)
-        # Swap 1↔2; leave 0 untouched.
-        swapped = np.zeros_like(out)
-        swapped[out == 1] = 2
-        swapped[out == 2] = 1
-        out = swapped
+        # Swap 1↔2 via LUT (single pass, no boolean intermediates).
+        swap_lut = np.array([0, 2, 1], dtype=np.uint8)
+        out = swap_lut[out]
     if vertical:
         out = np.flipud(out)
     return np.ascontiguousarray(out)
@@ -422,19 +420,11 @@ def lr_mask_to_rgba(
     """
     arr = np.asarray(mask, dtype=np.uint8)
     alpha = int(round(min(max(opacity, 0.0), 1.0) * 255))
-
-    rgba = np.zeros((*arr.shape, 4), dtype=np.uint8)
-    is_left = arr == 1
-    is_right = arr == 2
-    rgba[is_left, 0] = left_color[0]
-    rgba[is_left, 1] = left_color[1]
-    rgba[is_left, 2] = left_color[2]
-    rgba[is_left, 3] = alpha
-    rgba[is_right, 0] = right_color[0]
-    rgba[is_right, 1] = right_color[1]
-    rgba[is_right, 2] = right_color[2]
-    rgba[is_right, 3] = alpha
-    return rgba
+    # LUT-based mapping: single gather pass instead of 8 boolean index operations.
+    lut = np.zeros((3, 4), dtype=np.uint8)
+    lut[1] = [*left_color, alpha]
+    lut[2] = [*right_color, alpha]
+    return lut[arr]
 
 
 def line_side_polygons(
