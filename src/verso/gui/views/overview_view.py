@@ -32,8 +32,9 @@ _STATUS_COLOR = {
 
 _COL_SERIAL = 0
 _COL_FILE = 1
-_COL_AP = 2
-_COL_STEPS_START = 3  # Flip, Slice, LR, Align, Warp
+_COL_DIMS = 2
+_COL_AP = 3
+_COL_STEPS_START = 4  # Flip, Slice, LR, Align, Warp
 
 
 class OverviewView(QWidget):
@@ -82,13 +83,13 @@ class OverviewView(QWidget):
         t = self._table
         n_cols = _COL_STEPS_START + len(_STEPS)
         t.setColumnCount(n_cols)
-        headers = ["#", "File", "AP (mm)"] + list(_STEPS)
+        headers = ["#", "File", "Dimensions", "AP (mm)"] + list(_STEPS)
         t.setHorizontalHeaderLabels(headers)
 
         t.horizontalHeader().setSectionResizeMode(
             _COL_FILE, QHeaderView.ResizeMode.Stretch
         )
-        for col in [_COL_SERIAL, _COL_AP] + list(range(_COL_STEPS_START, n_cols)):
+        for col in [_COL_SERIAL, _COL_DIMS, _COL_AP] + list(range(_COL_STEPS_START, n_cols)):
             t.horizontalHeader().setSectionResizeMode(
                 col, QHeaderView.ResizeMode.ResizeToContents
             )
@@ -157,6 +158,13 @@ class OverviewView(QWidget):
             _COL_FILE,
             cell(os.path.basename(section.original_path), file_align),
         )
+        try:
+            from verso.engine.io.image_io import registration_dimensions
+            w, h = registration_dimensions(section)
+            dims_text = f"{w} x {h}"
+        except Exception:
+            dims_text = "—"
+        t.setItem(row, _COL_DIMS, cell(dims_text))
         ap = section.alignment.ap_position_mm
         t.setItem(row, _COL_AP, cell(f"{ap:.2f}" if ap is not None else "—"))
 

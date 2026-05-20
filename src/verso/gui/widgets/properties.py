@@ -445,12 +445,6 @@ class _PrepProperties(QWidget):
 
         layout.addWidget(hemi_box)
 
-        info_box = QGroupBox("Section info")
-        info_layout = QFormLayout(info_box)
-        self._lbl_dims = QLabel("-")
-        info_layout.addRow("Dimensions:", self._lbl_dims)
-        layout.addWidget(info_box)
-
         brightness_box = QGroupBox("Adjust brightness")
         brightness_layout = QVBoxLayout(brightness_box)
         self._brightness = _BrightnessControls()
@@ -469,7 +463,6 @@ class _PrepProperties(QWidget):
             self._flip_v.blockSignals(True)
             self._flip_v.setChecked(False)
             self._flip_v.blockSignals(False)
-            self._lbl_dims.setText("-")
             return
 
         self._flip_h.blockSignals(True)
@@ -479,8 +472,6 @@ class _PrepProperties(QWidget):
         self._flip_v.blockSignals(True)
         self._flip_v.setChecked(section.preprocessing.flip_vertical)
         self._flip_v.blockSignals(False)
-
-        self._lbl_dims.setText(self._section_dimensions(section))
 
     def set_mask_negative(self, negative: bool) -> None:
         self._negative.blockSignals(True)
@@ -528,16 +519,6 @@ class _PrepProperties(QWidget):
             self._mask_color_rgb = (color.red(), color.green(), color.blue())
             self._refresh_mask_color_btn()
             self.mask_color_changed.emit(self._mask_color_rgb)
-
-    def _section_dimensions(self, section: Section) -> str:
-        try:
-            from verso.engine.io.image_io import registration_dimensions
-
-            w, h = registration_dimensions(section)
-            return f"{w} x {h}"
-        except Exception:
-            return "-"
-
 
 _CP_SHAPES = ["Circle", "Cross", "Square", "Diamond"]
 
