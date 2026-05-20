@@ -377,7 +377,6 @@ class MainWindow(QMainWindow):
         self._props.lr_apply_requested.connect(self._on_lr_draw_apply)
         self._props.lr_cancel_requested.connect(self._on_lr_draw_cancel)
         self._props.opacity_changed.connect(self._on_opacity_changed)
-        self._props.ap_changed.connect(self._on_ap_changed)
 
         # PrepView edits
         self._prep.section_modified.connect(self._on_prep_modified)
@@ -618,8 +617,6 @@ class MainWindow(QMainWindow):
         self._panel.set_atlas(atlas)
         self._props.set_atlas_loading(False)
         if atlas is not None:
-            self._props.set_ap_range(0.0, atlas.ap_extent_mm)
-            self._props.set_ap_step(atlas.resolution_um / 1000.0)
             project = self._state.project
             if project is not None:
                 self._initialize_quicknii_anchorings(project.sections)
@@ -906,33 +903,7 @@ class MainWindow(QMainWindow):
         self._batch_mask_thread = None
         self._batch_mask_worker = None
 
-    def _on_ap_changed(self, ap_mm: float) -> None:
-        section = self._state.current_section
-        atlas = self._state.atlas
-        if section is None:
-            return
-        section.alignment.ap_position_mm = ap_mm
-        if section.alignment.status != AlignmentStatus.COMPLETE:
-            section.alignment.source = "manual"
-        if atlas is not None:
-            from verso.engine.registration import set_ap_center_position
-            anchoring = section.alignment.anchoring
-            if not anchoring or all(v == 0.0 for v in anchoring):
-                raw_img = self._panel.raw_image
-                aspect = (raw_img.shape[1] / raw_img.shape[0]) if raw_img is not None else 1.0
-                anchoring = atlas.default_anchoring(aspect_ratio=aspect)
-            ap_voxel = atlas.ap_mm_to_voxel(ap_mm)
-            section.alignment.anchoring = set_ap_center_position(
-                anchoring, ap_voxel, atlas.ap_axis
-            )
-            self._panel.update_overlay()
-        self._overview.refresh_row(self._state.section_index)
-        self._update_ap_plot()
-        self._update_reverse_order_enabled()
-        self._refresh_properties()
-
     def _on_anchoring_changed(self, anchoring: list[float]) -> None:
-        """Navigator panel changed the cut plane — sync AP spinbox."""
         atlas = self._state.atlas
         if atlas is not None:
             ap_mm = self._anchoring_ap_mm(anchoring)

@@ -13,7 +13,6 @@ from PyQt6.QtWidgets import (
     QCheckBox,
     QColorDialog,
     QComboBox,
-    QDoubleSpinBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -527,7 +526,6 @@ class _AlignProperties(QWidget):
     """Properties panel content for the Align/Warp view."""
 
     opacity_changed = pyqtSignal(float)
-    ap_changed = pyqtSignal(float)
     cp_style_changed = pyqtSignal(int, str, str)  # size, shape, color
     channels_changed = pyqtSignal(list)
     channels_committed = pyqtSignal(list)
@@ -587,27 +585,16 @@ class _AlignProperties(QWidget):
         ap_box_layout = QVBoxLayout(ap_box)
         ap_box_layout.setSpacing(4)
 
-        ap_form = QFormLayout()
-        self._ap_spin = QDoubleSpinBox()
-        self._ap_spin.setRange(0.0, 20.0)
-        self._ap_spin.setSingleStep(0.025)
-        self._ap_spin.setSuffix(" mm")
-        self._ap_spin.setDecimals(3)
-        self._ap_spin.valueChanged.connect(self.ap_changed)
-        ap_form.addRow("AP:", self._ap_spin)
-        ap_box_layout.addLayout(ap_form)
-
         self._ap_plot = pg.PlotWidget(background="#1a1a1a")
         self._ap_plot.setFixedHeight(200)
         self._ap_plot.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         pi = self._ap_plot.getPlotItem()
         pi.hideAxis("top")
         pi.hideAxis("right")
-        pi.getAxis("bottom").setLabel("AP (mm)", color="#aaa")
-        pi.getAxis("left").setLabel("Section", color="#aaa")
+        pi.getAxis("bottom").setLabel("Section", color="#aaa")
+        pi.getAxis("left").setLabel("AP (mm)", color="#aaa")
         pi.getAxis("bottom").setTextPen(pg.mkPen("#aaa"))
         pi.getAxis("left").setTextPen(pg.mkPen("#aaa"))
-        pi.invertY(True)
         pi.setMenuEnabled(False)
         ap_box_layout.addWidget(self._ap_plot)
         align_layout.addWidget(ap_box)
@@ -700,22 +687,10 @@ class _AlignProperties(QWidget):
         )
 
     def update_section(self, section: Section | None) -> None:
-        if section is None:
-            self._ap_spin.blockSignals(True)
-            self._ap_spin.setValue(0.0)
-            self._ap_spin.blockSignals(False)
-            self._update_proposal_status(None)
-            return
-        ap = section.alignment.ap_position_mm or 0.0
-        self._ap_spin.blockSignals(True)
-        self._ap_spin.setValue(ap)
-        self._ap_spin.blockSignals(False)
         self._update_proposal_status(section)
 
     def update_ap_from_anchoring(self, ap_mm: float) -> None:
-        self._ap_spin.blockSignals(True)
-        self._ap_spin.setValue(ap_mm)
-        self._ap_spin.blockSignals(False)
+        pass
 
     def _update_proposal_status(self, section: Section | None) -> None:
         if section is None:
@@ -749,17 +724,6 @@ class _AlignProperties(QWidget):
         self._align_widget.setVisible(is_align)
         self._warp_widget.setVisible(not is_align)
 
-    def set_ap_range(self, min_mm: float, max_mm: float) -> None:
-        self._ap_spin.blockSignals(True)
-        self._ap_spin.setRange(min_mm, max_mm)
-        self._ap_spin.blockSignals(False)
-
-    def set_ap_step(self, step_mm: float) -> None:
-        self._ap_spin.blockSignals(True)
-        self._ap_spin.setSingleStep(max(step_mm, 0.001))
-        self._ap_spin.setDecimals(3 if step_mm < 0.1 else 2)
-        self._ap_spin.blockSignals(False)
-
     def update_ap_plot(self, sections: list, current_index: int) -> None:
         """Redraw the AP position strip chart."""
         from verso.engine.model.alignment import AlignmentStatus
@@ -780,14 +744,14 @@ class _AlignProperties(QWidget):
                 continue
             s = section.alignment.status
             if s == AlignmentStatus.COMPLETE:
-                x_complete.append(ap)
-                y_complete.append(i)
+                x_complete.append(i)
+                y_complete.append(ap)
             elif s == AlignmentStatus.IN_PROGRESS:
-                x_progress.append(ap)
-                y_progress.append(i)
+                x_progress.append(i)
+                y_progress.append(ap)
             else:
-                x_none.append(ap)
-                y_none.append(i)
+                x_none.append(i)
+                y_none.append(ap)
 
         def _add_scatter(xs, ys, color, size=6) -> None:
             if not xs:
@@ -813,8 +777,8 @@ class _AlignProperties(QWidget):
             if ap is not None and any(v != 0.0 for v in (section.alignment.anchoring or [])):
                 pi.addItem(
                     pg.ScatterPlotItem(
-                        x=[ap],
-                        y=[current_index],
+                        x=[current_index],
+                        y=[ap],
                         symbol="o",
                         size=11,
                         brush=pg.mkBrush(255, 255, 255, 230),
@@ -847,7 +811,6 @@ class PropertiesPanel(QWidget):
     lr_cancel_requested = pyqtSignal()
     lr_clear_requested = pyqtSignal()
     opacity_changed = pyqtSignal(float)
-    ap_changed = pyqtSignal(float)
     cp_style_changed = pyqtSignal(int, str, str)  # size, shape, color
 
     _MODES = ("overview", "prep", "align")
@@ -892,7 +855,6 @@ class PropertiesPanel(QWidget):
         self._prep_page.lr_clear_requested.connect(self.lr_clear_requested)
 
         self._align_page.opacity_changed.connect(self.opacity_changed)
-        self._align_page.ap_changed.connect(self.ap_changed)
         self._align_page.cp_style_changed.connect(self.cp_style_changed)
         self._align_page.channels_changed.connect(self.channels_changed)
         self._align_page.channels_committed.connect(self.channels_committed)
@@ -920,12 +882,6 @@ class PropertiesPanel(QWidget):
 
     def set_align_warp_mode(self, mode: str) -> None:
         self._align_page.set_align_warp_mode(mode)
-
-    def set_ap_range(self, min_mm: float, max_mm: float) -> None:
-        self._align_page.set_ap_range(min_mm, max_mm)
-
-    def set_ap_step(self, step_mm: float) -> None:
-        self._align_page.set_ap_step(step_mm)
 
     def update_ap_from_anchoring(self, ap_mm: float) -> None:
         self._align_page.update_ap_from_anchoring(ap_mm)
