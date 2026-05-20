@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(uv run *)",
-      "Read(//d/proj_PNN-Atlas/VisuAlign-v0_9/ABA_Mouse_CCFv3_2017_25um.cutlas/**)",
-      "Bash(python3 -c ' *)"
-    ]
-  }
-}
