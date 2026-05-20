@@ -6,7 +6,8 @@ Stacks two ImageItems:
 
 Space + drag interaction: while the spacebar is held, left-button drag emits
 ``overlay_panned(dx, dy)`` in scene/data coordinates (image pixels).  The
-AlignView connects this to translate the atlas cut plane.
+AlignView connects this to translate the atlas cut plane.  This gesture is
+disabled in warp mode — spacebar and overlay movement are no-ops there.
 """
 
 from __future__ import annotations
@@ -90,7 +91,7 @@ class _OverlayViewBox(pg.ViewBox):
 
     def mouseDragEvent(self, ev, axis=None) -> None:
         if (
-            self._interaction_mode in ("align", "warp")
+            self._interaction_mode == "align"
             and _SpaceState.held
             and ev.button() == Qt.MouseButton.LeftButton
         ):
