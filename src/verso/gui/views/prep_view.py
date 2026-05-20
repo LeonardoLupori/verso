@@ -80,10 +80,6 @@ class PrepView(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # Left tool palette
-        self._toolbar = self._make_toolbar()
-        layout.addWidget(self._toolbar)
-
         # Central canvas with filename strip
         canvas_col = QVBoxLayout()
         canvas_col.setContentsMargins(0, 0, 0, 0)
@@ -106,6 +102,10 @@ class PrepView(QWidget):
         canvas_col.addWidget(self._canvas, stretch=1)
         layout.addLayout(canvas_col, stretch=1)
 
+        # Right tool palette
+        self._toolbar = self._make_toolbar()
+        layout.addWidget(self._toolbar)
+
         self._install_shortcuts()
 
     def _make_toolbar(self) -> QWidget:
@@ -119,8 +119,8 @@ class PrepView(QWidget):
 
         self._tool_group = QButtonGroup()
         tools = [
-            ("D", "Draw mask (A)", "draw"),
-            ("E", "Erase mask (D)", "erase"),
+            ("D", "Draw mask (D)", "draw"),
+            ("E", "Erase mask (E)", "erase"),
         ]
         btn_ss = (
             "QToolButton { color: #ccc; border-radius: 4px; }"
@@ -168,8 +168,8 @@ class PrepView(QWidget):
 
     def _install_shortcuts(self) -> None:
         shortcuts = [
-            (Qt.Key.Key_A, lambda: self._set_tool("draw")),
-            (Qt.Key.Key_D, lambda: self._set_tool("erase")),
+            (Qt.Key.Key_D, lambda: self._set_tool("draw")),
+            (Qt.Key.Key_E, lambda: self._set_tool("erase")),
             (Qt.Key.Key_M, lambda: self.set_mask_visible(not self._mask_visible)),
             (Qt.Key.Key_N, lambda: self.set_mask_negative(not self._negative_mask)),
             (Qt.Key.Key_U, self.undo_mask_edit),
