@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
+    QHBoxLayout,
     QLabel,
     QPushButton,
     QVBoxLayout,
@@ -32,12 +33,27 @@ if TYPE_CHECKING:
     from verso.engine.atlas import AtlasVolume
 
 
-_OUTLINE_BTN_QSS = (
-    "QPushButton { border-radius: 4px; padding: 2px 10px; color: #ccc;"
-    " background: #333; border: 1px solid #555; }"
-    "QPushButton:checked { background: #4a4a1a; color: #ff0; border-color: #888; }"
-    "QPushButton:hover { background: #444; }"
-)
+def _overlay_btn_qss(idx: int, total: int) -> str:
+    """QSS for a segment in a 3-button overlay-mode control."""
+    is_first = idx == 0
+    is_last = idx == total - 1
+    if is_first:
+        radius = "border-top-left-radius: 4px; border-bottom-left-radius: 4px;"
+        radius += " border-top-right-radius: 0px; border-bottom-right-radius: 0px;"
+        margin = ""
+    elif is_last:
+        radius = "border-top-right-radius: 4px; border-bottom-right-radius: 4px;"
+        radius += " border-top-left-radius: 0px; border-bottom-left-radius: 0px;"
+        margin = "margin-left: -1px;"
+    else:
+        radius = "border-radius: 0px;"
+        margin = "margin-left: -1px;"
+    return (
+        f"QPushButton {{ {radius} {margin} padding: 2px 8px; color: #ccc;"
+        f" background: #333; border: 1px solid #555; }}"
+        f"QPushButton:checked {{ background: #4a4a1a; color: #ff0; border-color: #888; }}"
+        f"QPushButton:hover {{ background: #444; }}"
+    )
 
 _REGION_BAR_IDLE_QSS = (
     "background: #1a1a1a; color: #fff; font-size: 12px; font-weight: bold;"
@@ -60,7 +76,7 @@ class SectionCanvasPanel(QWidget):
     section_loaded = pyqtSignal(object)            # Section | None
     atlas_changed = pyqtSignal(object)             # AtlasVolume | None
     overlay_updated = pyqtSignal(list, int, int)   # anchoring, display_w, display_h
-    outline_mode_changed = pyqtSignal(bool)
+    overlay_mode_changed = pyqtSignal(str)         # "annotation" | "outline" | "reference"
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -73,14 +89,14 @@ class SectionCanvasPanel(QWidget):
         self._channel_layers: list[np.ndarray | None] = []
         self._cached_channel_specs: list[tuple] = []
         self._layer_image_key: tuple = ()
-        self._outline_mode = False
+        self._overlay_mode: str = "annotation"  # "annotation" | "outline" | "reference"
 
         # Hooks set by the active view
         self.overlay_post_processor: Callable[[np.ndarray], np.ndarray] | None = None
         self.cursor_to_atlas_mapper: Callable[[float, float], tuple[float, float]] | None = None
 
         # Buttons/labels created via the make_* helpers — kept in sync here.
-        self._outline_buttons: list[QPushButton] = []
+        self._overlay_mode_widgets: list[dict[str, QPushButton]] = []
         self._status_labels: list[QLabel] = []
 
         self._build_ui()
@@ -133,8 +149,8 @@ class SectionCanvasPanel(QWidget):
         return self._channels
 
     @property
-    def outline_mode(self) -> bool:
-        return self._outline_mode
+    def overlay_mode(self) -> str:
+        return self._overlay_mode
 
     # ------------------------------------------------------------------
     # State mutators
@@ -149,16 +165,18 @@ class SectionCanvasPanel(QWidget):
         self._channels = list(channels)
         self._display_image()
 
-    def set_outline_mode(self, value: bool) -> None:
-        if value == self._outline_mode:
+    def set_overlay_mode(self, mode: str) -> None:
+        if mode == self._overlay_mode:
             return
-        self._outline_mode = value
-        for btn in self._outline_buttons:
-            if btn.isChecked() != value:
-                btn.blockSignals(True)
-                btn.setChecked(value)
-                btn.blockSignals(False)
-        self.outline_mode_changed.emit(value)
+        self._overlay_mode = mode
+        for btn_map in self._overlay_mode_widgets:
+            for m, btn in btn_map.items():
+                checked = (m == mode)
+                if btn.isChecked() != checked:
+                    btn.blockSignals(True)
+                    btn.setChecked(checked)
+                    btn.blockSignals(False)
+        self.overlay_mode_changed.emit(mode)
         self.update_overlay()
 
     def load_section(self, section: Section | None) -> None:
@@ -260,8 +278,10 @@ class SectionCanvasPanel(QWidget):
         out_h = max(1, round(h_bg * scale))
 
         try:
-            if self._outline_mode:
+            if self._overlay_mode == "outline":
                 rgba = self._atlas.slice_outline(anchoring, out_w, out_h)
+            elif self._overlay_mode == "reference":
+                rgba = self._atlas.slice_reference_rgba(anchoring, out_w, out_h)
             else:
                 rgba = self._atlas.slice_annotation(anchoring, out_w, out_h)
         except Exception:
@@ -315,17 +335,36 @@ class SectionCanvasPanel(QWidget):
     # duplicating button setup, while still owning their own toolbars)
     # ------------------------------------------------------------------
 
-    def make_outline_button(self) -> QPushButton:
-        """Create an outline toggle wired to this panel.  Synced across views."""
-        btn = QPushButton("Outline")
-        btn.setCheckable(True)
-        btn.setFixedHeight(28)
-        btn.setToolTip("Show white region outlines instead of coloured fill")
-        btn.setStyleSheet(_OUTLINE_BTN_QSS)
-        btn.setChecked(self._outline_mode)
-        btn.toggled.connect(self.set_outline_mode)
-        self._outline_buttons.append(btn)
-        return btn
+    def make_overlay_mode_widget(self) -> QWidget:
+        """Create an Annotation / Outline / Template segmented control wired to this panel.
+
+        All instances created across views stay in sync via ``set_overlay_mode()``.
+        """
+        container = QWidget()
+        container.setFixedHeight(28)
+        h = QHBoxLayout(container)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(0)
+
+        specs = [
+            ("annotation", "Annotation", "Coloured annotation regions"),
+            ("outline",    "Outline",    "White region-boundary outlines"),
+            ("reference",  "Template",   "Nissl/MRI reference volume (greyscale)"),
+        ]
+        btn_map: dict[str, QPushButton] = {}
+        for i, (mode, label, tip) in enumerate(specs):
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setChecked(mode == self._overlay_mode)
+            btn.setFixedHeight(28)
+            btn.setToolTip(tip)
+            btn.setStyleSheet(_overlay_btn_qss(i, len(specs)))
+            btn.toggled.connect(lambda checked, m=mode: checked and self.set_overlay_mode(m))
+            h.addWidget(btn)
+            btn_map[mode] = btn
+
+        self._overlay_mode_widgets.append(btn_map)
+        return container
 
     def make_status_label(self) -> QLabel:
         """Create a status label that tracks the loaded section's filename."""
