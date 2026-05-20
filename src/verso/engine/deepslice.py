@@ -190,9 +190,7 @@ def reset_in_progress_to_default_proposals(
     """Clear editable suggestions and regenerate QuickNII-style default proposals."""
     from verso.engine.io.image_io import registration_dimensions
     from verso.engine.registration import (
-        _original_space_anchoring,
-        flip_anchoring_horizontal,
-        flip_anchoring_vertical,
+        _display_space_anchoring,
         quicknii_coronal_series_anchorings,
     )
 
@@ -217,8 +215,8 @@ def reset_in_progress_to_default_proposals(
         if not is_stored:
             stored_anchorings.append(None)
             continue
-        original = _original_space_anchoring(section)
-        stored_anchorings.append(original if any(v != 0.0 for v in original) else None)
+        display = _display_space_anchoring(section)
+        stored_anchorings.append(display if any(v != 0.0 for v in display) else None)
     propagated = quicknii_coronal_series_anchorings(
         image_sizes=[(w, h) for _, w, h in usable],
         serial_numbers=[section.serial_number for section, _, _ in usable],
@@ -232,10 +230,6 @@ def reset_in_progress_to_default_proposals(
     for (section, _, _), anchoring, stored in zip(usable, propagated, stored_anchorings):
         if stored is not None:
             continue
-        if section.preprocessing.flip_horizontal:
-            anchoring = flip_anchoring_horizontal(anchoring)
-        if section.preprocessing.flip_vertical:
-            anchoring = flip_anchoring_vertical(anchoring)
         section.alignment.anchoring = anchoring
         section.alignment.ap_position_mm = None
         section.alignment.status = AlignmentStatus.IN_PROGRESS

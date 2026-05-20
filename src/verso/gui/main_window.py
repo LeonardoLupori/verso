@@ -682,32 +682,28 @@ class MainWindow(QMainWindow):
     # Property change slots
     # ------------------------------------------------------------------
 
+    def _clear_alignment_for_flip(self, section) -> None:
+        section.alignment.anchoring = [0.0] * 9
+        section.alignment.ap_position_mm = None
+        section.alignment.status = AlignmentStatus.NOT_STARTED
+        section.alignment.source = None
+        section.alignment.stored_anchoring = None
+        section.alignment.proposal_anchoring = None
+        section.alignment.proposal_confidence = None
+        section.alignment.proposal_run_id = None
+        section.warp.control_points.clear()
+        section.warp.status = AlignmentStatus.NOT_STARTED
+
     def _on_flip_h_changed(self, value: bool) -> None:
         section = self._state.current_section
         if section is None:
             return
-        was_flipped = section.preprocessing.flip_horizontal
-        if value == was_flipped:
+        if value == section.preprocessing.flip_horizontal:
             return
-        # Cancel a live L/R draw before the flip — the line's display coords
-        # would otherwise become inconsistent with the flipped image.
         if self._prep.cancel_lr_draw_if_active():
             self._props.set_lr_draw_active(False)
         section.preprocessing.flip_horizontal = value
-        from verso.engine.registration import flip_anchoring_horizontal
-
-        if section.alignment.anchoring and any(section.alignment.anchoring):
-            section.alignment.anchoring = flip_anchoring_horizontal(
-                section.alignment.anchoring
-            )
-            if self._state.atlas is not None:
-                section.alignment.ap_position_mm = self._anchoring_ap_mm(
-                    section.alignment.anchoring
-                )
-        if section.alignment.proposal_anchoring is not None:
-            section.alignment.proposal_anchoring = flip_anchoring_horizontal(
-                section.alignment.proposal_anchoring
-            )
+        self._clear_alignment_for_flip(section)
         if self._current_mode == "prep":
             self._prep.refresh_display()
         elif self._current_mode in ("align", "warp"):
@@ -719,26 +715,12 @@ class MainWindow(QMainWindow):
         section = self._state.current_section
         if section is None:
             return
-        was_flipped = section.preprocessing.flip_vertical
-        if value == was_flipped:
+        if value == section.preprocessing.flip_vertical:
             return
         if self._prep.cancel_lr_draw_if_active():
             self._props.set_lr_draw_active(False)
         section.preprocessing.flip_vertical = value
-        from verso.engine.registration import flip_anchoring_vertical
-
-        if section.alignment.anchoring and any(section.alignment.anchoring):
-            section.alignment.anchoring = flip_anchoring_vertical(
-                section.alignment.anchoring
-            )
-            if self._state.atlas is not None:
-                section.alignment.ap_position_mm = self._anchoring_ap_mm(
-                    section.alignment.anchoring
-                )
-        if section.alignment.proposal_anchoring is not None:
-            section.alignment.proposal_anchoring = flip_anchoring_vertical(
-                section.alignment.proposal_anchoring
-            )
+        self._clear_alignment_for_flip(section)
         if self._current_mode == "prep":
             self._prep.refresh_display()
         elif self._current_mode in ("align", "warp"):
@@ -1040,39 +1022,35 @@ class MainWindow(QMainWindow):
         if not usable:
             return
 
-        from verso.engine.registration import (
-            _original_space_anchoring,
-            flip_anchoring_horizontal,
-            flip_anchoring_vertical,
-        )
+        from verso.engine.registration import _display_space_anchoring
 
-        canonical_anchorings = []
+        display_anchorings = []
         for section, _, _ in usable:
             is_complete = (
                 section.alignment.status == AlignmentStatus.COMPLETE
             )
-            canonical_anchorings.append(
-                _original_space_anchoring(section) if is_complete else None
+            display_anchorings.append(
+                _display_space_anchoring(section) if is_complete else None
             )
         propagated = quicknii_coronal_series_anchorings(
             image_sizes=[(w, h) for _, w, h in usable],
             serial_numbers=[section.serial_number for section, _, _ in usable],
             atlas_shape=atlas.shape,
-            stored_anchorings=canonical_anchorings,
+            stored_anchorings=display_anchorings,
             reverse_ap=self._reverse_ap_proposal,
             center_proposals=True,
         )
 
         stored_serials = {
             section.serial_number
-            for (section, _, _), original in zip(usable, canonical_anchorings)
-            if original is not None
+            for (section, _, _), anch in zip(usable, display_anchorings)
+            if anch is not None
         }
 
-        for (section, _, _), anchoring, original in zip(
-            usable, propagated, canonical_anchorings
+        for (section, _, _), anchoring, anch in zip(
+            usable, propagated, display_anchorings
         ):
-            if original is not None:
+            if anch is not None:
                 continue
             # Always sync sections that share a serial with a stored section —
             # they represent the same physical slice and must show the same image.
@@ -1087,10 +1065,6 @@ class MainWindow(QMainWindow):
                 and section.alignment.source != "quicknii_default"
             ):
                 continue
-            if section.preprocessing.flip_horizontal:
-                anchoring = flip_anchoring_horizontal(anchoring)
-            if section.preprocessing.flip_vertical:
-                anchoring = flip_anchoring_vertical(anchoring)
             section.alignment.anchoring = anchoring
             if section.alignment.status == AlignmentStatus.NOT_STARTED:
                 section.alignment.status = AlignmentStatus.IN_PROGRESS
