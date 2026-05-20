@@ -12,18 +12,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from verso.engine.model.alignment import AlignmentStatus
-
 _THUMB_SIZE = 100  # px long side
-
-# Status border colours
-_COLOUR = {
-    AlignmentStatus.NOT_STARTED: "#888888",
-    AlignmentStatus.IN_PROGRESS: "#888888",
-    AlignmentStatus.COMPLETE: "#4CAF50",
-}
 _BORDER_W = 3
-_BADGE_SIZE = 16
 
 
 class _ThumbButton(QLabel):
@@ -35,30 +25,12 @@ class _ThumbButton(QLabel):
         super().__init__(parent)
         self._index = index
         self._selected = False
-        self._status = AlignmentStatus.NOT_STARTED
-        self._align_stored = False  # alignment.COMPLETE when in align-view mode
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFixedSize(_THUMB_SIZE + 2 * _BORDER_W, _THUMB_SIZE + 2 * _BORDER_W)
-
-        # Small "stored" badge — green checkmark shown in align-view mode
-        self._badge = QLabel("✓", self)
-        self._badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._badge.setFixedSize(_BADGE_SIZE, _BADGE_SIZE)
-        self._badge.setStyleSheet(
-            "background: #4CAF50; color: #fff; font-size: 9px; font-weight: bold;"
-            " border: none; border-radius: 2px;"
-        )
-        self._badge.move(
-            self.width() - _BADGE_SIZE - _BORDER_W,
-            self.height() - _BADGE_SIZE - _BORDER_W,
-        )
-        self._badge.hide()
-
         self._set_placeholder()
 
-    def set_thumbnail(self, pixmap: QPixmap, status: AlignmentStatus) -> None:
-        self._status = status
+    def set_thumbnail(self, pixmap: QPixmap) -> None:
         scaled = pixmap.scaled(
             _THUMB_SIZE,
             _THUMB_SIZE,
@@ -72,17 +44,6 @@ class _ThumbButton(QLabel):
         self._selected = selected
         self._apply_border()
 
-    def set_align_stored(self, is_stored: bool) -> None:
-        """Toggle the stored-alignment badge (shown only in align-view mode)."""
-        self._align_stored = is_stored
-        self._badge.setVisible(is_stored)
-        self._apply_border()
-
-    def set_status(self, status: AlignmentStatus) -> None:
-        """Update the status colour without rebuilding the thumbnail pixmap."""
-        self._status = status
-        self._apply_border()
-
     def _set_placeholder(self) -> None:
         px = QPixmap(_THUMB_SIZE, _THUMB_SIZE)
         px.fill(QColor("#2a2a2a"))
@@ -90,21 +51,10 @@ class _ThumbButton(QLabel):
         self._apply_border()
 
     def _apply_border(self) -> None:
-        if self._align_stored:
-            # In align-view mode: stored sections always show green, selection adds white
-            colour = "#4CAF50"
-            width = _BORDER_W + 1 if self._selected else _BORDER_W
-        elif self._selected:
-            colour = "#FFFFFF"
-            width = _BORDER_W
-        else:
-            colour = _COLOUR.get(self._status, "#888888")
-            width = _BORDER_W
+        colour = "#FFFFFF" if self._selected else "#555555"
         self.setStyleSheet(
-            f"border: {width}px solid {colour}; background: transparent;"
+            f"border: {_BORDER_W}px solid {colour}; background: transparent;"
         )
-        # Keep badge on top
-        self._badge.raise_()
 
     def mousePressEvent(self, event) -> None:  # noqa: ANN001
         if event.button() == Qt.MouseButton.LeftButton:
@@ -120,15 +70,10 @@ class Filmstrip(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._buttons: list[_ThumbButton] = []
-        self._sections: list = []
         self._current: int = 0
-        self._align_mode: bool = False
         self._build_ui()
 
     def _build_ui(self) -> None:
-        # Outer layout is vertical with stretches above and below the scroll
-        # area so that when the dock is resized taller than the thumbnail row,
-        # the row stays at its fixed height and is centered in the dock.
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
@@ -161,7 +106,6 @@ class Filmstrip(QWidget):
             channels: project-level :class:`ChannelSpec` list used to composite
                 the cached multichannel thumbnail to RGB.
         """
-        self._sections = sections
         channels = channels or []
 
         for btn in self._buttons:
@@ -172,58 +116,21 @@ class Filmstrip(QWidget):
         for i, section in enumerate(sections):
             btn = _ThumbButton(i)
             btn.clicked.connect(self._on_thumb_clicked)
-            status = section.warp.status
-            if status == AlignmentStatus.NOT_STARTED:
-                status = section.alignment.status
 
             try:
                 from verso.engine.io.image_io import load_filmstrip_thumbnail
                 from verso.gui.utils import ndarray_to_pixmap
+
                 thumb_arr = load_filmstrip_thumbnail(section, channels)
                 if thumb_arr is not None:
-                    btn.set_thumbnail(ndarray_to_pixmap(thumb_arr), status)
-                else:
-                    btn._status = status
-                    btn._apply_border()
+                    btn.set_thumbnail(ndarray_to_pixmap(thumb_arr))
             except Exception:
-                btn._status = status
-                btn._apply_border()
+                pass
 
             self._row.insertWidget(self._row.count() - 1, btn)
             self._buttons.append(btn)
 
-        self._apply_align_indicators()
         self._highlight(self._current)
-
-    def set_align_mode(self, is_align: bool) -> None:
-        """Switch between align-view mode (green stored badges) and normal mode."""
-        self._align_mode = is_align
-        self._apply_align_indicators()
-
-    def refresh_stored(self) -> None:
-        """Re-apply stored-alignment indicators after alignment changes."""
-        self.refresh_statuses()
-        self._apply_align_indicators()
-
-    def refresh_statuses(self) -> None:
-        """Refresh border status colours from the current section state."""
-        for i, btn in enumerate(self._buttons):
-            if i >= len(self._sections):
-                continue
-            status = self._sections[i].warp.status
-            if status == AlignmentStatus.NOT_STARTED:
-                status = self._sections[i].alignment.status
-            btn.set_status(status)
-
-    def _apply_align_indicators(self) -> None:
-        for i, btn in enumerate(self._buttons):
-            if i < len(self._sections) and self._align_mode:
-                is_stored = (
-                    self._sections[i].alignment.status == AlignmentStatus.COMPLETE
-                )
-                btn.set_align_stored(is_stored)
-            else:
-                btn.set_align_stored(False)
 
     def set_current(self, index: int) -> None:
         self._highlight(index)

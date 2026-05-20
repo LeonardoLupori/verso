@@ -421,7 +421,6 @@ class MainWindow(QMainWindow):
 
         # Show filmstrip outside Overview; enable stored-alignment badges in Align/Warp
         self._bottom_dock.setVisible(index != _VIEW_OVERVIEW)
-        self._filmstrip.set_align_mode(index in (_VIEW_ALIGN, _VIEW_WARP))
         if self._current_mode == "overview":
             self._overview.refresh()
 
@@ -957,7 +956,6 @@ class MainWindow(QMainWindow):
         self._panel.update_overlay()
         for i in range(len(project.sections)):
             self._overview.refresh_row(i)
-        self._filmstrip.refresh_stored()
         self._update_ap_plot()
         self._update_reverse_order_enabled()
         self._update_deepslice_enabled()
@@ -1277,7 +1275,6 @@ class MainWindow(QMainWindow):
         if atlas is not None:
             self._sync_ap_mm(project.sections)
         self._overview.refresh()
-        self._filmstrip.refresh_stored()
         self._panel.refresh_display()
         self._refresh_properties()
         self._update_ap_plot()
@@ -1307,7 +1304,6 @@ class MainWindow(QMainWindow):
         )
         self._sync_ap_mm(project.sections)
         self._overview.refresh()
-        self._filmstrip.refresh_stored()
         self._on_section_changed(self._state.section_index)
         self._update_ap_plot()
         self.statusBar().showMessage(f"Restored {changed} default proposals", 3000)
@@ -1339,7 +1335,6 @@ class MainWindow(QMainWindow):
         )
         self._sync_ap_mm(project.sections)
         self._overview.refresh()
-        self._filmstrip.refresh_stored()
         self._on_section_changed(self._state.section_index)
         self._update_ap_plot()
         self._update_reverse_order_enabled()
