@@ -179,6 +179,27 @@ class AtlasVolume:
         gray = self._reference[ap, dv, lr]
         return np.stack([gray, gray, gray], axis=-1).astype(np.uint8)
 
+    def slice_reference_rgba(
+        self, anchoring: list[float], out_w: int, out_h: int
+    ) -> np.ndarray:
+        """Slice the MRI/Nissl reference volume → RGBA uint8 (H, W, 4).
+
+        Alpha mirrors slice_annotation(): 255 within brain, 25 within atlas
+        but outside annotated brain, 0 outside the atlas volume entirely.
+        """
+        labels, in_bounds = self._sample(anchoring, out_w, out_h)
+        grid = make_atlas_sample_grid(anchoring, out_w, out_h)
+        ap = np.clip(np.round(grid[:, :, 1]).astype(int), 0, self._reference.shape[0] - 1)
+        dv = np.clip(np.round(grid[:, :, 2]).astype(int), 0, self._reference.shape[1] - 1)
+        lr = np.clip(np.round(grid[:, :, 0]).astype(int), 0, self._reference.shape[2] - 1)
+        gray = self._reference[ap, dv, lr].astype(np.uint8)
+        rgb = np.stack([gray, gray, gray], axis=-1)
+        alpha = np.where(
+            ~in_bounds, 0,
+            np.where(labels == 0, 25, 255),
+        ).astype(np.uint8)
+        return np.dstack([rgb, alpha])
+
     def default_anchoring(self, aspect_ratio: float = 1.0) -> list[float]:
         """Centered coronal anchoring for this atlas."""
         ap_dim, dv_dim, lr_dim = self._annotation.shape

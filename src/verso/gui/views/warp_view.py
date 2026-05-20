@@ -82,7 +82,7 @@ class WarpView(QWidget):
         h.setContentsMargins(8, 2, 8, 2)
         h.setSpacing(4)
 
-        h.addWidget(self._panel.make_outline_button())
+        h.addWidget(self._panel.make_overlay_mode_widget())
 
         h.addStretch()
 
