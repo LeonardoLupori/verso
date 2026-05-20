@@ -582,8 +582,6 @@ class MainWindow(QMainWindow):
         self._update_deepslice_enabled()
 
         if project.atlas:
-            self._props.set_atlas_name(project.atlas.name)
-            self._props.set_atlas_loading(True)
             self._state.load_atlas(project.atlas.name)
 
         self._switch_view(_VIEW_OVERVIEW)
@@ -615,7 +613,6 @@ class MainWindow(QMainWindow):
     def _on_atlas_loaded(self) -> None:
         atlas = self._state.atlas
         self._panel.set_atlas(atlas)
-        self._props.set_atlas_loading(False)
         if atlas is not None:
             project = self._state.project
             if project is not None:
@@ -628,7 +625,6 @@ class MainWindow(QMainWindow):
 
     def _on_atlas_error(self, message: str) -> None:
         from PyQt6.QtWidgets import QMessageBox
-        self._props.set_atlas_loading(False)
         self._update_deepslice_enabled()
         QMessageBox.warning(self, "Atlas load failed", message)
 
