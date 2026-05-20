@@ -235,21 +235,10 @@ def flip_anchoring_vertical(anchoring: list[float]) -> list[float]:
 
 
 def _original_space_anchoring(section) -> list[float]:
-    """Return the section's anchoring in original (unflipped) image space.
-
-    ``stored_anchoring`` is always in original space (new invariant).
-    Falls back to un-flipping the display-space ``anchoring`` field when
-    ``stored_anchoring`` is absent.
-    """
     stored = section.alignment.stored_anchoring
     if stored and any(v != 0.0 for v in stored):
         return list(stored)
-    anch = list(section.alignment.anchoring)
-    if section.preprocessing.flip_horizontal:
-        anch = flip_anchoring_horizontal(anch)
-    if section.preprocessing.flip_vertical:
-        anch = flip_anchoring_vertical(anch)
-    return anch
+    return list(section.alignment.anchoring)
 
 
 # ---------------------------------------------------------------------------

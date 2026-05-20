@@ -381,16 +381,10 @@ class AlignView(QWidget):
         stored = section.alignment.stored_anchoring
         if not stored or all(v == 0.0 for v in stored):
             return
-        from verso.engine.registration import flip_anchoring_horizontal, flip_anchoring_vertical
-        display = list(stored)
-        if section.preprocessing.flip_horizontal:
-            display = flip_anchoring_horizontal(display)
-        if section.preprocessing.flip_vertical:
-            display = flip_anchoring_vertical(display)
-        section.alignment.anchoring = display
-        self._sync_ap_from_anchoring(display)
+        section.alignment.anchoring = list(stored)
+        self._sync_ap_from_anchoring(stored)
         self._panel.update_overlay()
-        self.anchoring_changed.emit(display)
+        self.anchoring_changed.emit(stored)
         self.section_modified.emit()
 
     def _store_anchoring(self) -> None:
@@ -406,13 +400,7 @@ class AlignView(QWidget):
                 return
             h, w = raw.shape[:2]
             section.alignment.anchoring = atlas.default_anchoring(w / h)
-        from verso.engine.registration import flip_anchoring_horizontal, flip_anchoring_vertical
-        stored = list(section.alignment.anchoring)
-        if section.preprocessing.flip_horizontal:
-            stored = flip_anchoring_horizontal(stored)
-        if section.preprocessing.flip_vertical:
-            stored = flip_anchoring_vertical(stored)
-        section.alignment.stored_anchoring = stored
+        section.alignment.stored_anchoring = list(section.alignment.anchoring)
         section.alignment.status = AlignmentStatus.COMPLETE
         self._clear_btn.setEnabled(True)
         self._update_revert_enabled()
