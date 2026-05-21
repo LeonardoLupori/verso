@@ -22,6 +22,8 @@ class AtlasVolume:
         self.resolution_um: float = float(self._bg.resolution[0])
         self._annotation: np.ndarray = self._bg.annotation  # (AP, DV, LR)
         self._reference: np.ndarray = self._bg.reference    # (AP, DV, LR)
+        ref_max = float(self._reference.max())
+        self._reference_scale: float = 255.0 / ref_max if ref_max > 0 else 1.0
         self._color_dict: dict[int, tuple[int, int, int]] = self._build_color_dict()
 
     def _build_color_dict(self) -> dict[int, tuple[int, int, int]]:
@@ -176,28 +178,26 @@ class AtlasVolume:
         ap = np.clip(np.round(grid[:, :, 1]).astype(int), 0, self._reference.shape[0] - 1)
         dv = np.clip(np.round(grid[:, :, 2]).astype(int), 0, self._reference.shape[1] - 1)
         lr = np.clip(np.round(grid[:, :, 0]).astype(int), 0, self._reference.shape[2] - 1)
-        gray = self._reference[ap, dv, lr]
-        return np.stack([gray, gray, gray], axis=-1).astype(np.uint8)
+        gray = (self._reference[ap, dv, lr].astype(np.float32) * self._reference_scale).clip(0, 255).astype(np.uint8)
+        return np.stack([gray, gray, gray], axis=-1)
 
     def slice_reference_rgba(
         self, anchoring: list[float], out_w: int, out_h: int
     ) -> np.ndarray:
         """Slice the MRI/Nissl reference volume → RGBA uint8 (H, W, 4).
 
-        Alpha mirrors slice_annotation(): 255 within brain, 25 within atlas
-        but outside annotated brain, 0 outside the atlas volume entirely.
+        Alpha is 255 within the atlas bounds and 0 outside — label-based
+        transparency is not applied here because unannotated regions (fiber
+        tracts, ventricles) are the dark features the template is meant to show.
         """
         labels, in_bounds = self._sample(anchoring, out_w, out_h)
         grid = make_atlas_sample_grid(anchoring, out_w, out_h)
         ap = np.clip(np.round(grid[:, :, 1]).astype(int), 0, self._reference.shape[0] - 1)
         dv = np.clip(np.round(grid[:, :, 2]).astype(int), 0, self._reference.shape[1] - 1)
         lr = np.clip(np.round(grid[:, :, 0]).astype(int), 0, self._reference.shape[2] - 1)
-        gray = self._reference[ap, dv, lr].astype(np.uint8)
+        gray = (self._reference[ap, dv, lr].astype(np.float32) * self._reference_scale).clip(0, 255).astype(np.uint8)
         rgb = np.stack([gray, gray, gray], axis=-1)
-        alpha = np.where(
-            ~in_bounds, 0,
-            np.where(labels == 0, 25, 255),
-        ).astype(np.uint8)
+        alpha = np.where(~in_bounds, 0, 255).astype(np.uint8)
         return np.dstack([rgb, alpha])
 
     def default_anchoring(self, aspect_ratio: float = 1.0) -> list[float]:

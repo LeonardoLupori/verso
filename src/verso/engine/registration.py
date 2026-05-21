@@ -234,11 +234,18 @@ def flip_anchoring_vertical(anchoring: list[float]) -> list[float]:
     return vectors_to_anchoring(o + v, u, -v)
 
 
-def _original_space_anchoring(section) -> list[float]:
+def _display_space_anchoring(section) -> list[float]:
+    """Return anchoring in display space (exactly as the user positioned it).
+
+    ``stored_anchoring`` and ``anchoring`` are both in display space (the new
+    invariant). This is the value written to QuickNII/VisuAlign exports so that
+    the saved coordinates match what the user saw.
+    """
     stored = section.alignment.stored_anchoring
     if stored and any(v != 0.0 for v in stored):
         return list(stored)
     return list(section.alignment.anchoring)
+
 
 
 # ---------------------------------------------------------------------------
@@ -600,14 +607,14 @@ def interpolate_anchorings(
     stored_indices: list[int] = []
     for idx, (section, w, h) in enumerate(sorted_usable):
         if section.alignment.status == AlignmentStatus.COMPLETE:
-            original = _original_space_anchoring(section)
-            if any(v != 0.0 for v in original):
-                unpacked_by_index[idx] = quicknii_unpack_anchoring(original, w, h)
+            display = _display_space_anchoring(section)
+            if any(v != 0.0 for v in display):
+                unpacked_by_index[idx] = quicknii_unpack_anchoring(display, w, h)
                 stored_indices.append(idx)
 
     if atlas_shape is not None:
         stored_anchorings_for_series = [
-            _original_space_anchoring(section) if idx in stored_indices else None
+            _display_space_anchoring(section) if idx in stored_indices else None
             for idx, (section, _, _) in enumerate(sorted_usable)
         ]
         propagated_anchorings = quicknii_coronal_series_anchorings(
@@ -622,10 +629,6 @@ def interpolate_anchorings(
         for (section, _, _), anchoring in zip(sorted_usable, propagated_anchorings):
             if section.alignment.status == AlignmentStatus.COMPLETE:
                 continue
-            if section.preprocessing.flip_horizontal:
-                anchoring = flip_anchoring_horizontal(anchoring)
-            if section.preprocessing.flip_vertical:
-                anchoring = flip_anchoring_vertical(anchoring)
             section.alignment.anchoring = anchoring
             section.alignment.status = AlignmentStatus.IN_PROGRESS
         return
@@ -681,12 +684,7 @@ def interpolate_anchorings(
         section, w, h = sorted_usable[idx]
         if section.alignment.status == AlignmentStatus.COMPLETE:
             continue
-        anchoring = quicknii_pack_anchoring(unpacked, w, h)
-        if section.preprocessing.flip_horizontal:
-            anchoring = flip_anchoring_horizontal(anchoring)
-        if section.preprocessing.flip_vertical:
-            anchoring = flip_anchoring_vertical(anchoring)
-        section.alignment.anchoring = anchoring
+        section.alignment.anchoring = quicknii_pack_anchoring(unpacked, w, h)
         section.alignment.status = AlignmentStatus.IN_PROGRESS
 
 

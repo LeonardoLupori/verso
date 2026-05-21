@@ -223,7 +223,7 @@ def test_reset_in_progress_to_default_proposals_clears_deepslice_metadata(tmp_pa
         assert section.warp.control_points == []
 
 
-def test_reset_default_proposals_interpolates_flipped_keyframe_in_canonical_space(
+def test_reset_default_proposals_interpolates_flipped_keyframe_in_display_space(
     tmp_path: Path,
 ):
     atlas_shape = (528, 320, 456)
@@ -243,8 +243,11 @@ def test_reset_default_proposals_interpolates_flipped_keyframe_in_canonical_spac
     unpacked_right = list(unpacked_left)
     unpacked_right[1] = 100.0
     left = quicknii_pack_anchoring(unpacked_left, 1000, 800)
+    # Section 3 is flipped to restore coherent orientation. After flipping,
+    # the user aligns the atlas in display space — u points the same anatomical
+    # direction as the unflipped keyframe. Both keyframes have the same u vector
+    # in display space, so interpolation propagates the angle correctly.
     right = quicknii_pack_anchoring(unpacked_right, 1000, 800)
-    right_display = flip_anchoring_horizontal(right)
 
     project = Project(
         name="deep",
@@ -274,7 +277,7 @@ def test_reset_default_proposals_interpolates_flipped_keyframe_in_canonical_spac
     project.sections[0].alignment.anchoring = left
     project.sections[0].alignment.stored_anchoring = list(left)
     project.sections[0].alignment.status = AlignmentStatus.COMPLETE
-    project.sections[2].alignment.anchoring = right_display
+    project.sections[2].alignment.anchoring = right
     project.sections[2].alignment.stored_anchoring = list(right)
     project.sections[2].alignment.status = AlignmentStatus.COMPLETE
 

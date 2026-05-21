@@ -476,7 +476,7 @@ def save_quicknii_xml(
     atlas_name = project.atlas.name if project.atlas else ""
     lines.append(f"<series name='{project.name}' target='{atlas_name}'{res_attr}>")
 
-    from verso.engine.registration import _original_space_anchoring
+    from verso.engine.registration import _display_space_anchoring
     prefixes = ["' anchoring='ox=", "&amp;oy=", "&amp;oz=", "&amp;ux=",
                 "&amp;uy=", "&amp;uz=", "&amp;vx=", "&amp;vy=", "&amp;vz="]
     for section in project.sections:
@@ -488,7 +488,7 @@ def save_quicknii_xml(
             f" width='{w}' height='{h}"
         )
         if section.alignment.status == AlignmentStatus.COMPLETE:
-            original = _original_space_anchoring(section)
+            original = _display_space_anchoring(section)
             if any(original):
                 a = _export_anchoring(original, atlas_shape)
                 for prefix, val in zip(prefixes, [round(v, 4) for v in a]):
@@ -518,7 +518,7 @@ def save_quicknii(
     """
     if atlas_shape is None and project.atlas:
         atlas_shape = _BG_ATLAS_SHAPE.get(project.atlas.name)
-    from verso.engine.registration import _original_space_anchoring
+    from verso.engine.registration import _display_space_anchoring
     slices_out: list[dict[str, Any]] = []
     for section in project.sections:
         w, h = _registration_dims(section)
@@ -529,7 +529,7 @@ def save_quicknii(
             "height": h,
         }
         if section.alignment.status == AlignmentStatus.COMPLETE:
-            original = _original_space_anchoring(section)
+            original = _display_space_anchoring(section)
             if any(original):
                 entry["anchoring"] = [round(v, 4) for v in _export_anchoring(original, atlas_shape)]
         slices_out.append(entry)
@@ -650,7 +650,7 @@ def save_visualign(
     """
     if atlas_shape is None and project.atlas:
         atlas_shape = _BG_ATLAS_SHAPE.get(project.atlas.name)
-    from verso.engine.registration import _original_space_anchoring
+    from verso.engine.registration import _display_space_anchoring
     slices_out: list[dict[str, Any]] = []
     for section in project.sections:
         w, h = _registration_dims(section)
@@ -661,7 +661,7 @@ def save_visualign(
             "height": h,
         }
         if section.alignment.status == AlignmentStatus.COMPLETE:
-            original = _original_space_anchoring(section)
+            original = _display_space_anchoring(section)
             if any(original):
                 entry["anchoring"] = [round(v, 4) for v in _export_anchoring(original, atlas_shape)]
         if section.warp.control_points:

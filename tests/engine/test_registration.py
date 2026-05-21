@@ -482,8 +482,6 @@ def test_interpolate_anchorings_handles_horizontally_flipped_stored_keyframe(
     unpacked_right[1] = 100.0
     left = quicknii_pack_anchoring(unpacked_left, 1000, 800)
     right = quicknii_pack_anchoring(unpacked_right, 1000, 800)
-    right_display = flip_anchoring_horizontal(right)
-
     sections = [
         Section(
             id="s001",
@@ -505,7 +503,7 @@ def test_interpolate_anchorings_handles_horizontally_flipped_stored_keyframe(
             thumbnail_path=str(paths[2]),
             preprocessing=Preprocessing(flip_horizontal=True),
             alignment=Alignment(
-                anchoring=right_display,
+                anchoring=right,
                 stored_anchoring=right,
                 status=AlignmentStatus.COMPLETE,
             ),
