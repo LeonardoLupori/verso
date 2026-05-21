@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import QObject, QSettings, Qt, QThread, pyqtSignal
+from PyQt6.QtCore import QObject, QSettings, Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QAction, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QAbstractSlider,
@@ -42,6 +42,7 @@ from PyQt6.QtWidgets import (
 from verso.engine.io.quint_io import load_quicknii, load_visualign
 from verso.engine.model.alignment import AlignmentStatus
 from verso.engine.model.project import DEFAULT_PROJECT_FILENAME, Project
+from verso.gui.dialogs.brightness import BrightnessDialog
 from verso.gui.dialogs.new_project import NewProjectDialog
 from verso.gui.state import AppState
 from verso.gui.views.align_view import AlignView
@@ -138,6 +139,16 @@ class MainWindow(QMainWindow):
         self._batch_mask_thread: QThread | None = None
         self._batch_mask_worker: _BatchMaskWorker | None = None
         self._batch_mask_progress: QProgressDialog | None = None
+        self._brightness_dialog: BrightnessDialog | None = None
+
+        # Coalesce rapid brightness-slider ticks into one redraw per event-loop
+        # pass. Without this the GUI thread spends each tick re-compositing the
+        # working-resolution image and the slider visibly lags the mouse.
+        self._channels_pending: list | None = None
+        self._channels_flush_timer = QTimer(self)
+        self._channels_flush_timer.setSingleShot(True)
+        self._channels_flush_timer.setInterval(0)
+        self._channels_flush_timer.timeout.connect(self._flush_channels_changed)
 
         self._build_menu()
         self._build_toolbar()
@@ -233,6 +244,26 @@ class MainWindow(QMainWindow):
         act_quit.setShortcut(QKeySequence.StandardKey.Quit)
         act_quit.triggered.connect(self.close)
         file_menu.addAction(act_quit)
+
+        images_menu = mb.addMenu("&Images")
+        act_adjust = QAction("Adjust &channels/brightness…", self)
+        act_adjust.triggered.connect(self._open_brightness_dialog)
+        images_menu.addAction(act_adjust)
+
+    def _open_brightness_dialog(self) -> None:
+        """Show the floating brightness dialog, constructing it on first use."""
+        if self._brightness_dialog is None:
+            self._brightness_dialog = BrightnessDialog(self)
+            self._brightness_dialog.channels_changed.connect(self._on_channels_changed)
+            self._brightness_dialog.channels_committed.connect(
+                self._on_channels_committed
+            )
+        project = self._state.project
+        if project is not None:
+            self._brightness_dialog.set_channels(project.channels)
+        self._brightness_dialog.show()
+        self._brightness_dialog.raise_()
+        self._brightness_dialog.activateWindow()
 
     def _build_toolbar(self) -> None:
         tb = QToolBar("Views")
@@ -357,8 +388,6 @@ class MainWindow(QMainWindow):
         # Properties
         self._props.flip_h_changed.connect(self._on_flip_h_changed)
         self._props.flip_v_changed.connect(self._on_flip_v_changed)
-        self._props.channels_changed.connect(self._on_channels_changed)
-        self._props.channels_committed.connect(self._on_channels_committed)
         self._props.mask_visibility_changed.connect(self._prep.set_mask_visible)
         self._props.mask_opacity_changed.connect(self._prep.set_mask_opacity)
         self._props.mask_color_changed.connect(self._prep.set_mask_color)
@@ -425,11 +454,15 @@ class MainWindow(QMainWindow):
 
         # Sync the newly visible view with the current section
         section = self._state.current_section
+        project = self._state.project
         if self._current_mode == "prep":
             if self._prep._section is section:
                 self._prep.refresh_display()
             else:
                 self._prep.load_section(section)
+            # Pick up any brightness edits made while Prep was hidden.
+            if project is not None:
+                self._prep.set_channels(project.channels)
         elif self._current_mode in ("align", "warp"):
             # Activate the new view (reparents the shared panel + installs hooks),
             # then ensure the section state is current.
@@ -439,6 +472,8 @@ class MainWindow(QMainWindow):
                 self._warp.activate()
             if self._panel.section is not section:
                 self._panel.load_section(section)
+            if project is not None:
+                self._panel.set_channels(project.channels)
             self._props.set_align_warp_mode(self._current_mode)
 
         # Refresh properties with current section
@@ -575,7 +610,8 @@ class MainWindow(QMainWindow):
         self._filmstrip.populate(project.sections, project.channels)
         self._prep.set_channels(project.channels)
         self._panel.set_channels(project.channels)
-        self._props.set_channels(project.channels)
+        if self._brightness_dialog is not None:
+            self._brightness_dialog.set_channels(project.channels)
         self._props.apply_cp_style(project.cp_size, project.cp_shape, project.cp_color)
         self._warp.set_cp_style(project.cp_size, project.cp_shape, project.cp_color)
         self._update_reverse_order_enabled()
@@ -750,20 +786,37 @@ class MainWindow(QMainWindow):
         self._panel.canvas.set_overlay_opacity(opacity)
 
     def _on_channels_changed(self, channels: list) -> None:
-        """Live updates while the user drags a brightness slider."""
+        """Live updates while the user drags a brightness slider.
+
+        Coalesces bursts of slider ticks: we stash the latest snapshot and
+        flush it on the next event-loop pass, so the GUI thread never queues
+        up more than one composite at a time.
+        """
+        self._channels_pending = channels
+        if not self._channels_flush_timer.isActive():
+            self._channels_flush_timer.start()
+
+    def _flush_channels_changed(self) -> None:
+        channels = self._channels_pending
+        if channels is None:
+            return
+        self._channels_pending = None
         project = self._state.project
         if project is not None:
             project.channels = list(channels)
-        self._prep.set_channels(channels)
-        self._panel.set_channels(channels)
-        self._props.set_channels(channels)
+        # Refresh only the visible view. The other one is re-seeded on view
+        # switch via _switch_view, where _update_channel_layers' per-channel
+        # cache means it's free unless the spec actually changed.
+        if self._current_mode == "prep":
+            self._prep.set_channels(channels)
+        elif self._current_mode in ("align", "warp"):
+            self._panel.set_channels(channels)
 
     def _on_channels_committed(self, channels: list) -> None:
         """Fires after the user releases a slider or makes a discrete edit."""
         project = self._state.project
         if project is not None:
             project.channels = list(channels)
-        self._props.set_channels(channels)
 
     def _on_prep_autodetect_requested(self) -> None:
         self._prep.autodetect_mask()

@@ -13,6 +13,11 @@ class _NoopOverview:
         pass
 
 
+class _NoopPrep:
+    def cancel_lr_draw_if_active(self):
+        return False
+
+
 class _NoopMainWindow(SimpleNamespace):
     def _update_ap_plot(self):
         pass
@@ -40,6 +45,7 @@ def test_horizontal_flip_updates_in_progress_default_anchoring_before_store():
         _state=SimpleNamespace(current_section=section, atlas=None, section_index=0),
         _current_mode="overview",
         _overview=_NoopOverview(),
+        _prep=_NoopPrep(),
     )
 
     MainWindow._on_flip_h_changed(window, True)
@@ -76,6 +82,7 @@ def test_horizontal_flip_does_not_update_stored_anchoring():
         _state=SimpleNamespace(current_section=section, atlas=None, section_index=0),
         _current_mode="overview",
         _overview=_NoopOverview(),
+        _prep=_NoopPrep(),
     )
 
     MainWindow._on_flip_h_changed(window, True)
