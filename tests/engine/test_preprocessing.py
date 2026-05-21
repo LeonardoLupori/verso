@@ -8,6 +8,7 @@ from verso.engine.preprocessing import (
     apply_flip,
     apply_freehand_stroke,
     apply_mask,
+    channel_lut,
     composite_channels,
     detect_foreground,
     flip_lr_mask,
@@ -293,3 +294,51 @@ def test_line_side_polygons_horizontal_midline() -> None:
     assert len(right) == 4
     assert (left[:, 1] <= 50.001).all()
     assert (right[:, 1] >= 49.999).all()
+
+
+def test_channel_lut_shape_and_dtype() -> None:
+    spec = ChannelSpec(name="ch0", color=(255, 255, 255), scale=1.0, visible=True)
+    lut = channel_lut(spec)
+    assert lut.shape == (256, 4)
+    assert lut.dtype == np.uint8
+    assert (lut[:, 3] == 255).all()
+
+
+def test_channel_lut_identity_at_full_scale() -> None:
+    # scale=1.0 + white tint → output luminance equals input intensity per channel.
+    spec = ChannelSpec(name="ch0", color=(255, 255, 255), scale=1.0, visible=True)
+    lut = channel_lut(spec)
+    np.testing.assert_array_equal(lut[:, 0], np.arange(256, dtype=np.uint8))
+    np.testing.assert_array_equal(lut[:, 1], np.arange(256, dtype=np.uint8))
+    np.testing.assert_array_equal(lut[:, 2], np.arange(256, dtype=np.uint8))
+
+
+def test_channel_lut_brightness_boost_clips_at_255() -> None:
+    # scale=0.5 doubles intensity; pixels ≥ 128 must saturate to 255.
+    spec = ChannelSpec(name="ch0", color=(255, 255, 255), scale=0.5, visible=True)
+    lut = channel_lut(spec)
+    assert lut[64, 0] == 128
+    assert lut[128, 0] == 255
+    assert lut[200, 0] == 255
+
+
+def test_channel_lut_tints_to_color() -> None:
+    # Pure red tint → green/blue channels stay zero, red follows luminance.
+    spec = ChannelSpec(name="ch0", color=(255, 0, 0), scale=1.0, visible=True)
+    lut = channel_lut(spec)
+    assert (lut[:, 1] == 0).all()
+    assert (lut[:, 2] == 0).all()
+    np.testing.assert_array_equal(lut[:, 0], np.arange(256, dtype=np.uint8))
+
+
+def test_channel_lut_matches_composite_channels_for_single_channel() -> None:
+    # The LUT path must produce the same RGB image as composite_channels does
+    # for a single-channel input — that is the property the GUI relies on.
+    plane = np.arange(256, dtype=np.uint8).reshape(16, 16)
+    image = plane[..., np.newaxis]
+    spec = ChannelSpec(name="ch0", color=(0, 200, 100), scale=0.6, visible=True)
+
+    expected = composite_channels(image, [spec])
+    lut = channel_lut(spec)
+    via_lut = lut[plane][..., :3]
+    np.testing.assert_array_equal(via_lut, expected)

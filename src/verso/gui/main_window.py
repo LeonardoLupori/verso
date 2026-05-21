@@ -787,8 +787,8 @@ class MainWindow(QMainWindow):
         if project is not None:
             project.channels = list(channels)
         # Refresh only the visible view. The other one is re-seeded on view
-        # switch via _switch_view, where _update_channel_layers' per-channel
-        # cache means it's free unless the spec actually changed.
+        # switch via _switch_view; the channel ImageItem stack keeps each raw
+        # plane on the GPU, so the re-seed is essentially a LUT swap.
         if self._current_mode == "prep":
             self._prep.set_channels(channels)
         elif self._current_mode in ("align", "warp"):

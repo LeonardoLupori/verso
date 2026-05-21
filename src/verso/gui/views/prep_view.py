@@ -19,8 +19,7 @@ from PyQt6.QtWidgets import (
 from verso.engine.model.project import ChannelSpec, Section
 from verso.engine.preprocessing import (
     apply_freehand_stroke,
-    composite_from_layers,
-    compute_channel_layer,
+    channel_lut,
     detect_foreground,
     flip_lr_mask,
     load_lr_mask,
@@ -56,9 +55,10 @@ class PrepView(QWidget):
         self._negative_mask = False
         self._mask_visible = True
         self._channels: list[ChannelSpec] = []
-        self._channel_layers: list[np.ndarray | None] = []
-        self._cached_channel_specs: list[tuple] = []
-        self._layer_image_key: tuple = ()
+        # (id(raw_image), flip_h, flip_v, n) — tracks whether we still need to
+        # re-push the per-channel uint8 planes to the canvas.  Brightness /
+        # colour / visibility changes never invalidate this key.
+        self._channel_planes_key: tuple | None = None
         self._undo_stack: list[np.ndarray] = []
         self._stroke_points: list[tuple[float, float]] = []
         self._stroke_active = False
@@ -481,40 +481,44 @@ class PrepView(QWidget):
     # Display / mask state
     # ------------------------------------------------------------------
 
-    def _update_channel_layers(self, img: np.ndarray, flip_h: bool, flip_v: bool) -> None:
-        if img.ndim == 2:
-            img = img[..., np.newaxis]
-        n = min(img.shape[2], len(self._channels))
-        image_key = (id(self._raw_image), flip_h, flip_v, n)
-        if image_key != self._layer_image_key:
-            self._layer_image_key = image_key
-            self._channel_layers = [
-                compute_channel_layer(img, i, self._channels[i]) for i in range(n)
-            ]
-            self._cached_channel_specs = [
-                (self._channels[i].scale, tuple(self._channels[i].color)) for i in range(n)
-            ]
-            return
-        for i in range(n):
-            spec = self._channels[i]
-            key = (spec.scale, tuple(spec.color))
-            if key != self._cached_channel_specs[i]:
-                self._channel_layers[i] = compute_channel_layer(img, i, spec)
-                self._cached_channel_specs[i] = key
+    def _push_channel_planes(self, img: np.ndarray, flip_h: bool, flip_v: bool, n: int) -> None:
+        """Push raw uint8 planes to the canvas (only when section / flip changes)."""
+        planes: list[np.ndarray | None] = [
+            np.ascontiguousarray(img[:, :, i]) for i in range(n)
+        ]
+        self._canvas.set_channel_planes(planes)
 
     def _display_image(self) -> None:
         if self._raw_image is None:
+            self._canvas.clear()
+            self._channel_planes_key = None
             return
         img = self._raw_image
+        if img.ndim == 2:
+            img = img[..., np.newaxis]
         flip_h = bool(self._section and self._section.preprocessing.flip_horizontal)
         flip_v = bool(self._section and self._section.preprocessing.flip_vertical)
         if flip_h:
             img = np.fliplr(img)
         if flip_v:
             img = np.flipud(img)
-        self._update_channel_layers(img, flip_h, flip_v)
-        rgb = composite_from_layers(self._channel_layers, self._channels)
-        self._canvas.set_background(np.ascontiguousarray(rgb))
+        n = min(img.shape[2], len(self._channels))
+
+        # Re-push raw planes only when section / flip / channel count changes;
+        # this is the only path that touches the GPU texture.
+        planes_key = (id(self._raw_image), flip_h, flip_v, n)
+        if planes_key != self._channel_planes_key:
+            self._push_channel_planes(img, flip_h, flip_v, n)
+            self._channel_planes_key = planes_key
+
+        # Apply per-channel LUT + visibility — this is what the brightness
+        # slider drives, and it's the cheap path (a 1 KB table swap per tick).
+        for i in range(n):
+            spec = self._channels[i]
+            if not getattr(spec, "visible", True) or float(spec.scale) <= 0:
+                self._canvas.set_channel_visible(i, False)
+            else:
+                self._canvas.set_channel_lut(i, channel_lut(spec))
 
     def _load_or_init_mask(self) -> None:
         if self._section is None or self._raw_image is None:

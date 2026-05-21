@@ -1,8 +1,15 @@
 """Shared pyqtgraph image canvas used by Prep and Align/Warp views.
 
-Stacks two ImageItems:
-  bg_item     — histological section (set once per section load)
-  overlay_item — atlas overlay (updated on every warp event)
+Item stack (low z to high):
+  channel_items[i] — one ImageItem per section channel, each holding the raw
+                     uint8 plane plus a per-channel 256x4 RGBA LUT.  Composited
+                     together with CompositionMode_Lighten (component-wise max),
+                     which is the GPU equivalent of np.maximum.reduce.
+  overlay_item     — atlas overlay (z=10), normal SourceOver alpha blend.
+  lr_overlay_item  — L/R hemisphere mask (z=11), SourceOver.
+  disp_halo/disp   — warp displacement lines (z=14, 15).
+  cp_item          — warp control points (z=20).
+  stroke_item      — live freehand mask preview (z=30).
 
 Space + drag interaction: while the spacebar is held, left-button drag emits
 ``overlay_panned(dx, dy)`` in scene/data coordinates (image pixels).  The
@@ -17,6 +24,7 @@ from typing import Literal
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import QEvent, QObject, Qt, pyqtSignal
+from PyQt6.QtGui import QPainter
 from PyQt6.QtWidgets import QAbstractButton, QApplication, QSizePolicy, QVBoxLayout, QWidget
 
 # ---------------------------------------------------------------------------
@@ -139,7 +147,8 @@ class ImageCanvas(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         _ensure_space_filter()
-        self._last_bg_shape: tuple[int, int] | None = None
+        self._channel_items: list[pg.ImageItem] = []
+        self._channel_shape: tuple[int, int] | None = None
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -160,7 +169,8 @@ class ImageCanvas(QWidget):
         self.plot.hideAxis("bottom")
         self.plot.setMenuEnabled(False)
 
-        self.bg_item = pg.ImageItem()
+        # Per-channel section ImageItems are created lazily by
+        # ``set_channel_planes``; the list lives in ``self._channel_items``.
         self.overlay_item = pg.ImageItem()
         self.overlay_item.setOpacity(0.5)
         self.overlay_item.setZValue(10)
@@ -192,7 +202,6 @@ class ImageCanvas(QWidget):
         )
         self.stroke_item.setZValue(30)
 
-        self.plot.addItem(self.bg_item)
         self.plot.addItem(self.overlay_item)
         self.plot.addItem(self.lr_overlay_item)
         self.plot.addItem(self.disp_halo_item)
@@ -224,17 +233,67 @@ class ImageCanvas(QWidget):
         """
         self._vb.set_interaction_mode(mode)
 
-    def set_background(self, image: np.ndarray | None) -> None:
-        """Set the section image (H×W or H×W×C, uint8)."""
-        if image is None:
-            self.bg_item.clear()
-            self._last_bg_shape = None
+    def set_channel_planes(self, planes: list[np.ndarray | None]) -> None:
+        """Install the per-channel raw uint8 planes that drive the section view.
+
+        Call this once per section load (and again after a flip). Each plane
+        must be a contiguous ``(H, W)`` uint8 array, or ``None`` to hide that
+        channel. Brightness/color updates do NOT go through here — they use
+        :meth:`set_channel_lut`.
+        """
+        # Reconcile item count with the plane count.
+        while len(self._channel_items) < len(planes):
+            item = pg.ImageItem()
+            item.setZValue(0)
+            item.setAutoDownsample(True)
+            # CompositionMode_Lighten: dst_rgb = max(src_rgb, dst_rgb) per
+            # component. Stacked across channels, this is the GPU equivalent
+            # of np.maximum.reduce — matching the old CPU composite output.
+            item.setCompositionMode(QPainter.CompositionMode.CompositionMode_Lighten)
+            self._channel_items.append(item)
+            self.plot.addItem(item)
+        while len(self._channel_items) > len(planes):
+            item = self._channel_items.pop()
+            self.plot.removeItem(item)
+
+        first_shape: tuple[int, int] | None = None
+        for item, plane in zip(self._channel_items, planes):
+            if plane is None:
+                item.clear()
+                item.setVisible(False)
+                continue
+            item.setImage(plane, autoLevels=False, levels=(0, 255))
+            item.setVisible(True)
+            if first_shape is None:
+                first_shape = plane.shape[:2]
+
+        if first_shape is None:
+            self._channel_shape = None
             return
-        shape = image.shape[:2]
-        self.bg_item.setImage(image)
-        if shape != self._last_bg_shape:
+        if first_shape != self._channel_shape:
             self.plot.autoRange()
-            self._last_bg_shape = shape
+            self._channel_shape = first_shape
+
+    def set_channel_lut(self, index: int, lut: np.ndarray | None) -> None:
+        """Apply (or clear) the lookup table for a single channel item.
+
+        ``lut`` is a ``(256, 4)`` uint8 RGBA table — see
+        ``verso.engine.preprocessing.channel_lut``. ``None`` hides the channel.
+        """
+        if not 0 <= index < len(self._channel_items):
+            return
+        item = self._channel_items[index]
+        if lut is None:
+            item.setVisible(False)
+            return
+        item.setLookupTable(lut)
+        item.setVisible(True)
+
+    def set_channel_visible(self, index: int, visible: bool) -> None:
+        """Show or hide a single channel item without discarding its data."""
+        if not 0 <= index < len(self._channel_items):
+            return
+        self._channel_items[index].setVisible(visible)
 
     def set_overlay(
         self,
@@ -398,8 +457,13 @@ class ImageCanvas(QWidget):
         self.lr_overlay_item.setVisible(visible)
 
     def clear(self) -> None:
-        self.bg_item.clear()
+        for item in self._channel_items:
+            item.clear()
+            self.plot.removeItem(item)
+        self._channel_items.clear()
+        self._channel_shape = None
         self.overlay_item.clear()
+        self.lr_overlay_item.clear()
         self.cp_item.clear()
         self.disp_halo_item.clear()
         self.disp_item.clear()

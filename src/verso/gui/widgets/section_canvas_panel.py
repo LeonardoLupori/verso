@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
 )
 
 from verso.engine.model.project import Section
+from verso.engine.preprocessing import channel_lut
 from verso.gui.widgets.canvas import ImageCanvas
 
 if TYPE_CHECKING:
@@ -86,9 +87,9 @@ class SectionCanvasPanel(QWidget):
         self._raw_image: np.ndarray | None = None
         self._atlas: AtlasVolume | None = None
         self._channels: list = []
-        self._channel_layers: list[np.ndarray | None] = []
-        self._cached_channel_specs: list[tuple] = []
-        self._layer_image_key: tuple = ()
+        # (id(raw_image), flip_h, flip_v, n) — invalidated only by section /
+        # flip / channel-count changes; brightness/colour edits don't touch it.
+        self._channel_planes_key: tuple | None = None
         self._overlay_mode: str = "annotation"  # "annotation" | "outline" | "reference"
 
         # Hooks set by the active view
@@ -217,42 +218,37 @@ class SectionCanvasPanel(QWidget):
     # Background pipeline
     # ------------------------------------------------------------------
 
-    def _update_channel_layers(self, img: np.ndarray, flip_h: bool, flip_v: bool) -> None:
-        from verso.engine.preprocessing import compute_channel_layer
-        if img.ndim == 2:
-            img = img[..., np.newaxis]
-        n = min(img.shape[2], len(self._channels))
-        image_key = (id(self._raw_image), flip_h, flip_v, n)
-        if image_key != self._layer_image_key:
-            self._layer_image_key = image_key
-            self._channel_layers = [
-                compute_channel_layer(img, i, self._channels[i]) for i in range(n)
-            ]
-            self._cached_channel_specs = [
-                (self._channels[i].scale, tuple(self._channels[i].color)) for i in range(n)
-            ]
-            return
-        for i in range(n):
-            spec = self._channels[i]
-            key = (spec.scale, tuple(spec.color))
-            if key != self._cached_channel_specs[i]:
-                self._channel_layers[i] = compute_channel_layer(img, i, spec)
-                self._cached_channel_specs[i] = key
-
     def _display_image(self) -> None:
         if self._raw_image is None:
+            self.canvas.clear()
+            self._channel_planes_key = None
             return
-        from verso.engine.preprocessing import composite_from_layers
         img = self._raw_image
+        if img.ndim == 2:
+            img = img[..., np.newaxis]
         flip_h = bool(self._section and self._section.preprocessing.flip_horizontal)
         flip_v = bool(self._section and self._section.preprocessing.flip_vertical)
         if flip_h:
             img = np.fliplr(img)
         if flip_v:
             img = np.flipud(img)
-        self._update_channel_layers(img, flip_h, flip_v)
-        rgb = composite_from_layers(self._channel_layers, self._channels)
-        self.canvas.set_background(np.ascontiguousarray(rgb))
+        n = min(img.shape[2], len(self._channels))
+
+        # Push raw planes only when section / flip / channel-count actually
+        # changed; this is the only path that touches the GPU texture.
+        planes_key = (id(self._raw_image), flip_h, flip_v, n)
+        if planes_key != self._channel_planes_key:
+            planes = [np.ascontiguousarray(img[:, :, i]) for i in range(n)]
+            self.canvas.set_channel_planes(planes)
+            self._channel_planes_key = planes_key
+
+        # Apply per-channel LUT / visibility — drives the brightness slider.
+        for i in range(n):
+            spec = self._channels[i]
+            if not getattr(spec, "visible", True) or float(spec.scale) <= 0:
+                self.canvas.set_channel_visible(i, False)
+            else:
+                self.canvas.set_channel_lut(i, channel_lut(spec))
 
     # ------------------------------------------------------------------
     # Atlas overlay pipeline
