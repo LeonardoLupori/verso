@@ -250,6 +250,11 @@ class MainWindow(QMainWindow):
         act_adjust.triggered.connect(self._open_brightness_dialog)
         images_menu.addAction(act_adjust)
 
+        export_menu = mb.addMenu("&Export")
+        act_export_images = QAction("Images with atlas &overlay…", self)
+        act_export_images.triggered.connect(self._export_images_with_overlay)
+        export_menu.addAction(act_export_images)
+
     def _open_brightness_dialog(self) -> None:
         """Show the floating brightness dialog, constructing it on first use."""
         if self._brightness_dialog is None:
@@ -1414,3 +1419,108 @@ class MainWindow(QMainWindow):
             from verso.engine.io.quint_io import save_visualign
             save_visualign(self._state.project, Path(path), atlas_shape=atlas_shape)
             self._maybe_create_pngs(path)
+
+    def _export_images_with_overlay(self) -> None:
+        """Open the export dialog and write the requested PNGs to disk."""
+        from datetime import datetime
+
+        from PyQt6.QtCore import QUrl
+        from PyQt6.QtGui import QDesktopServices
+        from PyQt6.QtWidgets import QApplication
+
+        from verso.engine.io.export_images import export_section
+        from verso.gui.dialogs.export_images import ExportImagesDialog
+
+        self._save_prep_mask_before_transition()
+
+        project = self._state.project
+        if project is None or not project.sections:
+            QMessageBox.warning(self, "Export", "No project is loaded.")
+            return
+        atlas = self._state.atlas
+        if atlas is None:
+            QMessageBox.warning(
+                self, "Export", "The atlas is still loading. Try again in a moment."
+            )
+            return
+        if self._state.project_path is None:
+            QMessageBox.warning(
+                self,
+                "Export",
+                "Save the project to disk before exporting so VERSO knows where to "
+                "write the exports folder.",
+            )
+            return
+
+        selected_rows = self._overview.selected_rows()
+        dlg = ExportImagesDialog(
+            n_selected=len(selected_rows),
+            n_total=len(project.sections),
+            parent=self,
+        )
+        if dlg.exec() != dlg.DialogCode.Accepted:
+            return
+
+        if dlg.export_all():
+            sections = list(project.sections)
+        else:
+            sections = [project.sections[i] for i in selected_rows]
+        if not sections:
+            QMessageBox.warning(self, "Export", "No sections selected.")
+            return
+
+        options = dlg.options()
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+        out_dir = (
+            self._state.project_path.parent
+            / "exports"
+            / f"images_with_overlay_{timestamp}"
+        )
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        progress = QProgressDialog(
+            "Exporting images...", "Cancel", 0, len(sections), self
+        )
+        progress.setWindowTitle("Export images with atlas overlay")
+        progress.setMinimumDuration(0)
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+        progress.setModal(True)
+        progress.show()
+        QApplication.processEvents()
+
+        errors: list[str] = []
+        for idx, section in enumerate(sections):
+            if progress.wasCanceled():
+                break
+            progress.setLabelText(
+                f"Exporting {idx + 1} / {len(sections)}: {Path(section.original_path).name}"
+            )
+            QApplication.processEvents()
+            try:
+                export_section(section, project, atlas, options, out_dir)
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"{Path(section.original_path).name}: {exc}")
+            progress.setValue(idx + 1)
+            QApplication.processEvents()
+
+        progress.close()
+
+        if errors:
+            preview = "\n".join(errors[:8])
+            suffix = "" if len(errors) <= 8 else f"\n...and {len(errors) - 8} more"
+            QMessageBox.warning(
+                self,
+                "Export finished with errors",
+                f"Wrote some images to:\n{out_dir}\n\nErrors:\n{preview}{suffix}",
+            )
+        else:
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Icon.Information)
+            box.setWindowTitle("Export complete")
+            box.setText(f"Wrote {len(sections)} sections to:\n{out_dir}")
+            open_btn = box.addButton("Open folder", QMessageBox.ButtonRole.ActionRole)
+            box.addButton(QMessageBox.StandardButton.Ok)
+            box.exec()
+            if box.clickedButton() is open_btn:
+                QDesktopServices.openUrl(QUrl.fromLocalFile(str(out_dir)))

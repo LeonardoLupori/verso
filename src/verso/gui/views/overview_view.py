@@ -95,6 +95,7 @@ class OverviewView(QWidget):
             )
 
         t.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        t.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         t.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         t.setAlternatingRowColors(True)
         t.verticalHeader().setDefaultSectionSize(36)
@@ -197,6 +198,13 @@ class OverviewView(QWidget):
 
     def refresh(self) -> None:
         self._populate()
+
+    def selected_rows(self) -> list[int]:
+        """Return the sorted indices of all currently selected sections."""
+        if not self._table.isVisible():
+            return []
+        rows = {idx.row() for idx in self._table.selectionModel().selectedRows()}
+        return sorted(rows)
 
     def _on_double_click(self, row: int, _col: int) -> None:
         self.section_activated.emit(row)

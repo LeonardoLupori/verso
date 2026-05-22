@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from verso.engine.warping import warp_overlay
+from verso.engine.warping import warp_overlay, warp_points_atlas_to_section
 
 
 def test_warp_overlay_identity_preserves_image():
@@ -69,6 +69,30 @@ def test_warp_overlay_no_control_points():
     overlay[:, :, 0] = np.tile(np.linspace(0, 255, w, dtype=np.uint8), (h, 1))
     warped = warp_overlay(overlay, np.zeros((0, 2)), np.zeros((0, 2)))
     np.testing.assert_array_equal(warped, overlay)
+
+
+def test_warp_points_atlas_to_section_identity():
+    """With src == dst the forward warp is the identity."""
+    src = np.array([[0.25, 0.25], [0.75, 0.25], [0.25, 0.75], [0.75, 0.75]])
+    dst = src.copy()
+    pts = np.array([[0.1, 0.2], [0.5, 0.5], [0.9, 0.8]])
+    out = warp_points_atlas_to_section(pts, src, dst)
+    np.testing.assert_allclose(out, pts, atol=1e-9)
+
+
+def test_warp_points_atlas_to_section_translation():
+    """A pure translation of the section anchors shifts atlas points by the same amount."""
+    src = np.array([[0.2, 0.2], [0.8, 0.2], [0.2, 0.8], [0.8, 0.8]])
+    dst = src + np.array([0.1, 0.0])
+    pts = np.array([[0.5, 0.5], [0.3, 0.4]])
+    out = warp_points_atlas_to_section(pts, src, dst)
+    np.testing.assert_allclose(out, pts + np.array([0.1, 0.0]), atol=1e-9)
+
+
+def test_warp_points_atlas_to_section_no_control_points():
+    pts = np.array([[0.1, 0.2], [0.9, 0.4]])
+    out = warp_points_atlas_to_section(pts, np.zeros((0, 2)), np.zeros((0, 2)))
+    np.testing.assert_array_equal(out, pts)
 
 
 def test_warp_overlay_output_shape_preserved():

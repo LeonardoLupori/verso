@@ -82,6 +82,57 @@ def find_atlas_position(
     return u, v
 
 
+def warp_points_atlas_to_section(
+    points_norm: np.ndarray,
+    src_norm: np.ndarray,
+    dst_norm: np.ndarray,
+) -> np.ndarray:
+    """Map atlas-space points into section-space via the Delaunay warp.
+
+    Mirror of the backward map in :func:`warp_overlay`: triangulates on the
+    *src* (atlas) anchors and interpolates *dst* (section) coords for each
+    input point. Points outside the convex hull pass through unchanged
+    (clipped to ``[0, 1]``).
+
+    Args:
+        points_norm: (M, 2) normalised atlas-space points in ``[0, 1]``.
+        src_norm: (N, 2) atlas-space control points (no corner anchors).
+        dst_norm: (N, 2) section-space control points (no corner anchors).
+
+    Returns:
+        (M, 2) normalised section-space points.
+    """
+    pts = np.asarray(points_norm, dtype=np.float64).reshape(-1, 2)
+    src_norm = np.asarray(src_norm, dtype=np.float64).reshape(-1, 2)
+    dst_norm = np.asarray(dst_norm, dtype=np.float64).reshape(-1, 2)
+
+    if len(src_norm) == 0 or np.allclose(src_norm, dst_norm):
+        return np.clip(pts, 0.0, 1.0)
+
+    src_all = _with_corners(src_norm)
+    dst_all = _with_corners(dst_norm)
+
+    tri = Delaunay(src_all)
+    simplices = tri.find_simplex(pts)
+
+    out = np.clip(pts.copy(), 0.0, 1.0)
+    valid = simplices >= 0
+    if not np.any(valid):
+        return out
+
+    T = tri.transform[simplices[valid], :2]
+    r = pts[valid] - tri.transform[simplices[valid], 2]
+    b = np.einsum("ijk,ik->ij", T, r)
+    bary = np.column_stack([b, 1.0 - b.sum(axis=1)])
+
+    idx = tri.simplices[simplices[valid]]
+    out_x = (bary * dst_all[idx, 0]).sum(axis=1)
+    out_y = (bary * dst_all[idx, 1]).sum(axis=1)
+    out[valid, 0] = np.clip(out_x, 0.0, 1.0)
+    out[valid, 1] = np.clip(out_y, 0.0, 1.0)
+    return out
+
+
 def warp_overlay(
     overlay: np.ndarray,
     src_norm: np.ndarray,

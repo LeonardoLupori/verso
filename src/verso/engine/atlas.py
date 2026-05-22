@@ -67,6 +67,20 @@ class AtlasVolume:
     # ------------------------------------------------------------------
     # Public slice methods
 
+    def sample_labels(
+        self, anchoring: list[float], out_w: int, out_h: int
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Sample the annotation along the cut plane at the requested resolution.
+
+        Public wrapper around :meth:`_sample` for export pipelines that need a
+        raw label map (e.g. to extract sub-pixel contours via marching squares).
+
+        Returns:
+            labels:    (H, W) int32 — annotation labels (in-bounds pixels only)
+            in_bounds: (H, W) bool — True where the voxel is inside the volume
+        """
+        return self._sample(anchoring, out_w, out_h)
+
     def slice_annotation(
         self, anchoring: list[float], out_w: int, out_h: int
     ) -> np.ndarray:

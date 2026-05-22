@@ -17,6 +17,12 @@ from verso.engine.deepslice import (
     reset_in_progress_to_default_proposals,
     run_deepslice_suggestions,
 )
+from verso.engine.io.export_images import (
+    ExportOptions,
+    export_section,
+    render_overlay_rgba,
+    render_section_rgb,
+)
 from verso.engine.io.image_io import (
     ensure_working_copy,
     image_dimensions,
@@ -54,7 +60,11 @@ from verso.engine.registration import (
     set_ap_position,
     vectors_to_anchoring,
 )
-from verso.engine.warping import find_atlas_position, warp_overlay
+from verso.engine.warping import (
+    find_atlas_position,
+    warp_overlay,
+    warp_points_atlas_to_section,
+)
 
 __all__ = [
     # Atlas
@@ -106,6 +116,12 @@ __all__ = [
     # Warping
     "find_atlas_position",
     "warp_overlay",
+    "warp_points_atlas_to_section",
+    # Export
+    "ExportOptions",
+    "export_section",
+    "render_overlay_rgba",
+    "render_section_rgb",
     # I/O
     "export_brainglobe_atlas_for_visualign",
     "load_deepslice",
