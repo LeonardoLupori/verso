@@ -756,12 +756,7 @@ class MainWindow(QMainWindow):
             self._props.set_lr_draw_active(False)
         section.preprocessing.flip_horizontal = value
         self._clear_alignment_for_flip(section)
-        if self._current_mode == "prep":
-            self._prep.refresh_display()
-        elif self._current_mode in ("align", "warp"):
-            self._panel.refresh_display()
-        self._overview.refresh_row(self._state.section_index)
-        self._update_ap_plot()
+        self._after_flip_refresh()
 
     def _on_flip_v_changed(self, value: bool) -> None:
         section = self._state.current_section
@@ -773,12 +768,14 @@ class MainWindow(QMainWindow):
             self._props.set_lr_draw_active(False)
         section.preprocessing.flip_vertical = value
         self._clear_alignment_for_flip(section)
+        self._after_flip_refresh()
+
+    def _after_flip_refresh(self) -> None:
         if self._current_mode == "prep":
             self._prep.refresh_display()
         elif self._current_mode in ("align", "warp"):
             self._panel.refresh_display()
-        self._overview.refresh_row(self._state.section_index)
-        self._update_ap_plot()
+        self._on_alignments_updated()
 
     def _on_opacity_changed(self, opacity: float) -> None:
         self._panel.canvas.set_overlay_opacity(opacity)
