@@ -247,7 +247,7 @@ class MainWindow(QMainWindow):
         act_quit.triggered.connect(self.close)
         file_menu.addAction(act_quit)
 
-        images_menu = mb.addMenu("&Images")
+        images_menu = mb.addMenu("&Image")
         act_adjust = QAction("Adjust &channels/brightness…", self)
         act_adjust.triggered.connect(self._open_brightness_dialog)
         images_menu.addAction(act_adjust)
