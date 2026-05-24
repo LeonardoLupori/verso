@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QObject, QThread, Qt, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -37,14 +37,49 @@ _COL_AP = 3
 _COL_STEPS_START = 4  # Flip, Slice, LR, Align, Warp
 
 
+class _DimensionLoader(QObject):
+    """Background worker: reads image dimensions for overview table rows.
+
+    Emits ``dimension_ready(row, dims_text)`` for each section as it completes.
+    """
+
+    dimension_ready = pyqtSignal(int, str)  # (row_index, "W x H")
+    finished = pyqtSignal()
+
+    def __init__(self, sections: list) -> None:
+        super().__init__()
+        self._sections = list(sections)  # snapshot — avoid races with caller
+        self._abort = False
+
+    def stop(self) -> None:
+        """Request cancellation. Safe to call from any thread."""
+        self._abort = True
+
+    def run(self) -> None:
+        from verso.engine.io.image_io import registration_dimensions
+
+        for row, section in enumerate(self._sections):
+            if self._abort:
+                break
+            try:
+                w, h = registration_dimensions(section)
+                self.dimension_ready.emit(row, f"{w} x {h}")
+            except Exception:
+                pass
+        self.finished.emit()
+
+
 class OverviewView(QWidget):
     """Table-based overview of all sections and their pipeline status."""
 
     section_activated = pyqtSignal(int)   # double-click → open in Prep
     section_selected = pyqtSignal(int)    # single click → update properties
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._project: Project | None = None
+        self._dim_loader: _DimensionLoader | None = None
+        self._dim_thread: QThread | None = None
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -108,6 +143,27 @@ class OverviewView(QWidget):
         t.cellDoubleClicked.connect(self._on_double_click)
         t.currentCellChanged.connect(self._on_selection_changed)
 
+    @staticmethod
+    def _make_cell(
+        text: str, align: Qt.AlignmentFlag = Qt.AlignmentFlag.AlignCenter
+    ) -> QTableWidgetItem:
+        item = QTableWidgetItem(text)
+        item.setTextAlignment(align)
+        return item
+
+    def _stop_dim_loader(self) -> None:
+        if self._dim_loader is not None:
+            self._dim_loader.stop()
+        if self._dim_thread is not None and self._dim_thread.isRunning():
+            self._dim_thread.quit()
+            self._dim_thread.wait()
+        self._dim_loader = None
+        self._dim_thread = None
+
+    def shutdown(self) -> None:
+        """Stop the background loader. Must be called before the widget is destroyed."""
+        self._stop_dim_loader()
+
     def load_project(self, project: Project) -> None:
         self._project = project
         self._populate()
@@ -115,10 +171,13 @@ class OverviewView(QWidget):
     def _populate(self) -> None:
         p = self._project
         if p is None or not p.sections:
+            self._stop_dim_loader()
             self._empty.setVisible(True)
             self._table.setVisible(False)
             self._summary.setText("  —")
             return
+
+        self._stop_dim_loader()
 
         self._empty.setVisible(False)
         self._table.setVisible(True)
@@ -142,32 +201,34 @@ class OverviewView(QWidget):
             f"  {total} sections  ·  {complete} complete  ·  {in_progress} in progress"
         )
 
+        # Read image dimensions in the background; update each cell as it arrives.
+        loader = _DimensionLoader(p.sections)
+        thread = QThread()  # No parent — we control lifetime explicitly via shutdown()
+        loader.moveToThread(thread)
+        thread.started.connect(loader.run)
+        loader.dimension_ready.connect(self._on_dimension_ready)
+        loader.finished.connect(thread.quit)
+        loader.finished.connect(loader.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        self._dim_loader = loader
+        self._dim_thread = thread
+        thread.start()
 
     def _fill_row(self, row: int, section: Section) -> None:
         t = self._table
 
-        def cell(text: str, align=Qt.AlignmentFlag.AlignCenter) -> QTableWidgetItem:
-            item = QTableWidgetItem(text)
-            item.setTextAlignment(align)
-            return item
-
         import os
-        t.setItem(row, _COL_SERIAL, cell(str(section.serial_number)))
+        t.setItem(row, _COL_SERIAL, self._make_cell(str(section.serial_number)))
         file_align = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
         t.setItem(
             row,
             _COL_FILE,
-            cell(os.path.basename(section.original_path), file_align),
+            self._make_cell(os.path.basename(section.original_path), file_align),
         )
-        try:
-            from verso.engine.io.image_io import registration_dimensions
-            w, h = registration_dimensions(section)
-            dims_text = f"{w} x {h}"
-        except Exception:
-            dims_text = "—"
-        t.setItem(row, _COL_DIMS, cell(dims_text))
+        # Dimensions are loaded asynchronously by _DimensionLoader.
+        t.setItem(row, _COL_DIMS, self._make_cell("—"))
         ap = section.alignment.ap_position_mm
-        t.setItem(row, _COL_AP, cell(f"{ap:.2f}" if ap is not None else "—"))
+        t.setItem(row, _COL_AP, self._make_cell(f"{ap:.2f}" if ap is not None else "—"))
 
         # Status columns
         done = AlignmentStatus.COMPLETE
@@ -186,15 +247,32 @@ class OverviewView(QWidget):
                 sym = str(cp_count) if cp_count else ""
             else:
                 sym = _STATUS_SYMBOL[status]
-            item = cell(sym)
+            item = self._make_cell(sym)
             item.setForeground(QColor(_STATUS_COLOR[status]))
             t.setItem(row, col, item)
+
+    def _on_dimension_ready(self, row: int, dims_text: str) -> None:
+        """Slot: called on the main thread when the loader reads one section's dims."""
+        if not self._table.isVisible():
+            return
+        # Guard against stale signals arriving after a new _populate() cleared the table.
+        if 0 <= row < self._table.rowCount():
+            self._table.setItem(row, _COL_DIMS, self._make_cell(dims_text))
 
     def refresh_row(self, section_index: int) -> None:
         if self._project is None:
             return
         section = self._project.sections[section_index]
         self._fill_row(section_index, section)
+        # Single-row refresh: read dims synchronously (~5–20 ms, acceptable).
+        try:
+            from verso.engine.io.image_io import registration_dimensions
+            w, h = registration_dimensions(section)
+            self._table.setItem(
+                section_index, _COL_DIMS, self._make_cell(f"{w} x {h}")
+            )
+        except Exception:
+            pass
 
     def refresh(self) -> None:
         self._populate()

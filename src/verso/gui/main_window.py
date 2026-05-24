@@ -177,6 +177,8 @@ class MainWindow(QMainWindow):
             event.ignore()
             return
         self._save_prep_mask_before_transition()
+        self._filmstrip.shutdown()
+        self._overview.shutdown()
         super().closeEvent(event)
 
     # ------------------------------------------------------------------

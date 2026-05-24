@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QObject, QThread, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QPixmap
 from PyQt6.QtWidgets import (
     QHBoxLayout,
@@ -14,6 +14,43 @@ from PyQt6.QtWidgets import (
 
 _THUMB_SIZE = 100  # px long side
 _BORDER_W = 3
+
+
+class _ThumbnailLoader(QObject):
+    """Background worker: loads one filmstrip thumbnail per section.
+
+    Emits ``thumbnail_ready(index, pixmap)`` for each section as it finishes.
+    Checks ``_abort`` before every section so a new ``populate()`` call can
+    cancel an in-flight load quickly.
+    """
+
+    thumbnail_ready = pyqtSignal(int, QPixmap)  # (section_index, pixmap)
+    finished = pyqtSignal()
+
+    def __init__(self, sections: list, channels: list) -> None:
+        super().__init__()
+        self._sections = list(sections)  # snapshot — avoid races with caller
+        self._channels = list(channels)
+        self._abort = False
+
+    def stop(self) -> None:
+        """Request cancellation. Safe to call from any thread."""
+        self._abort = True
+
+    def run(self) -> None:
+        from verso.engine.io.image_io import load_filmstrip_thumbnail
+        from verso.gui.utils import ndarray_to_pixmap
+
+        for i, section in enumerate(self._sections):
+            if self._abort:
+                break
+            try:
+                arr = load_filmstrip_thumbnail(section, self._channels)
+                if arr is not None:
+                    self.thumbnail_ready.emit(i, ndarray_to_pixmap(arr))
+            except Exception:
+                pass
+        self.finished.emit()
 
 
 class _ThumbButton(QLabel):
@@ -71,6 +108,8 @@ class Filmstrip(QWidget):
         super().__init__(parent)
         self._buttons: list[_ThumbButton] = []
         self._current: int = 0
+        self._loader_thread: QThread | None = None
+        self._loader: _ThumbnailLoader | None = None
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -101,36 +140,66 @@ class Filmstrip(QWidget):
     def populate(self, sections: list, channels: list | None = None) -> None:
         """Rebuild thumbnails from a list of Section objects.
 
+        Creates all placeholder buttons immediately (non-blocking), then loads
+        thumbnails in a background thread, updating each button as it finishes.
+
         Args:
             sections: section list to render.
             channels: project-level :class:`ChannelSpec` list used to composite
                 the cached multichannel thumbnail to RGB.
         """
         channels = channels or []
+        self._cancel_loader()
 
         for btn in self._buttons:
             self._row.removeWidget(btn)
             btn.deleteLater()
         self._buttons.clear()
 
-        for i, section in enumerate(sections):
+        if not sections:
+            self._highlight(self._current)
+            return
+
+        # Create all placeholder buttons immediately — no I/O.
+        for i in range(len(sections)):
             btn = _ThumbButton(i)
             btn.clicked.connect(self._on_thumb_clicked)
-
-            try:
-                from verso.engine.io.image_io import load_filmstrip_thumbnail
-                from verso.gui.utils import ndarray_to_pixmap
-
-                thumb_arr = load_filmstrip_thumbnail(section, channels)
-                if thumb_arr is not None:
-                    btn.set_thumbnail(ndarray_to_pixmap(thumb_arr))
-            except Exception:
-                pass
-
             self._row.insertWidget(self._row.count() - 1, btn)
             self._buttons.append(btn)
-
         self._highlight(self._current)
+
+        # Load thumbnails in the background; update each button as it arrives.
+        loader = _ThumbnailLoader(sections, channels)
+        thread = QThread()  # No parent — we control lifetime explicitly via shutdown()
+        loader.moveToThread(thread)
+        thread.started.connect(loader.run)
+        loader.thumbnail_ready.connect(self._on_thumbnail_ready)
+        loader.finished.connect(thread.quit)
+        loader.finished.connect(loader.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        self._loader = loader
+        self._loader_thread = thread
+        thread.start()
+
+    def _cancel_loader(self) -> None:
+        """Stop any running loader, blocking until the current image load finishes."""
+        if self._loader is not None:
+            self._loader.stop()
+        if self._loader_thread is not None and self._loader_thread.isRunning():
+            self._loader_thread.quit()
+            self._loader_thread.wait()
+        self._loader = None
+        self._loader_thread = None
+
+    def shutdown(self) -> None:
+        """Stop the background loader. Must be called before the widget is destroyed."""
+        self._cancel_loader()
+
+    def _on_thumbnail_ready(self, index: int, pixmap: QPixmap) -> None:
+        """Slot: called on the main thread when the loader finishes one thumbnail."""
+        # Guard against stale signals arriving after a new populate() cleared the list.
+        if 0 <= index < len(self._buttons):
+            self._buttons[index].set_thumbnail(pixmap)
 
     def set_current(self, index: int) -> None:
         self._highlight(index)
