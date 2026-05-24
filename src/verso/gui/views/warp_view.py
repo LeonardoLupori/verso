@@ -271,6 +271,9 @@ class WarpView(QWidget):
         section = self._panel.section
         if section is None or self._cp_dragging < 0:
             return
+        if self._cp_dragging >= len(section.warp.control_points):
+            self._cp_dragging = -1
+            return
         cur = self._clamped_norm_pos(x, y)
         if cur is None:
             return
@@ -340,6 +343,8 @@ class WarpView(QWidget):
             return
         cps = section.warp.control_points
         if 0 <= self._cp_hovered < len(cps):
+            if self._cp_hovered == self._cp_dragging:
+                self._cp_dragging = -1
             cps.pop(self._cp_hovered)
             self._cp_hovered = -1
             self._panel.update_overlay()
