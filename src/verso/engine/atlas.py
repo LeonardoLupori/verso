@@ -111,13 +111,20 @@ class AtlasVolume:
         return np.dstack([rgb, alpha])
 
     def slice_outline(
-        self, anchoring: list[float], out_w: int, out_h: int
+        self,
+        anchoring: list[float],
+        out_w: int,
+        out_h: int,
+        color: tuple[int, int, int] = (255, 255, 255),
     ) -> np.ndarray:
-        """Slice the annotation as white region-boundary outlines → RGBA (H, W, 4).
+        """Slice the annotation as region-boundary outlines → RGBA (H, W, 4).
 
         Edges are detected between regions with different labels where at least
         one neighbour belongs to the annotated brain.  Out-of-atlas pixels are
         fully transparent.
+
+        Args:
+            color: RGB line color. Defaults to white ``(255, 255, 255)``.
         """
         labels, in_bounds = self._sample(anchoring, out_w, out_h)
         out_h2, out_w2 = labels.shape
@@ -136,7 +143,7 @@ class AtlasVolume:
         edges[:-1, :] |= keep_v
 
         rgba = np.zeros((out_h2, out_w2, 4), dtype=np.uint8)
-        rgba[edges & in_bounds] = [255, 255, 255, 220]
+        rgba[edges & in_bounds] = [*color, 220]
         return rgba
 
     # ------------------------------------------------------------------

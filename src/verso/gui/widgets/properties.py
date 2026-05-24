@@ -307,6 +307,7 @@ class _AlignProperties(QWidget):
     """Properties panel content for the Align/Warp view."""
 
     opacity_changed = pyqtSignal(float)
+    overlay_color_changed = pyqtSignal(tuple)  # (r, g, b) — outline color
     cp_style_changed = pyqtSignal(int, str, str)  # size, shape, color
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -336,6 +337,21 @@ class _AlignProperties(QWidget):
             lambda v: self.opacity_changed.emit(v / 100.0)
         )
         overlay_layout.addRow("Opacity:", self._opacity_slider)
+
+        self._outline_color_rgb: tuple[int, int, int] = (255, 255, 255)
+        self._outline_color_swatch = QLabel()
+        self._outline_color_swatch.setFixedSize(28, 22)
+        self._outline_color_btn = QPushButton("Choose…")
+        self._outline_color_btn.clicked.connect(self._on_outline_color)
+        self._refresh_outline_color_swatch()
+        color_row = QHBoxLayout()
+        color_row.addWidget(self._outline_color_swatch)
+        color_row.addWidget(self._outline_color_btn)
+        color_row.addStretch()
+        color_widget = QWidget()
+        color_widget.setLayout(color_row)
+        overlay_layout.addRow("Outline color:", color_widget)
+
         layout.addWidget(overlay_box)
 
         proposal_box = QGroupBox("Proposal")
@@ -406,6 +422,20 @@ class _AlignProperties(QWidget):
         self._warp_widget.setVisible(False)
 
         layout.addStretch()
+
+    def _refresh_outline_color_swatch(self) -> None:
+        r, g, b = self._outline_color_rgb
+        self._outline_color_swatch.setStyleSheet(
+            f"background: rgb({r},{g},{b}); border: 1px solid #555; border-radius: 3px;"
+        )
+
+    def _on_outline_color(self) -> None:
+        current = QColor(*self._outline_color_rgb)
+        color = QColorDialog.getColor(current, self, "Outline color")
+        if color.isValid():
+            self._outline_color_rgb = (color.red(), color.green(), color.blue())
+            self._refresh_outline_color_swatch()
+            self.overlay_color_changed.emit(self._outline_color_rgb)
 
     def apply_cp_style(self, size: int, shape: str, color: str) -> None:
         """Set CP style widgets silently (no signal emitted)."""
@@ -557,6 +587,7 @@ class PropertiesPanel(QWidget):
     lr_cancel_requested = pyqtSignal()
     lr_clear_requested = pyqtSignal()
     opacity_changed = pyqtSignal(float)
+    overlay_color_changed = pyqtSignal(tuple)  # (r, g, b) — outline color
     cp_style_changed = pyqtSignal(int, str, str)  # size, shape, color
 
     _MODES = ("overview", "prep", "align")
@@ -599,6 +630,7 @@ class PropertiesPanel(QWidget):
         self._prep_page.lr_clear_requested.connect(self.lr_clear_requested)
 
         self._align_page.opacity_changed.connect(self.opacity_changed)
+        self._align_page.overlay_color_changed.connect(self.overlay_color_changed)
         self._align_page.cp_style_changed.connect(self.cp_style_changed)
 
         layout.addWidget(self._stack)

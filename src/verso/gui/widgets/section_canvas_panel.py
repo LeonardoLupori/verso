@@ -91,6 +91,7 @@ class SectionCanvasPanel(QWidget):
         # flip / channel-count changes; brightness/colour edits don't touch it.
         self._channel_planes_key: tuple | None = None
         self._overlay_mode: str = "annotation"  # "annotation" | "outline" | "reference"
+        self._outline_color: tuple[int, int, int] = (255, 255, 255)
 
         # Hooks set by the active view
         self.overlay_post_processor: Callable[[np.ndarray], np.ndarray] | None = None
@@ -179,6 +180,12 @@ class SectionCanvasPanel(QWidget):
                     btn.blockSignals(False)
         self.overlay_mode_changed.emit(mode)
         self.update_overlay()
+
+    def set_outline_color(self, color: tuple[int, int, int]) -> None:
+        """Set the outline overlay line color and refresh the canvas."""
+        self._outline_color = color
+        if self._overlay_mode == "outline":
+            self.update_overlay()
 
     def load_section(self, section: Section | None) -> None:
         self._section = section
@@ -275,7 +282,7 @@ class SectionCanvasPanel(QWidget):
 
         try:
             if self._overlay_mode == "outline":
-                rgba = self._atlas.slice_outline(anchoring, out_w, out_h)
+                rgba = self._atlas.slice_outline(anchoring, out_w, out_h, self._outline_color)
             elif self._overlay_mode == "reference":
                 rgba = self._atlas.slice_reference_rgba(anchoring, out_w, out_h)
             else:

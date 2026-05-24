@@ -154,9 +154,13 @@ class OverviewView(QWidget):
     def _stop_dim_loader(self) -> None:
         if self._dim_loader is not None:
             self._dim_loader.stop()
-        if self._dim_thread is not None and self._dim_thread.isRunning():
-            self._dim_thread.quit()
-            self._dim_thread.wait()
+        if self._dim_thread is not None:
+            try:
+                if self._dim_thread.isRunning():
+                    self._dim_thread.quit()
+                    self._dim_thread.wait()
+            except RuntimeError:
+                pass  # C++ object already deleted — thread has already finished
         self._dim_loader = None
         self._dim_thread = None
 
@@ -208,8 +212,6 @@ class OverviewView(QWidget):
         thread.started.connect(loader.run)
         loader.dimension_ready.connect(self._on_dimension_ready)
         loader.finished.connect(thread.quit)
-        loader.finished.connect(loader.deleteLater)
-        thread.finished.connect(thread.deleteLater)
         self._dim_loader = loader
         self._dim_thread = thread
         thread.start()

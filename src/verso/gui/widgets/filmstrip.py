@@ -175,8 +175,6 @@ class Filmstrip(QWidget):
         thread.started.connect(loader.run)
         loader.thumbnail_ready.connect(self._on_thumbnail_ready)
         loader.finished.connect(thread.quit)
-        loader.finished.connect(loader.deleteLater)
-        thread.finished.connect(thread.deleteLater)
         self._loader = loader
         self._loader_thread = thread
         thread.start()
@@ -185,9 +183,13 @@ class Filmstrip(QWidget):
         """Stop any running loader, blocking until the current image load finishes."""
         if self._loader is not None:
             self._loader.stop()
-        if self._loader_thread is not None and self._loader_thread.isRunning():
-            self._loader_thread.quit()
-            self._loader_thread.wait()
+        if self._loader_thread is not None:
+            try:
+                if self._loader_thread.isRunning():
+                    self._loader_thread.quit()
+                    self._loader_thread.wait()
+            except RuntimeError:
+                pass  # C++ object already deleted — thread has already finished
         self._loader = None
         self._loader_thread = None
 
