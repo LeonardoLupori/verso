@@ -257,6 +257,14 @@ class MainWindow(QMainWindow):
         act_export_images.triggered.connect(self._export_images_with_overlay)
         export_menu.addAction(act_export_images)
 
+        help_menu = mb.addMenu("&Help")
+        act_atlas_info = QAction("&Atlas info…", self)
+        act_atlas_info.triggered.connect(self._show_atlas_info)
+        help_menu.addAction(act_atlas_info)
+        act_project_info = QAction("&Project info…", self)
+        act_project_info.triggered.connect(self._show_project_info)
+        help_menu.addAction(act_project_info)
+
     def _open_brightness_dialog(self) -> None:
         """Show the floating brightness dialog, constructing it on first use."""
         if self._brightness_dialog is None:
@@ -1422,6 +1430,90 @@ class MainWindow(QMainWindow):
             from verso.engine.io.quint_io import save_visualign
             save_visualign(self._state.project, Path(path), atlas_shape=atlas_shape)
             self._maybe_create_pngs(path)
+
+    def _show_info_dialog(self, title: str, rows: list[tuple[str, str]]) -> None:
+        from PyQt6.QtWidgets import (
+            QDialog,
+            QDialogButtonBox,
+            QFormLayout,
+            QFrame,
+            QVBoxLayout,
+        )
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(title)
+        dlg.setMinimumWidth(440)
+
+        outer = QVBoxLayout(dlg)
+        outer.setContentsMargins(20, 18, 20, 14)
+        outer.setSpacing(14)
+
+        heading = QLabel(title)
+        heading.setStyleSheet("font-size: 15px; font-weight: bold; color: #e0e0e0;")
+        outer.addWidget(heading)
+
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setStyleSheet("color: #444;")
+        outer.addWidget(separator)
+
+        form = QFormLayout()
+        form.setSpacing(8)
+        form.setHorizontalSpacing(16)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        form.setFormAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+
+        for label, value in rows:
+            lbl = QLabel(label + ":")
+            lbl.setStyleSheet("color: #888; font-size: 12px;")
+            val = QLabel(value)
+            val.setWordWrap(True)
+            val.setStyleSheet("color: #ddd; font-size: 12px;")
+            val.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            form.addRow(lbl, val)
+
+        outer.addLayout(form)
+        outer.addStretch()
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(dlg.accept)
+        outer.addWidget(buttons)
+
+        dlg.exec()
+
+    def _show_atlas_info(self) -> None:
+        atlas = self._state.atlas
+        if atlas is None:
+            project = self._state.project
+            name = project.atlas.name if (project and project.atlas) else "(none)"
+            self._show_info_dialog("Atlas info", [("Name", name), ("Status", "not yet loaded")])
+            return
+
+        ap, dv, lr = atlas._annotation.shape
+        n_regions = len(atlas._color_dict) - 1  # exclude background (id 0)
+        self._show_info_dialog("Atlas info", [
+            ("Name", atlas.atlas_name),
+            ("Resolution", f"{atlas.resolution_um:.1f} µm"),
+            ("Volume shape", f"AP {ap}  ×  DV {dv}  ×  LR {lr}"),
+            ("Brain regions", str(n_regions)),
+        ])
+
+    def _show_project_info(self) -> None:
+        project = self._state.project
+        if project is None:
+            self._show_info_dialog("Project info", [("Status", "No project loaded")])
+            return
+
+        path_str = str(self._state.project_path) if self._state.project_path else "(not saved)"
+        atlas_name = project.atlas.name if project.atlas else "(none)"
+        channels = ", ".join(ch.name for ch in project.channels) if project.channels else "(none)"
+        self._show_info_dialog("Project info", [
+            ("Name", project.name),
+            ("File", path_str),
+            ("Atlas", atlas_name),
+            ("Sections", str(len(project.sections))),
+            ("Channels", channels),
+        ])
 
     def _export_images_with_overlay(self) -> None:
         """Open the export dialog and write the requested PNGs to disk."""
