@@ -339,18 +339,12 @@ class _AlignProperties(QWidget):
         overlay_layout.addRow("Opacity:", self._opacity_slider)
 
         self._outline_color_rgb: tuple[int, int, int] = (255, 255, 255)
-        self._outline_color_swatch = QLabel()
-        self._outline_color_swatch.setFixedSize(28, 22)
-        self._outline_color_btn = QPushButton("Choose…")
+        self._outline_color_btn = QPushButton()
+        self._outline_color_btn.setFixedSize(20, 20)
+        self._outline_color_btn.setToolTip("Pick outline color")
         self._outline_color_btn.clicked.connect(self._on_outline_color)
         self._refresh_outline_color_swatch()
-        color_row = QHBoxLayout()
-        color_row.addWidget(self._outline_color_swatch)
-        color_row.addWidget(self._outline_color_btn)
-        color_row.addStretch()
-        color_widget = QWidget()
-        color_widget.setLayout(color_row)
-        overlay_layout.addRow("Outline color:", color_widget)
+        overlay_layout.addRow("Outline color:", self._outline_color_btn)
 
         layout.addWidget(overlay_box)
 
@@ -425,8 +419,9 @@ class _AlignProperties(QWidget):
 
     def _refresh_outline_color_swatch(self) -> None:
         r, g, b = self._outline_color_rgb
-        self._outline_color_swatch.setStyleSheet(
-            f"background: rgb({r},{g},{b}); border: 1px solid #555; border-radius: 3px;"
+        self._outline_color_btn.setStyleSheet(
+            f"background-color: rgb({r}, {g}, {b}); border: 1px solid #555;"
+            " border-radius: 2px;"
         )
 
     def _on_outline_color(self) -> None:
