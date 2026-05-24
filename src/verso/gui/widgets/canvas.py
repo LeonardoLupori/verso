@@ -160,6 +160,7 @@ class ImageCanvas(QWidget):
         layout.addWidget(self.view)
 
         self._vb = _OverlayViewBox()
+        self._vb.setBackgroundColor((0, 0, 0))  # black so Lighten(channel, black)=channel
         self._vb.overlay_panned.connect(self.overlay_panned)
 
         self.plot = self.view.addPlot(viewBox=self._vb)
