@@ -425,6 +425,10 @@ class MainWindow(QMainWindow):
         self._props.lr_draw_mode_toggled.connect(self._on_lr_draw_mode_toggled)
         self._props.lr_apply_requested.connect(self._on_lr_draw_apply)
         self._props.lr_cancel_requested.connect(self._on_lr_draw_cancel)
+        # Hemisphere — appearance.
+        self._props.lr_opacity_changed.connect(self._prep.set_lr_opacity)
+        self._props.lr_left_color_changed.connect(self._prep.set_lr_left_color)
+        self._props.lr_right_color_changed.connect(self._prep.set_lr_right_color)
         self._props.opacity_changed.connect(self._on_opacity_changed)
         self._props.overlay_color_changed.connect(self._panel.set_outline_color)
         self._props.overlay_mode_changed.connect(self._panel.set_overlay_mode)

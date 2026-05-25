@@ -51,6 +51,9 @@ class PrepView(QWidget):
         self._mask_dirty = False
         self._mask_opacity = 0.4
         self._mask_color = (255, 255, 255)
+        self._lr_mask_opacity: float = 0.5
+        self._lr_left_color: tuple[int, int, int] = (220, 60, 60)
+        self._lr_right_color: tuple[int, int, int] = (60, 130, 220)
         self._negative_mask = False
         self._mask_visible = True
         self._channels: list[ChannelSpec] = []
@@ -210,7 +213,18 @@ class PrepView(QWidget):
     def set_mask_opacity(self, opacity: float) -> None:
         self._mask_opacity = min(max(opacity, 0.0), 1.0)
         self._canvas.set_overlay_opacity(self._mask_opacity)
-        self._canvas.set_lr_overlay_opacity(self._mask_opacity)
+
+    def set_lr_opacity(self, opacity: float) -> None:
+        self._lr_mask_opacity = min(max(opacity, 0.0), 1.0)
+        self._canvas.set_lr_overlay_opacity(self._lr_mask_opacity)
+
+    def set_lr_left_color(self, color: tuple[int, int, int]) -> None:
+        self._lr_left_color = color
+        self._update_lr_overlay()
+
+    def set_lr_right_color(self, color: tuple[int, int, int]) -> None:
+        self._lr_right_color = color
+        self._update_lr_overlay()
 
     def set_mask_color(self, color: tuple[int, int, int]) -> None:
         self._mask_color = color
@@ -335,7 +349,11 @@ class PrepView(QWidget):
             p1 = (w / 2.0, 0.9 * h)
 
         self._lr_editor = LRLineEditor(self._canvas)
-        self._lr_editor.begin(p0, p1, w, h)
+        self._lr_editor.begin(
+            p0, p1, w, h,
+            left_color=self._lr_left_color,
+            right_color=self._lr_right_color,
+        )
         self._lr_draw_mode = True
 
     def exit_lr_draw_mode(self, *, apply: bool) -> None:
@@ -566,10 +584,15 @@ class PrepView(QWidget):
             self._lr_overlay_needs_update = True
             return
         display_mask = self._lr_mask_for_display()
-        rgba = lr_mask_to_rgba(display_mask, opacity=1.0)
+        rgba = lr_mask_to_rgba(
+            display_mask,
+            opacity=1.0,
+            left_color=self._lr_left_color,
+            right_color=self._lr_right_color,
+        )
         h, w = display_mask.shape
         self._canvas.set_lr_overlay(rgba, display_w=w, display_h=h)
-        self._canvas.set_lr_overlay_opacity(self._mask_opacity)
+        self._canvas.set_lr_overlay_opacity(self._lr_mask_opacity)
         self._canvas.set_lr_overlay_visible(True)
         self._lr_overlay_needs_update = False
 

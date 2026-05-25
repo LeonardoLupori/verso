@@ -122,6 +122,9 @@ class _PrepProperties(QWidget):
     lr_apply_requested = pyqtSignal()
     lr_cancel_requested = pyqtSignal()
     lr_clear_requested = pyqtSignal()
+    lr_opacity_changed = pyqtSignal(float)
+    lr_left_color_changed = pyqtSignal(tuple)
+    lr_right_color_changed = pyqtSignal(tuple)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -201,7 +204,7 @@ class _PrepProperties(QWidget):
         opacity_row.addWidget(self._opacity_value)
         mask_layout.addLayout(opacity_row)
 
-        # Row 4: auto-detect + clear
+        # Row 3: auto-detect + clear
         action_row = QHBoxLayout()
         self._autodetect_btn = QPushButton("Auto-detect")
         self._autodetect_btn.clicked.connect(self.autodetect_requested)
@@ -217,18 +220,45 @@ class _PrepProperties(QWidget):
         hemi_box = QGroupBox("Hemisphere")
         hemi_layout = QVBoxLayout(hemi_box)
 
-        # Row 1: visibility toggle + status label
+        # Row 1: visibility toggle + status label + L/R color pickers
         self._lr_eye_btn = _make_eye_btn()
         self._lr_eye_btn.setToolTip("Show / hide L/R boundary")
         self._lr_eye_btn.toggled.connect(self.lr_visibility_changed)
         self._hemi_status = QLabel("Not set")
         self._hemi_status.setStyleSheet("color: #aaa; font-style: italic;")
+        self._lr_left_color_rgb: tuple[int, int, int] = (220, 60, 60)
+        self._lr_left_color_btn = QPushButton()
+        self._lr_left_color_btn.setFixedSize(20, 20)
+        self._lr_left_color_btn.setToolTip("Pick left hemisphere color")
+        self._lr_left_color_btn.clicked.connect(self._on_lr_left_color)
+        self._refresh_lr_left_color_btn()
+        self._lr_right_color_rgb: tuple[int, int, int] = (60, 130, 220)
+        self._lr_right_color_btn = QPushButton()
+        self._lr_right_color_btn.setFixedSize(20, 20)
+        self._lr_right_color_btn.setToolTip("Pick right hemisphere color")
+        self._lr_right_color_btn.clicked.connect(self._on_lr_right_color)
+        self._refresh_lr_right_color_btn()
         hemi_vis_row = QHBoxLayout()
         hemi_vis_row.addWidget(self._lr_eye_btn)
         hemi_vis_row.addWidget(self._hemi_status, stretch=1)
+        hemi_vis_row.addWidget(self._lr_left_color_btn)
+        hemi_vis_row.addWidget(self._lr_right_color_btn)
         hemi_layout.addLayout(hemi_vis_row)
 
-        # Row 2: all-left / all-right
+        # Row 2: opacity slider
+        self._lr_opacity_value = QLabel("0.50")
+        self._lr_opacity_slider = QSlider(Qt.Orientation.Horizontal)
+        self._lr_opacity_slider.setRange(0, 100)
+        self._lr_opacity_slider.setValue(50)
+        self._lr_opacity_slider.setMinimumWidth(20)
+        self._lr_opacity_slider.valueChanged.connect(self._emit_lr_opacity)
+        lr_opacity_row = QHBoxLayout()
+        lr_opacity_row.addWidget(QLabel("Opacity"))
+        lr_opacity_row.addWidget(self._lr_opacity_slider, stretch=1)
+        lr_opacity_row.addWidget(self._lr_opacity_value)
+        hemi_layout.addLayout(lr_opacity_row)
+
+        # Row 3: all-left / all-right
         hemi_uniform_row = QHBoxLayout()
         self._btn_all_left = QPushButton("All left")
         self._btn_all_left.setToolTip("Label the entire section as left hemisphere")
@@ -240,18 +270,22 @@ class _PrepProperties(QWidget):
         hemi_uniform_row.addWidget(self._btn_all_right)
         hemi_layout.addLayout(hemi_uniform_row)
 
-        # Row 3: draw separating line
-        self._btn_draw_line = QPushButton("Draw separating line")
+        # Row 4: draw line + clear
+        hemi_draw_row = QHBoxLayout()
+        self._btn_draw_line = QPushButton("Draw line")
         self._btn_draw_line.setCheckable(True)
         self._btn_draw_line.setToolTip(
-            "Draw a line to split the section into left and right hemispheres. "
-            "L/R are determined by the line's direction — drag the start handle "
-            "past the end handle to swap sides."
+            "Draw a line to split left and right hemispheres"
         )
         self._btn_draw_line.toggled.connect(self.lr_draw_mode_toggled)
-        hemi_layout.addWidget(self._btn_draw_line)
+        hemi_draw_row.addWidget(self._btn_draw_line)
+        self._btn_clear_lr = QPushButton("Clear")
+        self._btn_clear_lr.setToolTip("Remove the L/R label for this section")
+        self._btn_clear_lr.clicked.connect(self.lr_clear_requested)
+        hemi_draw_row.addWidget(self._btn_clear_lr)
+        hemi_layout.addLayout(hemi_draw_row)
 
-        # Row 4: apply/cancel toolbar (hidden while draw mode is inactive)
+        # Row 5: apply/cancel toolbar (hidden while draw mode is inactive)
         self._lr_draw_toolbar = QWidget()
         draw_tb = QHBoxLayout(self._lr_draw_toolbar)
         draw_tb.setContentsMargins(0, 0, 0, 0)
@@ -263,12 +297,6 @@ class _PrepProperties(QWidget):
         draw_tb.addWidget(self._btn_lr_cancel)
         self._lr_draw_toolbar.setVisible(False)
         hemi_layout.addWidget(self._lr_draw_toolbar)
-
-        # Row 5: clear
-        self._btn_clear_lr = QPushButton("Clear")
-        self._btn_clear_lr.setToolTip("Remove the L/R label for this section")
-        self._btn_clear_lr.clicked.connect(self.lr_clear_requested)
-        hemi_layout.addWidget(self._btn_clear_lr)
 
         layout.addWidget(hemi_box)
 
@@ -314,7 +342,7 @@ class _PrepProperties(QWidget):
         self._btn_draw_line.setChecked(active)
         self._btn_draw_line.blockSignals(False)
         self._btn_draw_line.setText(
-            "Drawing — use Apply / Cancel" if active else "Draw separating line"
+            "Drawing..." if active else "Draw line"
         )
         self._lr_draw_toolbar.setVisible(active)
         # Disable competing actions while editing the line.
@@ -327,11 +355,30 @@ class _PrepProperties(QWidget):
         self._opacity_value.setText(f"{opacity:.2f}")
         self.mask_opacity_changed.emit(opacity)
 
+    def _emit_lr_opacity(self) -> None:
+        opacity = self._lr_opacity_slider.value() / 100.0
+        self._lr_opacity_value.setText(f"{opacity:.2f}")
+        self.lr_opacity_changed.emit(opacity)
+
     def _refresh_mask_color_btn(self) -> None:
         r, g, b = self._mask_color_rgb
         self._mask_color_btn.setStyleSheet(
             f"QPushButton {{ background-color: rgb({r}, {g}, {b}); border: 1px solid #555;"
             " border-radius: 2px; }"
+        )
+
+    def _refresh_lr_left_color_btn(self) -> None:
+        r, g, b = self._lr_left_color_rgb
+        self._lr_left_color_btn.setStyleSheet(
+            f"QPushButton {{ background-color: rgb({r}, {g}, {b}); border: 1px solid #555;"
+            " border-radius: 2px; }}"
+        )
+
+    def _refresh_lr_right_color_btn(self) -> None:
+        r, g, b = self._lr_right_color_rgb
+        self._lr_right_color_btn.setStyleSheet(
+            f"QPushButton {{ background-color: rgb({r}, {g}, {b}); border: 1px solid #555;"
+            " border-radius: 2px; }}"
         )
 
     def _on_mask_color(self) -> None:
@@ -341,6 +388,22 @@ class _PrepProperties(QWidget):
             self._mask_color_rgb = (color.red(), color.green(), color.blue())
             self._refresh_mask_color_btn()
             self.mask_color_changed.emit(self._mask_color_rgb)
+
+    def _on_lr_left_color(self) -> None:
+        current = QColor(*self._lr_left_color_rgb)
+        color = QColorDialog.getColor(current, self, "Left hemisphere color")
+        if color.isValid():
+            self._lr_left_color_rgb = (color.red(), color.green(), color.blue())
+            self._refresh_lr_left_color_btn()
+            self.lr_left_color_changed.emit(self._lr_left_color_rgb)
+
+    def _on_lr_right_color(self) -> None:
+        current = QColor(*self._lr_right_color_rgb)
+        color = QColorDialog.getColor(current, self, "Right hemisphere color")
+        if color.isValid():
+            self._lr_right_color_rgb = (color.red(), color.green(), color.blue())
+            self._refresh_lr_right_color_btn()
+            self.lr_right_color_changed.emit(self._lr_right_color_rgb)
 
 _CP_SHAPES = ["Circle", "Cross", "Square", "Diamond"]
 
@@ -677,6 +740,9 @@ class PropertiesPanel(QWidget):
     lr_apply_requested = pyqtSignal()
     lr_cancel_requested = pyqtSignal()
     lr_clear_requested = pyqtSignal()
+    lr_opacity_changed = pyqtSignal(float)
+    lr_left_color_changed = pyqtSignal(tuple)
+    lr_right_color_changed = pyqtSignal(tuple)
     opacity_changed = pyqtSignal(float)
     overlay_color_changed = pyqtSignal(tuple)  # (r, g, b) — outline color
     overlay_mode_changed = pyqtSignal(str)     # "annotation" | "outline" | "reference"
@@ -718,6 +784,9 @@ class PropertiesPanel(QWidget):
         self._prep_page.lr_apply_requested.connect(self.lr_apply_requested)
         self._prep_page.lr_cancel_requested.connect(self.lr_cancel_requested)
         self._prep_page.lr_clear_requested.connect(self.lr_clear_requested)
+        self._prep_page.lr_opacity_changed.connect(self.lr_opacity_changed)
+        self._prep_page.lr_left_color_changed.connect(self.lr_left_color_changed)
+        self._prep_page.lr_right_color_changed.connect(self.lr_right_color_changed)
 
         self._align_page.opacity_changed.connect(self.opacity_changed)
         self._align_page.overlay_color_changed.connect(self.overlay_color_changed)

@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 
 import pyqtgraph as pg
 from PyQt6.QtCore import QObject, QPointF, pyqtSignal
-from PyQt6.QtGui import QBrush, QColor, QFont, QPen, QPolygonF
+from PyQt6.QtGui import QBrush, QColor, QFont, QPainterPath, QPen, QPolygonF
 from PyQt6.QtWidgets import QGraphicsPolygonItem
 
 from verso.engine.preprocessing import line_side_polygons
@@ -70,8 +70,12 @@ class LRLineEditor(QObject):
         p1: tuple[float, float],
         image_w: int,
         image_h: int,
+        left_color: tuple[int, int, int] = _LEFT_COLOR,
+        right_color: tuple[int, int, int] = _RIGHT_COLOR,
     ) -> None:
         """Add the line and badges to the canvas at the given endpoints."""
+        self._left_color = left_color
+        self._right_color = right_color
         if self._roi is not None:
             self.end()
         self._image_w = int(image_w)
@@ -88,22 +92,26 @@ class LRLineEditor(QObject):
         self._roi.rotatable = False
         self._roi.resizable = False
 
-        # Style the two endpoint handles distinctly so the user can see the
-        # line's direction at a glance.  L-side handle is red, R-side is blue.
+        # Style endpoint handles: yellow circles matching the line colour.
+        _hr = 7  # handle radius in pixels
+        _circle_path = QPainterPath()
+        _circle_path.addEllipse(-_hr, -_hr, 2 * _hr, 2 * _hr)
         handles = self._roi.getHandles()
         if len(handles) >= 2:
-            handles[0].pen = pg.mkPen(_LEFT_COLOR, width=2.5)
-            handles[0].currentPen = handles[0].pen
-            handles[1].pen = pg.mkPen(_RIGHT_COLOR, width=2.5)
-            handles[1].currentPen = handles[1].pen
+            for h in handles[:2]:
+                h.pen = pg.mkPen(_LINE_COLOR, width=2)
+                h.currentPen = h.pen
+                h.brush = QBrush(QColor(*_LINE_COLOR, 160))
+                h.path = _circle_path
+                h.radius = _hr
 
         font = QFont()
         font.setPointSize(_BADGE_FONT_PT)
         font.setBold(True)
-        self._left_badge = pg.TextItem("L", color=_LEFT_COLOR, anchor=(0.5, 0.5))
+        self._left_badge = pg.TextItem("L", color=self._left_color, anchor=(0.5, 0.5))
         self._left_badge.setFont(font)
         self._left_badge.setZValue(26)
-        self._right_badge = pg.TextItem("R", color=_RIGHT_COLOR, anchor=(0.5, 0.5))
+        self._right_badge = pg.TextItem("R", color=self._right_color, anchor=(0.5, 0.5))
         self._right_badge.setFont(font)
         self._right_badge.setZValue(26)
 
@@ -203,10 +211,10 @@ class LRLineEditor(QObject):
         # cross < 0 → left (red); cross ≥ 0 → right (blue)
         if cross < 0.0:
             poly_arr = left_poly
-            color = _LEFT_COLOR
+            color = self._left_color
         else:
             poly_arr = right_poly
-            color = _RIGHT_COLOR
+            color = self._right_color
         if len(poly_arr) < 3:
             self._hover_poly.setVisible(False)
             return
