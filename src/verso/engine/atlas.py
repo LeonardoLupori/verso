@@ -199,7 +199,11 @@ class AtlasVolume:
         ap = np.clip(np.round(grid[:, :, 1]).astype(int), 0, self._reference.shape[0] - 1)
         dv = np.clip(np.round(grid[:, :, 2]).astype(int), 0, self._reference.shape[1] - 1)
         lr = np.clip(np.round(grid[:, :, 0]).astype(int), 0, self._reference.shape[2] - 1)
-        gray = (self._reference[ap, dv, lr].astype(np.float32) * self._reference_scale).clip(0, 255).astype(np.uint8)
+        gray = (
+            (self._reference[ap, dv, lr].astype(np.float32) * self._reference_scale)
+            .clip(0, 255)
+            .astype(np.uint8)
+        )
         return np.stack([gray, gray, gray], axis=-1)
 
     def slice_reference_rgba(
@@ -216,7 +220,11 @@ class AtlasVolume:
         ap = np.clip(np.round(grid[:, :, 1]).astype(int), 0, self._reference.shape[0] - 1)
         dv = np.clip(np.round(grid[:, :, 2]).astype(int), 0, self._reference.shape[1] - 1)
         lr = np.clip(np.round(grid[:, :, 0]).astype(int), 0, self._reference.shape[2] - 1)
-        gray = (self._reference[ap, dv, lr].astype(np.float32) * self._reference_scale).clip(0, 255).astype(np.uint8)
+        gray = (
+            (self._reference[ap, dv, lr].astype(np.float32) * self._reference_scale)
+            .clip(0, 255)
+            .astype(np.uint8)
+        )
         rgb = np.stack([gray, gray, gray], axis=-1)
         alpha = np.where(~in_bounds, 0, 255).astype(np.uint8)
         return np.dstack([rgb, alpha])
