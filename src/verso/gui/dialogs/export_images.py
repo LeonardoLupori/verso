@@ -51,7 +51,7 @@ class ExportImagesDialog(QDialog):
         # --- Scope -----------------------------------------------------
         scope_box = QGroupBox("Sections to export")
         scope_layout = QVBoxLayout(scope_box)
-        self._radio_selected = QRadioButton(f"Selected sections ({n_selected})")
+        self._radio_selected = QRadioButton(f"Selected sections in overview table({n_selected})")
         self._radio_all = QRadioButton(f"All sections ({n_total})")
         scope_group = QButtonGroup(self)
         scope_group.addButton(self._radio_selected)
