@@ -1,7 +1,9 @@
+import ctypes
 import sys
+from pathlib import Path
 
 import pyqtgraph as pg
-from PyQt6.QtGui import QColor, QPalette
+from PyQt6.QtGui import QColor, QIcon, QPalette
 from PyQt6.QtWidgets import QApplication
 
 from verso.gui.main_window import MainWindow
@@ -61,14 +63,22 @@ def run() -> None:
     pg.setConfigOption("background", (30, 30, 30))
     pg.setConfigOption("foreground", (220, 220, 220))
 
+    # Tell Windows to use VERSO's own taskbar icon instead of python.exe's.
+    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("verso.app")
+
     app = QApplication(sys.argv)
     app.setApplicationName("VERSO")
     app.setOrganizationName("VERSO")
+
+    _ICO = Path(__file__).parent.parent / "resources" / "verso.ico"
+    app_icon = QIcon(str(_ICO))
+    app.setWindowIcon(app_icon)
 
     app.setStyle("Fusion")
     app.setPalette(_build_dark_palette())
 
     window = MainWindow()
+    window.setWindowIcon(app_icon)
     window.show()
     _center_on_screen(window)
     sys.exit(app.exec())
