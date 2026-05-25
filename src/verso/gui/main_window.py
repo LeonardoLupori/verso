@@ -306,8 +306,11 @@ class MainWindow(QMainWindow):
                 " background: #3a3a3a; border: 1px solid #555; }"
                 "QPushButton:checked { background: #1e5a8a; color: #fff; border-color: #1e5a8a; }"
                 "QPushButton:hover:!checked { background: #4a4a4a; }"
+                "QPushButton:disabled { color: #555; background: #2e2e2e; border-color: #3a3a3a; }"
             )
             btn.clicked.connect(lambda _checked, i=idx: self._switch_view(i))
+            if idx != _VIEW_OVERVIEW:
+                btn.setEnabled(False)
             self._view_buttons.append(btn)
             tb.addWidget(btn)
 
@@ -592,11 +595,18 @@ class MainWindow(QMainWindow):
     # Slots — state changes
     # ------------------------------------------------------------------
 
+    def _set_project_views_enabled(self, enabled: bool) -> None:
+        for btn in self._view_buttons[1:]:
+            btn.setEnabled(enabled)
+
     def _on_project_changed(self) -> None:
         project = self._state.project
         if project is None:
             self._project_label.setText("")
+            self._set_project_views_enabled(False)
             return
+
+        self._set_project_views_enabled(True)
 
         self._reverse_ap_proposal = False
         self._align.set_reverse_ap(False)
