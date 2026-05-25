@@ -106,7 +106,6 @@ class _PrepProperties(QWidget):
     mask_color_changed = pyqtSignal(tuple)
     mask_negative_changed = pyqtSignal(bool)
     autodetect_requested = pyqtSignal()
-    autodetect_all_requested = pyqtSignal()
     clear_mask_requested = pyqtSignal()
     # Hemisphere subpanel signals
     lr_set_all_left_requested = pyqtSignal()
@@ -190,20 +189,15 @@ class _PrepProperties(QWidget):
         opacity_row.addWidget(self._opacity_value)
         mask_layout.addLayout(opacity_row)
 
-        # Row 4: auto-detect buttons
-        autodetect_row = QHBoxLayout()
-        self._autodetect_btn = QPushButton("Auto-detect current")
+        # Row 4: auto-detect + clear
+        action_row = QHBoxLayout()
+        self._autodetect_btn = QPushButton("Auto-detect")
         self._autodetect_btn.clicked.connect(self.autodetect_requested)
-        self._autodetect_all_btn = QPushButton("Auto-detect all")
-        self._autodetect_all_btn.clicked.connect(self.autodetect_all_requested)
-        autodetect_row.addWidget(self._autodetect_btn)
-        autodetect_row.addWidget(self._autodetect_all_btn)
-        mask_layout.addLayout(autodetect_row)
-
-        # Row 5: clear
         self._clear_mask_btn = QPushButton("Clear")
         self._clear_mask_btn.clicked.connect(self.clear_mask_requested)
-        mask_layout.addWidget(self._clear_mask_btn)
+        action_row.addWidget(self._autodetect_btn)
+        action_row.addWidget(self._clear_mask_btn)
+        mask_layout.addLayout(action_row)
 
         layout.addWidget(mask_box)
 
@@ -606,7 +600,6 @@ class PropertiesPanel(QWidget):
     mask_color_changed = pyqtSignal(tuple)
     mask_negative_changed = pyqtSignal(bool)
     autodetect_requested = pyqtSignal()
-    autodetect_all_requested = pyqtSignal()
     clear_mask_requested = pyqtSignal()
     # Hemisphere subpanel signals (re-exposed from _PrepProperties)
     lr_set_all_left_requested = pyqtSignal()
@@ -648,7 +641,6 @@ class PropertiesPanel(QWidget):
         self._prep_page.mask_color_changed.connect(self.mask_color_changed)
         self._prep_page.mask_negative_changed.connect(self.mask_negative_changed)
         self._prep_page.autodetect_requested.connect(self.autodetect_requested)
-        self._prep_page.autodetect_all_requested.connect(self.autodetect_all_requested)
         self._prep_page.clear_mask_requested.connect(self.clear_mask_requested)
         self._prep_page.lr_set_all_left_requested.connect(self.lr_set_all_left_requested)
         self._prep_page.lr_set_all_right_requested.connect(self.lr_set_all_right_requested)

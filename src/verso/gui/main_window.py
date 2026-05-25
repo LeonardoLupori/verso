@@ -251,6 +251,10 @@ class MainWindow(QMainWindow):
         act_adjust = QAction("Adjust &channels/brightness…", self)
         act_adjust.triggered.connect(self._open_brightness_dialog)
         images_menu.addAction(act_adjust)
+        batch_menu = images_menu.addMenu("&Batch processing")
+        act_batch_mask = QAction("Autodetect slice mask for &all slices", self)
+        act_batch_mask.triggered.connect(self._batch_autodetect_masks)
+        batch_menu.addAction(act_batch_mask)
 
         export_menu = mb.addMenu("&Export")
         act_export_images = QAction("Images with atlas &overlay…", self)
@@ -411,7 +415,6 @@ class MainWindow(QMainWindow):
         self._props.mask_color_changed.connect(self._prep.set_mask_color)
         self._props.mask_negative_changed.connect(self._prep.set_mask_negative)
         self._props.autodetect_requested.connect(self._on_prep_autodetect_requested)
-        self._props.autodetect_all_requested.connect(self._batch_autodetect_masks)
         self._props.clear_mask_requested.connect(self._on_prep_clear_mask_requested)
         # Hemisphere subpanel — non-draw actions.
         self._props.lr_visibility_changed.connect(self._prep.set_lr_visible)
