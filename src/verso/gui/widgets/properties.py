@@ -6,9 +6,11 @@ MainWindow switches pages via set_mode().
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pyqtgraph as pg
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QColor
+from PyQt6.QtCore import QSize, Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QIcon, QPixmap
 from PyQt6.QtWidgets import (
     QCheckBox,
     QColorDialog,
@@ -28,6 +30,28 @@ from PyQt6.QtWidgets import (
 )
 
 from verso.engine.model.project import Section
+
+_ICONS_DIR = Path(__file__).parent.parent / "icons"
+
+
+def _eye_icon(visible: bool) -> QIcon:
+    name = "eye.svg" if visible else "eye-off.svg"
+    svg = (_ICONS_DIR / name).read_text(encoding="utf-8").replace("currentColor", "#266eb7")
+    pixmap = QPixmap()
+    pixmap.loadFromData(svg.encode())
+    return QIcon(pixmap)
+
+
+def _make_eye_btn() -> QPushButton:
+    btn = QPushButton()
+    btn.setCheckable(True)
+    btn.setChecked(True)
+    btn.setFixedSize(24, 24)
+    btn.setFlat(True)
+    btn.setIcon(_eye_icon(True))
+    btn.setIconSize(QSize(16, 16))
+    btn.toggled.connect(lambda checked, b=btn: b.setIcon(_eye_icon(checked)))
+    return btn
 
 
 class _OverviewProperties(QWidget):
@@ -110,6 +134,7 @@ class _PrepProperties(QWidget):
         layout.setSpacing(8)
         scroll.setWidget(content)
 
+        # --- Flip image -----------------------------------------------
         flip_box = QGroupBox("Flip image")
         flip_layout = QHBoxLayout(flip_box)
         _flip_btn_style = (
@@ -130,20 +155,30 @@ class _PrepProperties(QWidget):
         flip_layout.addWidget(self._flip_v)
         layout.addWidget(flip_box)
 
-        mask_box = QGroupBox("Mask visibility")
+        # --- Slice mask -----------------------------------------------
+        mask_box = QGroupBox("Slice mask")
         mask_layout = QVBoxLayout(mask_box)
-        self._show_slice = QCheckBox("Show slice mask")
-        self._show_slice.setChecked(True)
-        self._show_slice.toggled.connect(self.mask_visibility_changed)
-        self._show_lr = QCheckBox("Show L/R boundary")
-        self._show_lr.setChecked(True)
-        self._show_lr.toggled.connect(self.lr_visibility_changed)
-        self._negative = QCheckBox("Negative mask")
-        self._negative.toggled.connect(self.mask_negative_changed)
-        mask_layout.addWidget(self._show_slice)
-        mask_layout.addWidget(self._show_lr)
-        mask_layout.addWidget(self._negative)
 
+        # Row 1: visibility toggle + color picker
+        self._mask_eye_btn = _make_eye_btn()
+        self._mask_eye_btn.setToolTip("Show / hide slice mask")
+        self._mask_eye_btn.toggled.connect(self.mask_visibility_changed)
+        self._mask_color_rgb: tuple[int, int, int] = (255, 255, 255)
+        self._mask_color_btn = QPushButton()
+        self._mask_color_btn.setFixedSize(20, 20)
+        self._mask_color_btn.setToolTip("Pick mask color")
+        self._mask_color_btn.clicked.connect(self._on_mask_color)
+        self._refresh_mask_color_btn()
+        self._negative = QCheckBox("Show negative")
+        self._negative.toggled.connect(self.mask_negative_changed)
+        vis_color_row = QHBoxLayout()
+        vis_color_row.addWidget(self._mask_eye_btn)
+        vis_color_row.addWidget(self._mask_color_btn)
+        vis_color_row.addStretch()
+        vis_color_row.addWidget(self._negative)
+        mask_layout.addLayout(vis_color_row)
+
+        # Row 2: opacity slider
         self._opacity_value = QLabel("0.40")
         self._opacity_slider = QSlider(Qt.Orientation.Horizontal)
         self._opacity_slider.setRange(0, 100)
@@ -155,46 +190,44 @@ class _PrepProperties(QWidget):
         opacity_row.addWidget(self._opacity_value)
         mask_layout.addLayout(opacity_row)
 
-        self._mask_color_rgb: tuple[int, int, int] = (255, 255, 255)
-        self._mask_color_btn = QPushButton()
-        self._mask_color_btn.setFixedSize(20, 20)
-        self._mask_color_btn.setToolTip("Pick mask color")
-        self._mask_color_btn.clicked.connect(self._on_mask_color)
-        self._refresh_mask_color_btn()
-        color_row = QHBoxLayout()
-        color_row.addWidget(QLabel("Color"))
-        color_row.addWidget(self._mask_color_btn)
-        color_row.addStretch()
-        mask_layout.addLayout(color_row)
-        layout.addWidget(mask_box)
-
-        edit_box = QGroupBox("Mask editing")
-        edit_layout = QVBoxLayout(edit_box)
+        # Row 4: auto-detect buttons
+        autodetect_row = QHBoxLayout()
         self._autodetect_btn = QPushButton("Auto-detect current")
         self._autodetect_btn.clicked.connect(self.autodetect_requested)
-        edit_layout.addWidget(self._autodetect_btn)
         self._autodetect_all_btn = QPushButton("Auto-detect all")
         self._autodetect_all_btn.clicked.connect(self.autodetect_all_requested)
-        edit_layout.addWidget(self._autodetect_all_btn)
+        autodetect_row.addWidget(self._autodetect_btn)
+        autodetect_row.addWidget(self._autodetect_all_btn)
+        mask_layout.addLayout(autodetect_row)
 
+        # Row 5: clear + save
         edit_row = QHBoxLayout()
-        self._save_mask_btn = QPushButton("Save mask")
-        self._save_mask_btn.clicked.connect(self.save_mask_requested)
         self._clear_mask_btn = QPushButton("Clear")
         self._clear_mask_btn.clicked.connect(self.clear_mask_requested)
-        edit_row.addWidget(self._save_mask_btn)
+        self._save_mask_btn = QPushButton("Save mask")
+        self._save_mask_btn.clicked.connect(self.save_mask_requested)
         edit_row.addWidget(self._clear_mask_btn)
-        edit_layout.addLayout(edit_row)
-        layout.addWidget(edit_box)
+        edit_row.addWidget(self._save_mask_btn)
+        mask_layout.addLayout(edit_row)
 
-        # --- Hemisphere subpanel --------------------------------------
+        layout.addWidget(mask_box)
+
+        # --- Hemisphere -----------------------------------------------
         hemi_box = QGroupBox("Hemisphere")
         hemi_layout = QVBoxLayout(hemi_box)
 
+        # Row 1: visibility toggle + status label
+        self._lr_eye_btn = _make_eye_btn()
+        self._lr_eye_btn.setToolTip("Show / hide L/R boundary")
+        self._lr_eye_btn.toggled.connect(self.lr_visibility_changed)
         self._hemi_status = QLabel("Not set")
         self._hemi_status.setStyleSheet("color: #aaa; font-style: italic;")
-        hemi_layout.addWidget(self._hemi_status)
+        hemi_vis_row = QHBoxLayout()
+        hemi_vis_row.addWidget(self._lr_eye_btn)
+        hemi_vis_row.addWidget(self._hemi_status, stretch=1)
+        hemi_layout.addLayout(hemi_vis_row)
 
+        # Row 2: all-left / all-right
         hemi_uniform_row = QHBoxLayout()
         self._btn_all_left = QPushButton("All left")
         self._btn_all_left.setToolTip("Label the entire section as left hemisphere")
@@ -206,6 +239,7 @@ class _PrepProperties(QWidget):
         hemi_uniform_row.addWidget(self._btn_all_right)
         hemi_layout.addLayout(hemi_uniform_row)
 
+        # Row 3: draw separating line
         self._btn_draw_line = QPushButton("Draw separating line")
         self._btn_draw_line.setCheckable(True)
         self._btn_draw_line.setToolTip(
@@ -216,7 +250,7 @@ class _PrepProperties(QWidget):
         self._btn_draw_line.toggled.connect(self.lr_draw_mode_toggled)
         hemi_layout.addWidget(self._btn_draw_line)
 
-        # Apply/Cancel toolbar shown only while draw mode is active.
+        # Row 4: apply/cancel toolbar (hidden while draw mode is inactive)
         self._lr_draw_toolbar = QWidget()
         draw_tb = QHBoxLayout(self._lr_draw_toolbar)
         draw_tb.setContentsMargins(0, 0, 0, 0)
@@ -229,6 +263,7 @@ class _PrepProperties(QWidget):
         self._lr_draw_toolbar.setVisible(False)
         hemi_layout.addWidget(self._lr_draw_toolbar)
 
+        # Row 5: clear
         self._btn_clear_lr = QPushButton("Clear")
         self._btn_clear_lr.setToolTip("Remove the L/R label for this section")
         self._btn_clear_lr.clicked.connect(self.lr_clear_requested)
@@ -288,8 +323,8 @@ class _PrepProperties(QWidget):
     def _refresh_mask_color_btn(self) -> None:
         r, g, b = self._mask_color_rgb
         self._mask_color_btn.setStyleSheet(
-            f"background-color: rgb({r}, {g}, {b}); border: 1px solid #555;"
-            " border-radius: 2px;"
+            f"QPushButton {{ background-color: rgb({r}, {g}, {b}); border: 1px solid #555;"
+            " border-radius: 2px; }}"
         )
 
     def _on_mask_color(self) -> None:
@@ -420,8 +455,8 @@ class _AlignProperties(QWidget):
     def _refresh_outline_color_swatch(self) -> None:
         r, g, b = self._outline_color_rgb
         self._outline_color_btn.setStyleSheet(
-            f"background-color: rgb({r}, {g}, {b}); border: 1px solid #555;"
-            " border-radius: 2px;"
+            f"QPushButton {{ background-color: rgb({r}, {g}, {b}); border: 1px solid #555;"
+            " border-radius: 2px; }}"
         )
 
     def _on_outline_color(self) -> None:
@@ -451,8 +486,8 @@ class _AlignProperties(QWidget):
     def _refresh_cp_color_btn(self) -> None:
         r, g, b = self._cp_color_rgb
         self._cp_color_btn.setStyleSheet(
-            f"background-color: rgb({r}, {g}, {b}); border: 1px solid #555;"
-            " border-radius: 2px;"
+            f"QPushButton {{ background-color: rgb({r}, {g}, {b}); border: 1px solid #555;"
+            " border-radius: 2px; }}"
         )
 
     def _on_cp_color(self) -> None:
@@ -592,10 +627,10 @@ class PropertiesPanel(QWidget):
         # Allow horizontal resize via the dock's splitter handle.  The
         # minimum keeps the inner sliders / combos legible; no maximum so
         # the user can widen the panel as much as they want.
-        self.setMinimumWidth(180)
+        self.setMinimumWidth(150)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setContentsMargins(2, 2, 2, 2)
 
         self._stack = QStackedWidget()
         self._overview_page = _OverviewProperties()
