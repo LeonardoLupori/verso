@@ -6,12 +6,10 @@ from pathlib import Path
 
 import numpy as np
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFont, QKeySequence, QShortcut
+from PyQt6.QtGui import QGuiApplication, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
-    QButtonGroup,
     QHBoxLayout,
     QLabel,
-    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -62,7 +60,10 @@ class PrepView(QWidget):
         self._undo_stack: list[np.ndarray] = []
         self._stroke_points: list[tuple[float, float]] = []
         self._stroke_active = False
-        self._active_tool = "draw"
+        # Latched at stroke start from the Shift modifier — releasing Shift
+        # mid-stroke does not flip add/erase, matching the cursor color the
+        # user committed to when they began the drag.
+        self._stroke_erase = False
         # L/R hemisphere mask state.  Stored unflipped (matches slice mask).
         self._lr_mask: np.ndarray | None = None
         self._lr_dirty = False
@@ -102,74 +103,10 @@ class PrepView(QWidget):
         canvas_col.addWidget(self._canvas, stretch=1)
         layout.addLayout(canvas_col, stretch=1)
 
-        # Right tool palette
-        self._toolbar = self._make_toolbar()
-        layout.addWidget(self._toolbar)
-
         self._install_shortcuts()
-
-    def _make_toolbar(self) -> QWidget:
-        container = QWidget()
-        container.setFixedWidth(48)
-        container.setStyleSheet("background: #2a2a2a;")
-        v = QVBoxLayout(container)
-        v.setContentsMargins(4, 8, 4, 8)
-        v.setSpacing(4)
-        v.setAlignment(Qt.AlignmentFlag.AlignTop)
-
-        self._tool_group = QButtonGroup()
-        tools = [
-            ("D", "Draw mask (D)", "draw"),
-            ("E", "Erase mask (E)", "erase"),
-        ]
-        btn_ss = (
-            "QToolButton { color: #ccc; border-radius: 4px; }"
-            "QToolButton:checked { background: #1e5a8a; }"
-            "QToolButton:hover { background: #444; }"
-        )
-        icon_font = QFont()
-        icon_font.setPointSize(11)
-        icon_font.setBold(True)
-
-        for icon, tip, name in tools:
-            btn = QToolButton()
-            btn.setText(icon)
-            btn.setFont(icon_font)
-            btn.setToolTip(tip)
-            btn.setCheckable(True)
-            btn.setFixedSize(36, 36)
-            btn.setStyleSheet(btn_ss)
-            btn.setProperty("tool_name", name)
-            btn.clicked.connect(lambda _checked, n=name: self._set_tool(n))
-            self._tool_group.addButton(btn)
-            v.addWidget(btn)
-
-        if self._tool_group.buttons():
-            self._tool_group.buttons()[0].setChecked(True)
-
-        v.addStretch()
-
-        undo_font = QFont()
-        undo_font.setPointSize(14)
-        undo_btn = QToolButton()
-        undo_btn.setText("U")
-        undo_btn.setFont(undo_font)
-        undo_btn.setToolTip("Undo (U or Ctrl+Z)")
-        undo_btn.setFixedSize(36, 36)
-        undo_btn.setStyleSheet(
-            "QToolButton { color: #ccc; border-radius: 4px; }"
-            "QToolButton:hover { background: #444; }"
-        )
-        undo_btn.clicked.connect(self.undo_mask_edit)
-        v.addWidget(undo_btn)
-        self._undo_btn = undo_btn
-
-        return container
 
     def _install_shortcuts(self) -> None:
         shortcuts = [
-            (Qt.Key.Key_D, lambda: self._set_tool("draw")),
-            (Qt.Key.Key_E, lambda: self._set_tool("erase")),
             (Qt.Key.Key_M, lambda: self.set_mask_visible(not self._mask_visible)),
             (Qt.Key.Key_N, lambda: self.set_mask_negative(not self._negative_mask)),
             (Qt.Key.Key_U, self.undo_mask_edit),
@@ -636,18 +573,11 @@ class PrepView(QWidget):
     # Tool / stroke handling
     # ------------------------------------------------------------------
 
-    def _set_tool(self, tool: str) -> None:
-        if tool not in {"draw", "erase"}:
-            return
-        self._active_tool = tool
-        for btn in self._tool_group.buttons():
-            btn.setChecked(btn.property("tool_name") == tool)
-
     def _on_canvas_drag_started(self, x: float, y: float) -> None:
         if self._raw_image is None or self._section is None:
             return
-        if self._active_tool not in {"draw", "erase"}:
-            return
+        mods = QGuiApplication.keyboardModifiers()
+        self._stroke_erase = bool(mods & Qt.KeyboardModifier.ShiftModifier)
         point = self._clamped_display_point(x, y)
         self._stroke_points = [point]
         self._stroke_active = True
@@ -657,7 +587,7 @@ class PrepView(QWidget):
         if not self._stroke_active:
             return
         self._stroke_points.append(self._clamped_display_point(x, y))
-        color = self._DRAW_COLOR if self._active_tool == "draw" else self._ERASE_COLOR
+        color = self._ERASE_COLOR if self._stroke_erase else self._DRAW_COLOR
         self._canvas.set_stroke_preview(self._stroke_points, color=color)
 
     def _on_canvas_drag_ended(self, x: float, y: float) -> None:
@@ -676,7 +606,7 @@ class PrepView(QWidget):
         self._current_mask = apply_freehand_stroke(
             self._current_mask,
             pts,
-            add=self._active_tool == "draw",
+            add=not self._stroke_erase,
         )
         self._stroke_points.clear()
         self._mask_dirty = True

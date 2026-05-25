@@ -24,8 +24,22 @@ from typing import Literal
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import QEvent, QObject, Qt, pyqtSignal
-from PyQt6.QtGui import QPainter
+from PyQt6.QtGui import QColor, QCursor, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import QAbstractButton, QApplication, QSizePolicy, QVBoxLayout, QWidget
+
+
+def _make_cross_cursor(rgb: tuple[int, int, int], size: int = 19) -> QCursor:
+    """Build a 1-px colored crosshair cursor with hotspot at center."""
+    pm = QPixmap(size, size)
+    pm.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pm)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+    painter.setPen(QPen(QColor(*rgb), 1))
+    mid = size // 2
+    painter.drawLine(0, mid, size - 1, mid)
+    painter.drawLine(mid, 0, mid, size - 1)
+    painter.end()
+    return QCursor(pm, mid, mid)
 
 # ---------------------------------------------------------------------------
 # Application-level space-key tracker (singleton, installed once)
@@ -35,8 +49,18 @@ class _SpaceState:
     held: bool = False
 
 
+class _ShiftState:
+    held: bool = False
+    # ImageCanvas instances that want to be notified on Shift change.
+    listeners: set = set()
+
+
 class _SpaceFilter(QObject):
-    """Application event filter that tracks whether the spacebar is held."""
+    """Application event filter that tracks whether the spacebar is held.
+
+    Also tracks Shift for prep-mode cursor color so it stays synced even when
+    keyboard focus is on another widget (properties panel, main window, etc).
+    """
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:
         t = event.type()
@@ -47,9 +71,17 @@ class _SpaceFilter(QObject):
                 # re-trigger the last clicked button while panning.
                 if isinstance(QApplication.focusWidget(), QAbstractButton):
                     return True
+            elif event.key() == Qt.Key.Key_Shift:
+                _ShiftState.held = True
+                for canvas in list(_ShiftState.listeners):
+                    canvas._on_shift_changed()
         elif t == QEvent.Type.KeyRelease and not event.isAutoRepeat():
             if event.key() == Qt.Key.Key_Space:
                 _SpaceState.held = False
+            elif event.key() == Qt.Key.Key_Shift:
+                _ShiftState.held = False
+                for canvas in list(_ShiftState.listeners):
+                    canvas._on_shift_changed()
         return False
 
 
@@ -149,7 +181,12 @@ class ImageCanvas(QWidget):
         _ensure_space_filter()
         self._channel_items: list[pg.ImageItem] = []
         self._channel_shape: tuple[int, int] | None = None
+        self._interaction_mode: ImageCanvas._InteractionMode = "align"
+        # Pre-built cursors swapped in/out by the prep-mode hover filter.
+        self._cursor_draw = _make_cross_cursor((80, 160, 255))   # blue
+        self._cursor_erase = _make_cross_cursor((255, 90, 90))   # red
         self._build_ui()
+        self._install_prep_cursor_filter()
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -233,6 +270,48 @@ class ImageCanvas(QWidget):
         ``view`` lets pyqtgraph handle left-drag gestures normally.
         """
         self._vb.set_interaction_mode(mode)
+        self._interaction_mode = mode
+        # If the cursor is already over the canvas, refresh immediately;
+        # otherwise the next enterEvent will pick up the new mode.
+        if self.view.underMouse():
+            self._refresh_prep_cursor()
+        elif mode != "prep":
+            self.view.unsetCursor()
+
+    # ------------------------------------------------------------------
+    # Prep-mode cursor: blue crosshair while hovering, red while Shift is
+    # held. Implemented via an event filter on the inner GraphicsLayoutWidget
+    # so we catch Enter/Leave plus Shift press/release without competing
+    # with pyqtgraph's own mouse handling.
+    # ------------------------------------------------------------------
+
+    def _install_prep_cursor_filter(self) -> None:
+        self.view.installEventFilter(self)
+        _ShiftState.listeners.add(self)
+        self.destroyed.connect(lambda _=None, s=self: _ShiftState.listeners.discard(s))
+
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:
+        if obj is self.view:
+            t = event.type()
+            if t == QEvent.Type.Enter:
+                if self._interaction_mode == "prep":
+                    self._refresh_prep_cursor()
+            elif t == QEvent.Type.Leave:
+                self.view.unsetCursor()
+        return super().eventFilter(obj, event)
+
+    def _on_shift_changed(self) -> None:
+        """Called by the app-level filter when Shift state changes."""
+        if self._interaction_mode == "prep" and self.view.underMouse():
+            self._refresh_prep_cursor()
+
+    def _refresh_prep_cursor(self) -> None:
+        if self._interaction_mode != "prep":
+            self.view.unsetCursor()
+            return
+        self.view.setCursor(
+            self._cursor_erase if _ShiftState.held else self._cursor_draw
+        )
 
     def set_channel_planes(self, planes: list[np.ndarray | None]) -> None:
         """Install the per-channel raw uint8 planes that drive the section view.

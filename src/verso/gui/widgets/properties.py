@@ -319,7 +319,7 @@ class _PrepProperties(QWidget):
         r, g, b = self._mask_color_rgb
         self._mask_color_btn.setStyleSheet(
             f"QPushButton {{ background-color: rgb({r}, {g}, {b}); border: 1px solid #555;"
-            " border-radius: 2px; }}"
+            " border-radius: 2px; }"
         )
 
     def _on_mask_color(self) -> None:
@@ -451,7 +451,7 @@ class _AlignProperties(QWidget):
         r, g, b = self._outline_color_rgb
         self._outline_color_btn.setStyleSheet(
             f"QPushButton {{ background-color: rgb({r}, {g}, {b}); border: 1px solid #555;"
-            " border-radius: 2px; }}"
+            " border-radius: 2px; }"
         )
 
     def _on_outline_color(self) -> None:
@@ -482,7 +482,7 @@ class _AlignProperties(QWidget):
         r, g, b = self._cp_color_rgb
         self._cp_color_btn.setStyleSheet(
             f"QPushButton {{ background-color: rgb({r}, {g}, {b}); border: 1px solid #555;"
-            " border-radius: 2px; }}"
+            " border-radius: 2px; }"
         )
 
     def _on_cp_color(self) -> None:
