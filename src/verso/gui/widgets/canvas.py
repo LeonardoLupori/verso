@@ -117,11 +117,14 @@ class _OverlayViewBox(pg.ViewBox):
         self._interaction_mode = mode
 
     def mouseClickEvent(self, ev) -> None:
+        if ev.double() and ev.button() == Qt.MouseButton.LeftButton:
+            self.autoRange()
+            ev.accept()
+            return
         if (
             self._interaction_mode in ("warp", "prep")
             and ev.button() == Qt.MouseButton.LeftButton
             and not _SpaceState.held
-            and not ev.double()
         ):
             pos = self.mapSceneToView(ev.scenePos())
             self.canvas_clicked.emit(pos.x(), pos.y())
