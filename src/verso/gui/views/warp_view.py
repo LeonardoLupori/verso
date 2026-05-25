@@ -82,8 +82,6 @@ class WarpView(QWidget):
         h.setContentsMargins(8, 2, 8, 2)
         h.setSpacing(4)
 
-        h.addWidget(self._panel.make_overlay_mode_widget())
-
         h.addStretch()
 
         self._clear_cps_btn = QPushButton("Clear CPs")

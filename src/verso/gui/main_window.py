@@ -427,6 +427,7 @@ class MainWindow(QMainWindow):
         self._props.lr_cancel_requested.connect(self._on_lr_draw_cancel)
         self._props.opacity_changed.connect(self._on_opacity_changed)
         self._props.overlay_color_changed.connect(self._panel.set_outline_color)
+        self._props.overlay_mode_changed.connect(self._panel.set_overlay_mode)
 
         # PrepView edits
         self._prep.section_modified.connect(self._on_prep_modified)

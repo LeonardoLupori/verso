@@ -12,6 +12,7 @@ import pyqtgraph as pg
 from PyQt6.QtCore import QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QIcon, QPixmap
 from PyQt6.QtWidgets import (
+    QButtonGroup,
     QCheckBox,
     QColorDialog,
     QComboBox,
@@ -349,6 +350,7 @@ class _AlignProperties(QWidget):
 
     opacity_changed = pyqtSignal(float)
     overlay_color_changed = pyqtSignal(tuple)  # (r, g, b) — outline color
+    overlay_mode_changed = pyqtSignal(str)     # "annotation" | "outline" | "reference"
     cp_style_changed = pyqtSignal(int, str, str)  # size, shape, color
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -371,6 +373,47 @@ class _AlignProperties(QWidget):
 
         overlay_box = QGroupBox("Overlay")
         overlay_layout = QFormLayout(overlay_box)
+
+        _overlay_specs = [
+            ("annotation", "Annotation"),
+            ("outline",    "Outline"),
+            ("reference",  "Template"),
+        ]
+        self._overlay_mode_btns: dict[str, QPushButton] = {}
+        self._overlay_btn_group = QButtonGroup(self)
+        self._overlay_btn_group.setExclusive(True)
+        mode_row = QHBoxLayout()
+        mode_row.setSpacing(0)
+        for i, (mode, label) in enumerate(_overlay_specs):
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setChecked(mode == "annotation")
+            btn.setFixedHeight(24)
+            n = len(_overlay_specs)
+            if i == 0:
+                radius = ("border-top-left-radius: 4px; border-bottom-left-radius: 4px;"
+                          " border-top-right-radius: 0px; border-bottom-right-radius: 0px;")
+                margin = ""
+            elif i == n - 1:
+                radius = ("border-top-right-radius: 4px; border-bottom-right-radius: 4px;"
+                          " border-top-left-radius: 0px; border-bottom-left-radius: 0px;")
+                margin = "margin-left: -1px;"
+            else:
+                radius = "border-radius: 0px;"
+                margin = "margin-left: -1px;"
+            btn.setStyleSheet(
+                f"QPushButton {{ {radius} {margin} padding: 2px 6px; color: #ccc;"
+                f" background: #3a3a3a; border: 1px solid #555; }}"
+                "QPushButton:checked { background: #1e5a8a; color: #fff;"
+                " border-color: #1e5a8a; }"
+                f"QPushButton:hover:!checked {{ background: #4a4a4a; }}"
+            )
+            self._overlay_mode_btns[mode] = btn
+            self._overlay_btn_group.addButton(btn)
+            mode_row.addWidget(btn)
+        self._overlay_btn_group.buttonClicked.connect(self._on_overlay_mode_btn_clicked)
+        overlay_layout.addRow(mode_row)
+
         self._opacity_slider = QSlider(Qt.Orientation.Horizontal)
         self._opacity_slider.setRange(0, 100)
         self._opacity_slider.setValue(50)
@@ -512,6 +555,20 @@ class _AlignProperties(QWidget):
             f"#{r:02x}{g:02x}{b:02x}",
         )
 
+    def _on_overlay_mode_btn_clicked(self, btn: QPushButton) -> None:
+        for mode, b in self._overlay_mode_btns.items():
+            if b is btn:
+                self.overlay_mode_changed.emit(mode)
+                return
+
+    def set_overlay_mode(self, mode: str) -> None:
+        for m, btn in self._overlay_mode_btns.items():
+            checked = (m == mode)
+            if btn.isChecked() != checked:
+                btn.blockSignals(True)
+                btn.setChecked(checked)
+                btn.blockSignals(False)
+
     def update_section(self, section: Section | None) -> None:
         self._update_proposal_status(section)
 
@@ -622,6 +679,7 @@ class PropertiesPanel(QWidget):
     lr_clear_requested = pyqtSignal()
     opacity_changed = pyqtSignal(float)
     overlay_color_changed = pyqtSignal(tuple)  # (r, g, b) — outline color
+    overlay_mode_changed = pyqtSignal(str)     # "annotation" | "outline" | "reference"
     cp_style_changed = pyqtSignal(int, str, str)  # size, shape, color
 
     _MODES = ("overview", "prep", "align")
@@ -663,6 +721,7 @@ class PropertiesPanel(QWidget):
 
         self._align_page.opacity_changed.connect(self.opacity_changed)
         self._align_page.overlay_color_changed.connect(self.overlay_color_changed)
+        self._align_page.overlay_mode_changed.connect(self.overlay_mode_changed)
         self._align_page.cp_style_changed.connect(self.cp_style_changed)
 
         layout.addWidget(self._stack)
@@ -704,3 +763,6 @@ class PropertiesPanel(QWidget):
     def apply_cp_style(self, size: int, shape: str, color: str) -> None:
         """Initialise CP style widgets from saved settings (no signal emitted)."""
         self._align_page.apply_cp_style(size, shape, color)
+
+    def set_overlay_mode(self, mode: str) -> None:
+        self._align_page.set_overlay_mode(mode)

@@ -139,7 +139,6 @@ class AlignView(QWidget):
         # button for any items that don't fit.
         tb.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
 
-        tb.addWidget(self._panel.make_overlay_mode_widget())
         tb.addSeparator()
 
         scale_specs = [
