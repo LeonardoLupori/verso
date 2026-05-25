@@ -43,7 +43,7 @@ def _white_icon(name: str) -> QIcon:
 
 def _eye_icon(visible: bool) -> QIcon:
     name = "eye.svg" if visible else "eye-off.svg"
-    svg = (_ICONS_DIR / name).read_text(encoding="utf-8").replace("currentColor", "#266eb7")
+    svg = (_ICONS_DIR / name).read_text(encoding="utf-8").replace("currentColor", "#ffffff")
     pixmap = QPixmap()
     pixmap.loadFromData(svg.encode())
     return QIcon(pixmap)
@@ -192,7 +192,7 @@ class _PrepProperties(QWidget):
         self._opacity_slider = QSlider(Qt.Orientation.Horizontal)
         self._opacity_slider.setRange(0, 100)
         self._opacity_slider.setValue(40)
-        self._opacity_slider.setMinimumWidth(30)
+        self._opacity_slider.setMinimumWidth(20)
         self._opacity_slider.valueChanged.connect(self._emit_mask_opacity)
         opacity_row = QHBoxLayout()
         opacity_row.addWidget(QLabel("Opacity"))

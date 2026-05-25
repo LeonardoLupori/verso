@@ -7,8 +7,10 @@ live updates of the canvas overlay.
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QColor
+from pathlib import Path
+
+from PyQt6.QtCore import QSize, Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QIcon, QPixmap
 from PyQt6.QtWidgets import (
     QColorDialog,
     QHBoxLayout,
@@ -21,6 +23,16 @@ from PyQt6.QtWidgets import (
 )
 
 from verso.engine.model.project import ChannelSpec
+
+_ICONS_DIR = Path(__file__).parent.parent / "icons"
+
+
+def _eye_icon(visible: bool) -> QIcon:
+    name = "eye.svg" if visible else "eye-off.svg"
+    svg = (_ICONS_DIR / name).read_text(encoding="utf-8").replace("currentColor", "#ffffff")
+    pixmap = QPixmap()
+    pixmap.loadFromData(svg.encode())
+    return QIcon(pixmap)
 
 
 class _ChannelRow(QWidget):
@@ -55,6 +67,7 @@ class _ChannelRow(QWidget):
         self._visible_btn.setCheckable(True)
         self._visible_btn.setChecked(self._spec.visible)
         self._visible_btn.setFixedSize(22, 22)
+        self._visible_btn.setIconSize(QSize(16, 16))
         self._visible_btn.setToolTip("Toggle channel visibility")
         self._visible_btn.toggled.connect(self._on_visible)
         self._refresh_visible_btn()
@@ -113,7 +126,7 @@ class _ChannelRow(QWidget):
         self._refresh_color_btn()
 
     def _refresh_visible_btn(self) -> None:
-        self._visible_btn.setText("◉" if self._spec.visible else "○")
+        self._visible_btn.setIcon(_eye_icon(self._spec.visible))
 
     def _refresh_color_btn(self) -> None:
         r, g, b = self._spec.color
