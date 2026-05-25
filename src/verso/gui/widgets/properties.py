@@ -182,6 +182,7 @@ class _PrepProperties(QWidget):
         self._opacity_slider = QSlider(Qt.Orientation.Horizontal)
         self._opacity_slider.setRange(0, 100)
         self._opacity_slider.setValue(40)
+        self._opacity_slider.setMinimumWidth(30)
         self._opacity_slider.valueChanged.connect(self._emit_mask_opacity)
         opacity_row = QHBoxLayout()
         opacity_row.addWidget(QLabel("Opacity"))
