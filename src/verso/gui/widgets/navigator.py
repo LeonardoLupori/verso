@@ -5,8 +5,8 @@ current cut-plane quadrilateral drawn as a coloured outline.  Interaction:
 
 - Drag near the crosshair center  → translate cut plane
 - Drag away from the crosshair    → rotate cut plane around that view's axis
-- Side ↑/↓ buttons                → step the plane along the view's row axis
-- Bottom ← ⟲ ⟳ → buttons          → step / rotate around the view's perp axis
+- Side up/down buttons             → step the plane along the view's row axis
+- Bottom left/rotate/right buttons → step / rotate around the view's perp axis
 
 Each view has its own height derived from atlas dimensions so that
 proportions are preserved.  The horizontal view (LR × AP) is notably
@@ -16,12 +16,14 @@ taller for the mouse brain (~208 px vs ~120 px for coronal).
 from __future__ import annotations
 
 import math
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
-from PyQt6.QtCore import QPointF, Qt, pyqtSignal
+from PyQt6.QtCore import QPointF, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import (
     QColor,
+    QIcon,
     QImage,
     QPainter,
     QPen,
@@ -40,21 +42,31 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+_ICONS_DIR = Path(__file__).parent.parent / "icons"
+
+
+def _white_icon(name: str) -> QIcon:
+    svg = (_ICONS_DIR / name).read_text(encoding="utf-8").replace("currentColor", "#ffffff")
+    pixmap = QPixmap()
+    pixmap.loadFromData(svg.encode())
+    return QIcon(pixmap)
+
 if TYPE_CHECKING:
     from verso.engine.atlas import AtlasVolume
 
 # Fixed display width for every mini-view (height is computed per-axis from dims)
-_VIEW_W = 150
+_VIEW_W = 170
 # Side ↑/↓ buttons: narrower than before, same height
-_SIDE_BTN_W = 14
-_SIDE_BTN_H = 24
+_SIDE_BTN_W = 18
+_SIDE_BTN_H = 22
 # Bottom ← ⟲ ⟳ → buttons: same width as before, shorter height
-_BOTTOM_BTN_W = 24
-_BOTTOM_BTN_H = 14
+_BOTTOM_BTN_W = 22
+_BOTTOM_BTN_H = 18
 # Title-bar height
 _TITLE_H = 16
 # Per-click translation step (atlas voxels)
 _MOVE_STEP = 1
+_MOVE_STEP_FAST = 10
 # Per-click rotation step (degrees)
 _ROTATE_STEP_DEG = 1.0
 
@@ -65,10 +77,10 @@ _CENTER_COLOR = QColor(255, 255, 0, 220)
 _TRANSLATE_RADIUS = 14
 
 _NAV_BTN_QSS = (
-    "QPushButton { border-radius: 3px; padding: 0px; color: #ccc;"
-    " background: #383838; border: 1px solid #555; font-size: 12px; }"
+    "QPushButton { border-radius: 3px; padding: 0px;"
+    " background: #383838; border: 1px solid #555; }"
     "QPushButton:hover { background: #484848; }"
-    "QPushButton:disabled { color: #555; background: #2a2a2a; border-color: #333; }"
+    "QPushButton:disabled { background: #2a2a2a; border-color: #333; }"
 )
 
 
@@ -191,50 +203,59 @@ class _SliceView(QWidget):
         self._canvas.released.connect(self._on_canvas_released)
         layout.addWidget(self._canvas, 1, 0)
 
-        # Row 1, col 1: ↑ / ↓ side column.
-        self._btn_up = self._make_btn("↑", "Move up (1 voxel)", _SIDE_BTN_W, _SIDE_BTN_H)
-        self._btn_down = self._make_btn("↓", "Move down (1 voxel)", _SIDE_BTN_W, _SIDE_BTN_H)
+        # Row 1, col 1: ↑↑ ↑ / ↓ ↓↓ side column.
+        self._btn_up_fast = self._make_btn("chevrons-up.svg", "Move up (10 voxels)", _SIDE_BTN_W, _SIDE_BTN_H)
+        self._btn_up = self._make_btn("chevron-up.svg", "Move up (1 voxel)", _SIDE_BTN_W, _SIDE_BTN_H)
+        self._btn_down = self._make_btn("chevron-down.svg", "Move down (1 voxel)", _SIDE_BTN_W, _SIDE_BTN_H)
+        self._btn_down_fast = self._make_btn("chevrons-down.svg", "Move down (10 voxels)", _SIDE_BTN_W, _SIDE_BTN_H)
         side = QVBoxLayout()
         side.setContentsMargins(0, 0, 0, 0)
         side.setSpacing(2)
+        side.addWidget(self._btn_up_fast)
         side.addStretch()
         side.addWidget(self._btn_up)
         side.addSpacing(3)
         side.addWidget(self._btn_down)
         side.addStretch()
+        side.addWidget(self._btn_down_fast)
         side_widget = QWidget()
         side_widget.setLayout(side)
         side_widget.setFixedWidth(_SIDE_BTN_W)
         layout.addWidget(side_widget, 1, 1)
 
-        # Row 2, col 0: ← ⟲ ⟳ → bottom row, tightly grouped and centered under the canvas.
-        self._btn_left = self._make_btn("←", "Move left (1 voxel)", _BOTTOM_BTN_W, _BOTTOM_BTN_H)
+        # Row 2, col 0: «← ← ⟲ ⟳ → →» bottom row, centered under the canvas.
+        self._btn_left_fast = self._make_btn("chevrons-left.svg", "Move left (10 voxels)", _BOTTOM_BTN_W, _BOTTOM_BTN_H)
+        self._btn_left = self._make_btn("chevron-left.svg", "Move left (1 voxel)", _BOTTOM_BTN_W, _BOTTOM_BTN_H)
         self._btn_ccw = self._make_btn(
-            "⟲", "Rotate counter-clockwise (1°)", _BOTTOM_BTN_W, _BOTTOM_BTN_H
+            "rotate-ccw.svg", "Rotate counter-clockwise (1°)", _BOTTOM_BTN_W, _BOTTOM_BTN_H
         )
         self._btn_cw = self._make_btn(
-            "⟳", "Rotate clockwise (1°)", _BOTTOM_BTN_W, _BOTTOM_BTN_H
+            "rotate-cw.svg", "Rotate clockwise (1°)", _BOTTOM_BTN_W, _BOTTOM_BTN_H
         )
-        self._btn_right = self._make_btn("→", "Move right (1 voxel)", _BOTTOM_BTN_W, _BOTTOM_BTN_H)
+        self._btn_right = self._make_btn("chevron-right.svg", "Move right (1 voxel)", _BOTTOM_BTN_W, _BOTTOM_BTN_H)
+        self._btn_right_fast = self._make_btn("chevrons-right.svg", "Move right (10 voxels)", _BOTTOM_BTN_W, _BOTTOM_BTN_H)
         bottom = QHBoxLayout()
         bottom.setContentsMargins(0, 0, 0, 0)
         bottom.setSpacing(2)
         bottom.addStretch()
-        for b in (self._btn_left, self._btn_ccw, self._btn_cw, self._btn_right):
+        for b in (self._btn_left_fast, self._btn_left, self._btn_ccw, self._btn_cw, self._btn_right, self._btn_right_fast):
             bottom.addWidget(b)
         bottom.addStretch()
         bottom_widget = QWidget()
         bottom_widget.setLayout(bottom)
         bottom_widget.setFixedHeight(_BOTTOM_BTN_H)
-        bottom_widget.setFixedWidth(_VIEW_W)
         layout.addWidget(bottom_widget, 2, 0)
 
         # Wire buttons → helpers.
         col_axis, row_axis = self._TRANSLATE_AXES[axis]
+        self._btn_left_fast.clicked.connect(lambda: self._translate_step(col_axis, -_MOVE_STEP_FAST))
         self._btn_left.clicked.connect(lambda: self._translate_step(col_axis, -_MOVE_STEP))
         self._btn_right.clicked.connect(lambda: self._translate_step(col_axis, +_MOVE_STEP))
+        self._btn_right_fast.clicked.connect(lambda: self._translate_step(col_axis, +_MOVE_STEP_FAST))
+        self._btn_up_fast.clicked.connect(lambda: self._translate_step(row_axis, -_MOVE_STEP_FAST))
         self._btn_up.clicked.connect(lambda: self._translate_step(row_axis, -_MOVE_STEP))
         self._btn_down.clicked.connect(lambda: self._translate_step(row_axis, +_MOVE_STEP))
+        self._btn_down_fast.clicked.connect(lambda: self._translate_step(row_axis, +_MOVE_STEP_FAST))
         self._btn_ccw.clicked.connect(lambda: self._rotate_step(-_ROTATE_STEP_DEG))
         self._btn_cw.clicked.connect(lambda: self._rotate_step(+_ROTATE_STEP_DEG))
 
@@ -248,8 +269,10 @@ class _SliceView(QWidget):
         self._corners: list[tuple[float, float]] = []
         self._center_display: tuple[float, float] | None = None
 
-    def _make_btn(self, text: str, tooltip: str, w: int, h: int) -> QPushButton:
-        btn = QPushButton(text)
+    def _make_btn(self, icon_name: str, tooltip: str, w: int, h: int) -> QPushButton:
+        btn = QPushButton()
+        btn.setIcon(_white_icon(icon_name))
+        btn.setIconSize(QSize(w - 2, h - 2))
         btn.setFixedSize(w, h)
         btn.setToolTip(tooltip)
         btn.setStyleSheet(_NAV_BTN_QSS)
@@ -260,10 +283,14 @@ class _SliceView(QWidget):
 
     def set_buttons_enabled(self, enabled: bool) -> None:
         for btn in (
+            self._btn_up_fast,
             self._btn_up,
             self._btn_down,
+            self._btn_down_fast,
+            self._btn_left_fast,
             self._btn_left,
             self._btn_right,
+            self._btn_right_fast,
             self._btn_ccw,
             self._btn_cw,
         ):
