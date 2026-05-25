@@ -129,6 +129,8 @@ class _OverlayViewBox(pg.ViewBox):
             pos = self.mapSceneToView(ev.scenePos())
             self.canvas_clicked.emit(pos.x(), pos.y())
             ev.accept()
+        elif ev.button() == Qt.MouseButton.RightButton:
+            ev.accept()  # suppress default right-click context menu
         else:
             super().mouseClickEvent(ev)
 
@@ -156,6 +158,8 @@ class _OverlayViewBox(pg.ViewBox):
                 self.canvas_drag_ended.emit(pos.x(), pos.y())
             else:
                 self.canvas_dragged.emit(pos.x(), pos.y())
+        elif ev.button() == Qt.MouseButton.RightButton:
+            ev.accept()  # suppress default right-drag zoom
         else:
             super().mouseDragEvent(ev, axis)
 
