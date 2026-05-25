@@ -189,6 +189,7 @@ class ImageCanvas(QWidget):
         self._channel_items: list[pg.ImageItem] = []
         self._channel_shape: tuple[int, int] | None = None
         self._interaction_mode: ImageCanvas._InteractionMode = "align"
+        self._lr_draw_active: bool = False
         # Pre-built cursors swapped in/out by the prep-mode hover filter.
         self._cursor_draw = _make_cross_cursor((80, 160, 255))   # blue
         self._cursor_erase = _make_cross_cursor((255, 90, 90))   # red
@@ -312,8 +313,13 @@ class ImageCanvas(QWidget):
         if self._interaction_mode == "prep" and self.view.underMouse():
             self._refresh_prep_cursor()
 
+    def set_lr_draw_active(self, active: bool) -> None:
+        self._lr_draw_active = active
+        if self.view.underMouse():
+            self._refresh_prep_cursor()
+
     def _refresh_prep_cursor(self) -> None:
-        if self._interaction_mode != "prep":
+        if self._interaction_mode != "prep" or self._lr_draw_active:
             self.view.unsetCursor()
             return
         self.view.setCursor(

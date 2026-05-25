@@ -354,6 +354,7 @@ class PrepView(QWidget):
             left_color=self._lr_left_color,
             right_color=self._lr_right_color,
         )
+        self._canvas.set_lr_draw_active(True)
         self._lr_draw_mode = True
 
     def exit_lr_draw_mode(self, *, apply: bool) -> None:
@@ -366,6 +367,7 @@ class PrepView(QWidget):
         """
         if not self._lr_draw_mode:
             return
+        self._canvas.set_lr_draw_active(False)
 
         if apply and self._lr_editor is not None and self._section is not None \
                 and self._raw_image is not None:
