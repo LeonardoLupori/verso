@@ -1,4 +1,3 @@
-import ctypes
 import sys
 from pathlib import Path
 
@@ -62,9 +61,6 @@ def run() -> None:
     pg.setConfigOption("antialias", True)
     pg.setConfigOption("background", (30, 30, 30))
     pg.setConfigOption("foreground", (220, 220, 220))
-
-    # Tell Windows to use VERSO's own taskbar icon instead of python.exe's.
-    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("verso.app")
 
     app = QApplication(sys.argv)
     app.setApplicationName("VERSO")
