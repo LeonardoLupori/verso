@@ -299,6 +299,7 @@ class _PrepProperties(QWidget):
     def set_mask_visible(self, visible: bool) -> None:
         self._mask_eye_btn.blockSignals(True)
         self._mask_eye_btn.setChecked(visible)
+        self._mask_eye_btn.setIcon(_eye_icon(visible))
         self._mask_eye_btn.blockSignals(False)
 
     def set_lr_status(self, text: str) -> None:
