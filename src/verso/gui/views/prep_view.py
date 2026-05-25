@@ -37,6 +37,7 @@ class PrepView(QWidget):
 
     section_modified = pyqtSignal()
     mask_negative_changed = pyqtSignal(bool)
+    mask_visibility_changed = pyqtSignal(bool)
 
     _UNDO_LIMIT = 20
     _DRAW_COLOR = (80, 160, 255)
@@ -106,6 +107,9 @@ class PrepView(QWidget):
         self._install_shortcuts()
 
     def _install_shortcuts(self) -> None:
+        # WindowShortcut so M/N/U work regardless of which widget in the
+        # window holds focus (canvas, properties dock, etc).  The slots
+        # no-op when prep view isn't visible.
         shortcuts = [
             (Qt.Key.Key_M, lambda: self.set_mask_visible(not self._mask_visible)),
             (Qt.Key.Key_N, lambda: self.set_mask_negative(not self._negative_mask)),
@@ -114,8 +118,15 @@ class PrepView(QWidget):
         ]
         for key, slot in shortcuts:
             shortcut = QShortcut(QKeySequence(key), self)
-            shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
-            shortcut.activated.connect(slot)
+            shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+            shortcut.activated.connect(self._gated(slot))
+
+    def _gated(self, slot):
+        """Wrap a shortcut slot so it only fires while this view is visible."""
+        def wrapper() -> None:
+            if self.isVisible():
+                slot()
+        return wrapper
 
     # ------------------------------------------------------------------
     # Public API
@@ -171,8 +182,12 @@ class PrepView(QWidget):
         self._update_lr_overlay()
 
     def set_mask_visible(self, visible: bool) -> None:
+        visible = bool(visible)
+        if self._mask_visible == visible:
+            return
         self._mask_visible = visible
         self._update_mask_overlay()
+        self.mask_visibility_changed.emit(visible)
 
     def set_lr_visible(self, visible: bool) -> None:
         self._lr_visible = bool(visible)

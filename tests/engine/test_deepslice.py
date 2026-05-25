@@ -17,7 +17,6 @@ from verso.engine.deepslice import (
 from verso.engine.model.alignment import AlignmentStatus, ControlPoint
 from verso.engine.model.project import AtlasRef, Preprocessing, Project, Section
 from verso.engine.registration import (
-    flip_anchoring_horizontal,
     quicknii_pack_anchoring,
     quicknii_unpack_anchoring,
 )

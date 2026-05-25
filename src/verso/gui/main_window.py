@@ -428,6 +428,7 @@ class MainWindow(QMainWindow):
         # PrepView edits
         self._prep.section_modified.connect(self._on_prep_modified)
         self._prep.mask_negative_changed.connect(self._props.set_mask_negative)
+        self._prep.mask_visibility_changed.connect(self._props.set_mask_visible)
 
         # AlignView navigator + store/clear; WarpView edits.  Both views share
         # the same SectionCanvasPanel, so section-modified signals from either

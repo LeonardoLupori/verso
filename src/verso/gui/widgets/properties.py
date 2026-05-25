@@ -291,6 +291,11 @@ class _PrepProperties(QWidget):
         self._negative.setChecked(negative)
         self._negative.blockSignals(False)
 
+    def set_mask_visible(self, visible: bool) -> None:
+        self._mask_eye_btn.blockSignals(True)
+        self._mask_eye_btn.setChecked(visible)
+        self._mask_eye_btn.blockSignals(False)
+
     def set_lr_status(self, text: str) -> None:
         """Update the hemisphere status label
         (e.g. 'Not set', 'All left', 'All right', 'Line drawn')."""
@@ -682,6 +687,9 @@ class PropertiesPanel(QWidget):
 
     def set_mask_negative(self, negative: bool) -> None:
         self._prep_page.set_mask_negative(negative)
+
+    def set_mask_visible(self, visible: bool) -> None:
+        self._prep_page.set_mask_visible(visible)
 
     def set_lr_status(self, text: str) -> None:
         self._prep_page.set_lr_status(text)
