@@ -371,14 +371,14 @@ class _PrepProperties(QWidget):
         r, g, b = self._lr_left_color_rgb
         self._lr_left_color_btn.setStyleSheet(
             f"QPushButton {{ background-color: rgb({r}, {g}, {b}); border: 1px solid #555;"
-            " border-radius: 2px; }}"
+            " border-radius: 2px; }"
         )
 
     def _refresh_lr_right_color_btn(self) -> None:
         r, g, b = self._lr_right_color_rgb
         self._lr_right_color_btn.setStyleSheet(
             f"QPushButton {{ background-color: rgb({r}, {g}, {b}); border: 1px solid #555;"
-            " border-radius: 2px; }}"
+            " border-radius: 2px; }"
         )
 
     def _on_mask_color(self) -> None:
