@@ -34,6 +34,13 @@ from verso.engine.model.project import Section
 _ICONS_DIR = Path(__file__).parent.parent / "icons"
 
 
+def _white_icon(name: str) -> QIcon:
+    svg = (_ICONS_DIR / name).read_text(encoding="utf-8").replace("currentColor", "#ffffff")
+    pixmap = QPixmap()
+    pixmap.loadFromData(svg.encode())
+    return QIcon(pixmap)
+
+
 def _eye_icon(visible: bool) -> QIcon:
     name = "eye.svg" if visible else "eye-off.svg"
     svg = (_ICONS_DIR / name).read_text(encoding="utf-8").replace("currentColor", "#266eb7")
@@ -136,16 +143,20 @@ class _PrepProperties(QWidget):
         flip_box = QGroupBox("Flip image")
         flip_layout = QHBoxLayout(flip_box)
         _flip_btn_style = (
-            "QPushButton:checked { background-color: #2a6db5; color: #ffffff;"
+            "QPushButton:checked { background-color: #2a6db5;"
             " border: 1px solid #4a8fd5; border-radius: 3px; }"
         )
-        self._flip_h = QPushButton("Flip H")
+        self._flip_h = QPushButton()
+        self._flip_h.setIcon(_white_icon("flip-horizontal-2.svg"))
+        self._flip_h.setIconSize(QSize(18, 18))
         self._flip_h.setCheckable(True)
         self._flip_h.setToolTip("Flip image horizontally")
         self._flip_h.setStyleSheet(_flip_btn_style)
         self._flip_h.toggled.connect(self.flip_h_changed)
         flip_layout.addWidget(self._flip_h)
-        self._flip_v = QPushButton("Flip V")
+        self._flip_v = QPushButton()
+        self._flip_v.setIcon(_white_icon("flip-vertical-2.svg"))
+        self._flip_v.setIconSize(QSize(18, 18))
         self._flip_v.setCheckable(True)
         self._flip_v.setToolTip("Flip image vertically")
         self._flip_v.setStyleSheet(_flip_btn_style)
