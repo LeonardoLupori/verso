@@ -174,8 +174,6 @@ class PrepView(QWidget):
             (Qt.Key.Key_N, lambda: self.set_mask_negative(not self._negative_mask)),
             (Qt.Key.Key_U, self.undo_mask_edit),
             (QKeySequence.StandardKey.Undo, self.undo_mask_edit),
-            (Qt.Key.Key_Return, self.save_current_mask),
-            (Qt.Key.Key_Enter, self.save_current_mask),
         ]
         for key, slot in shortcuts:
             shortcut = QShortcut(QKeySequence(key), self)
@@ -294,9 +292,6 @@ class PrepView(QWidget):
         self._current_mask = self._undo_stack.pop()
         self._mask_dirty = True
         self._update_mask_overlay()
-
-    def save_current_mask(self) -> bool:
-        return self._save_current_mask(force=True)
 
     def save_current_mask_if_dirty(self) -> bool:
         return self._save_current_mask(force=False)

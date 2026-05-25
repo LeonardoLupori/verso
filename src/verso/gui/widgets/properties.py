@@ -107,7 +107,6 @@ class _PrepProperties(QWidget):
     mask_negative_changed = pyqtSignal(bool)
     autodetect_requested = pyqtSignal()
     autodetect_all_requested = pyqtSignal()
-    save_mask_requested = pyqtSignal()
     clear_mask_requested = pyqtSignal()
     # Hemisphere subpanel signals
     lr_set_all_left_requested = pyqtSignal()
@@ -200,15 +199,10 @@ class _PrepProperties(QWidget):
         autodetect_row.addWidget(self._autodetect_all_btn)
         mask_layout.addLayout(autodetect_row)
 
-        # Row 5: clear + save
-        edit_row = QHBoxLayout()
+        # Row 5: clear
         self._clear_mask_btn = QPushButton("Clear")
         self._clear_mask_btn.clicked.connect(self.clear_mask_requested)
-        self._save_mask_btn = QPushButton("Save mask")
-        self._save_mask_btn.clicked.connect(self.save_mask_requested)
-        edit_row.addWidget(self._clear_mask_btn)
-        edit_row.addWidget(self._save_mask_btn)
-        mask_layout.addLayout(edit_row)
+        mask_layout.addWidget(self._clear_mask_btn)
 
         layout.addWidget(mask_box)
 
@@ -607,7 +601,6 @@ class PropertiesPanel(QWidget):
     mask_negative_changed = pyqtSignal(bool)
     autodetect_requested = pyqtSignal()
     autodetect_all_requested = pyqtSignal()
-    save_mask_requested = pyqtSignal()
     clear_mask_requested = pyqtSignal()
     # Hemisphere subpanel signals (re-exposed from _PrepProperties)
     lr_set_all_left_requested = pyqtSignal()
@@ -627,7 +620,7 @@ class PropertiesPanel(QWidget):
         # Allow horizontal resize via the dock's splitter handle.  The
         # minimum keeps the inner sliders / combos legible; no maximum so
         # the user can widen the panel as much as they want.
-        self.setMinimumWidth(150)
+        self.setMinimumWidth(130)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(2, 2, 2, 2)
@@ -650,7 +643,6 @@ class PropertiesPanel(QWidget):
         self._prep_page.mask_negative_changed.connect(self.mask_negative_changed)
         self._prep_page.autodetect_requested.connect(self.autodetect_requested)
         self._prep_page.autodetect_all_requested.connect(self.autodetect_all_requested)
-        self._prep_page.save_mask_requested.connect(self.save_mask_requested)
         self._prep_page.clear_mask_requested.connect(self.clear_mask_requested)
         self._prep_page.lr_set_all_left_requested.connect(self.lr_set_all_left_requested)
         self._prep_page.lr_set_all_right_requested.connect(self.lr_set_all_right_requested)

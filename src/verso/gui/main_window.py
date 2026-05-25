@@ -412,7 +412,6 @@ class MainWindow(QMainWindow):
         self._props.mask_negative_changed.connect(self._prep.set_mask_negative)
         self._props.autodetect_requested.connect(self._on_prep_autodetect_requested)
         self._props.autodetect_all_requested.connect(self._batch_autodetect_masks)
-        self._props.save_mask_requested.connect(self._on_prep_save_mask_requested)
         self._props.clear_mask_requested.connect(self._on_prep_clear_mask_requested)
         # Hemisphere subpanel — non-draw actions.
         self._props.lr_visibility_changed.connect(self._prep.set_lr_visible)
@@ -825,10 +824,6 @@ class MainWindow(QMainWindow):
 
     def _on_prep_autodetect_requested(self) -> None:
         self._prep.autodetect_mask()
-        self._overview.refresh_row(self._state.section_index)
-
-    def _on_prep_save_mask_requested(self) -> None:
-        self._prep.save_current_mask()
         self._overview.refresh_row(self._state.section_index)
 
     def _on_prep_clear_mask_requested(self) -> None:
