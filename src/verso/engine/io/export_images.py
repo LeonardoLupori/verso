@@ -23,7 +23,7 @@ from verso.engine.atlas import AtlasVolume
 from verso.engine.io.image_io import _resize_multichannel, load_image, to_multichannel
 from verso.engine.model.project import Project, Section
 from verso.engine.preprocessing import apply_flip, composite_channels
-from verso.engine.warping import warp_points_atlas_to_section
+from verso.engine.warping import build_backward_remap
 
 # Cap the atlas sampling grid used for contour extraction. The annotation
 # volume is at 25 µm voxels, so sampling much finer than this just multiplies
@@ -170,11 +170,26 @@ def render_overlay_rgba(
     sample_h = max(1, round(out_h * scale))
 
     labels, _ = atlas.sample_labels(anchoring, sample_w, sample_h)
-    polylines = _label_contours(labels)
 
+    # Apply the warp using the same backward remap as the display pipeline so
+    # that exported contours match what the user sees in the Warp view.
+    # Forward-mapping contour points (warp_points_atlas_to_section) uses the
+    # opposite triangulation direction and produces different results.
     cps = section.warp.control_points
-    src = np.array([[cp.src_x, cp.src_y] for cp in cps]) if cps else np.zeros((0, 2))
-    dst = np.array([[cp.dst_x, cp.dst_y] for cp in cps]) if cps else np.zeros((0, 2))
+    if cps:
+        src = np.array([[cp.src_x, cp.src_y] for cp in cps], dtype=np.float64)
+        dst = np.array([[cp.dst_x, cp.dst_y] for cp in cps], dtype=np.float64)
+        map_x, map_y = build_backward_remap(sample_h, sample_w, src, dst)
+        labels = cv2.remap(
+            labels.astype(np.float32),
+            map_x,
+            map_y,
+            cv2.INTER_NEAREST,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=0,
+        ).astype(np.int32)
+
+    polylines = _label_contours(labels)
 
     flip_h = bool(section.preprocessing.flip_horizontal)
     flip_v = bool(section.preprocessing.flip_vertical)
@@ -189,14 +204,15 @@ def render_overlay_rgba(
 
     for poly in polylines:
         poly = _smooth_polyline(poly, smoothing)
-        # find_contours returns (row, col) ≈ (y, x) in sampling-grid pixels.
-        atlas_norm = np.column_stack(
+        # After the backward warp, the label map is in section space, so
+        # contour pixel coords directly normalise to section-space fractions.
+        # find_contours returns (row, col) ≈ (y, x).
+        section_norm = np.column_stack(
             [
                 (poly[:, 1] + 0.5) / sample_w,  # x
                 (poly[:, 0] + 0.5) / sample_h,  # y
             ]
         )
-        section_norm = warp_points_atlas_to_section(atlas_norm, src, dst)
         section_norm = _apply_flip_norm(section_norm, flip_h=flip_h, flip_v=flip_v)
 
         pts = np.empty((len(section_norm), 1, 2), dtype=np.int32)

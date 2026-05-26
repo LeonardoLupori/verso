@@ -133,6 +133,61 @@ def warp_points_atlas_to_section(
     return out
 
 
+def build_backward_remap(
+    h: int,
+    w: int,
+    src_norm: np.ndarray,
+    dst_norm: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Build (map_x, map_y) float32 arrays for cv2.remap using the backward Delaunay warp.
+
+    Triangulates on *dst* (section space) and interpolates *src* (atlas space),
+    matching the warp direction used by :func:`warp_overlay`.  The returned
+    arrays are ready to pass directly to ``cv2.remap`` with any interpolation
+    mode.  Pixels outside the convex hull of *dst* default to identity (no warp).
+
+    Args:
+        h: Output image height in pixels.
+        w: Output image width in pixels.
+        src_norm: (N, 2) float64 — atlas-space control points (no corner anchors).
+        dst_norm: (N, 2) float64 — section-space control points (no corner anchors).
+
+    Returns:
+        ``(map_x, map_y)`` each of shape ``(h, w)`` float32.
+    """
+    src_all = _with_corners(src_norm) if len(src_norm) else _CORNERS.copy()
+    dst_all = _with_corners(dst_norm) if len(dst_norm) else _CORNERS.copy()
+
+    tri = Delaunay(dst_all)
+
+    xs = (np.arange(w, dtype=np.float64) + 0.5) / w
+    ys = (np.arange(h, dtype=np.float64) + 0.5) / h
+    grid_x, grid_y = np.meshgrid(xs, ys)  # (H, W) each
+    pixels = np.column_stack([grid_x.ravel(), grid_y.ravel()])  # (H*W, 2)
+
+    simplices = tri.find_simplex(pixels)
+    valid = simplices >= 0
+
+    T = tri.transform[simplices[valid], :2]                      # (M, 2, 2)
+    r = pixels[valid] - tri.transform[simplices[valid], 2]       # (M, 2)
+    b = np.einsum("ijk,ik->ij", T, r)                            # (M, 2)
+    bary = np.column_stack([b, 1.0 - b.sum(axis=1)])             # (M, 3)
+
+    idx = tri.simplices[simplices[valid]]                         # (M, 3)
+    atlas_x = (bary * src_all[idx, 0]).sum(axis=1)               # normalised [0,1]
+    atlas_y = (bary * src_all[idx, 1]).sum(axis=1)
+
+    map_x = grid_x.astype(np.float32) * w
+    map_y = grid_y.astype(np.float32) * h
+
+    flat = np.where(valid)[0]
+    rows, cols = flat // w, flat % w
+    map_x[rows, cols] = (atlas_x * w).astype(np.float32)
+    map_y[rows, cols] = (atlas_y * h).astype(np.float32)
+
+    return map_x, map_y
+
+
 def warp_overlay(
     overlay: np.ndarray,
     src_norm: np.ndarray,
@@ -156,42 +211,7 @@ def warp_overlay(
     if len(src_norm) == 0 or np.allclose(src_norm, dst_norm):
         return overlay.copy()
 
-    src_all = _with_corners(src_norm) if len(src_norm) else _CORNERS.copy()
-    dst_all = _with_corners(dst_norm) if len(dst_norm) else _CORNERS.copy()
-
-    # Triangulate in DST (section) normalised space
-    tri = Delaunay(dst_all)
-
-    # Normalised coords for each output pixel (overlay resolution)
-    xs = (np.arange(w, dtype=np.float64) + 0.5) / w
-    ys = (np.arange(h, dtype=np.float64) + 0.5) / h
-    grid_x, grid_y = np.meshgrid(xs, ys)  # (H, W) each
-    pixels = np.column_stack([grid_x.ravel(), grid_y.ravel()])  # (H*W, 2)
-
-    simplices = tri.find_simplex(pixels)
-    valid = simplices >= 0
-
-    # Vectorised barycentric computation via scipy's precomputed transform:
-    #   transform[s, :2] = 2×2 inverse of the triangle's edge matrix
-    #   transform[s, 2]  = triangle origin vertex
-    T = tri.transform[simplices[valid], :2]                      # (M, 2, 2)
-    r = pixels[valid] - tri.transform[simplices[valid], 2]       # (M, 2)
-    b = np.einsum("ijk,ik->ij", T, r)                            # (M, 2)
-    bary = np.column_stack([b, 1.0 - b.sum(axis=1)])             # (M, 3)
-
-    idx = tri.simplices[simplices[valid]]                         # (M, 3)
-    atlas_x = (bary * src_all[idx, 0]).sum(axis=1)               # normalised [0,1]
-    atlas_y = (bary * src_all[idx, 1]).sum(axis=1)
-
-    # Build backward remap: output pixel → atlas pixel (in overlay pixel coords)
-    # Default: identity (no warp outside convex hull)
-    map_x = grid_x.astype(np.float32) * w
-    map_y = grid_y.astype(np.float32) * h
-
-    flat = np.where(valid)[0]
-    rows, cols = flat // w, flat % w
-    map_x[rows, cols] = (atlas_x * w).astype(np.float32)
-    map_y[rows, cols] = (atlas_y * h).astype(np.float32)
+    map_x, map_y = build_backward_remap(h, w, src_norm, dst_norm)
 
     interpolation = (
         cv2.INTER_NEAREST
