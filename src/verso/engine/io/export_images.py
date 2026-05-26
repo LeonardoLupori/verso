@@ -125,18 +125,6 @@ def _smooth_polyline(poly: np.ndarray, sigma: float) -> np.ndarray:
     return smoothed
 
 
-def _apply_flip_norm(points_norm: np.ndarray, *, flip_h: bool, flip_v: bool) -> np.ndarray:
-    """Mirror normalised section-space coords to match a flipped image."""
-    if not flip_h and not flip_v:
-        return points_norm
-    out = points_norm.copy()
-    if flip_h:
-        out[:, 0] = 1.0 - out[:, 0]
-    if flip_v:
-        out[:, 1] = 1.0 - out[:, 1]
-    return out
-
-
 def render_overlay_rgba(
     section: Section,
     atlas: AtlasVolume,
@@ -150,8 +138,14 @@ def render_overlay_rgba(
     """Render the atlas overlay as a transparent RGBA image at the export size.
 
     Pipeline: sample atlas labels at output resolution → find_contours per
-    region → forward-warp vertices through the Delaunay map → flip to match
-    the displayed orientation → draw anti-aliased polylines.
+    region → backward-warp the label map through the Delaunay map → draw
+    anti-aliased polylines.
+
+    The overlay is *not* flipped here. Like the GUI (which flips only the
+    section background, never the atlas overlay — see SectionCanvasPanel),
+    the atlas orientation is fully encoded by the anchoring, which was solved
+    against the already-flipped display. The section RGB is flipped separately
+    in :func:`render_section_rgb`, so the two compose correctly.
 
     Returns:
         uint8 ``(out_h, out_w, 4)`` RGBA. Background pixels have alpha 0.
@@ -191,9 +185,6 @@ def render_overlay_rgba(
 
     polylines = _label_contours(labels)
 
-    flip_h = bool(section.preprocessing.flip_horizontal)
-    flip_v = bool(section.preprocessing.flip_vertical)
-
     canvas = np.zeros((out_h, out_w, 4), dtype=np.uint8)
     alpha = int(round(min(max(opacity, 0.0), 1.0) * 255))
     line_color = (int(color[0]), int(color[1]), int(color[2]), alpha)
@@ -213,7 +204,6 @@ def render_overlay_rgba(
                 (poly[:, 0] + 0.5) / sample_h,  # y
             ]
         )
-        section_norm = _apply_flip_norm(section_norm, flip_h=flip_h, flip_v=flip_v)
 
         pts = np.empty((len(section_norm), 1, 2), dtype=np.int32)
         pts[:, 0, 0] = np.round(section_norm[:, 0] * out_w).astype(np.int32)
