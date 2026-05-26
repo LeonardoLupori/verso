@@ -32,9 +32,6 @@ if TYPE_CHECKING:
 
 from PyQt6.QtCore import pyqtSignal
 
-# Scale increment per button click (2 %, matching QuickNII)
-_SCALE_STEP = 1.02
-
 
 class AlignView(QWidget):
     """Canvas view for atlas alignment (affine anchoring)."""
@@ -72,6 +69,7 @@ class AlignView(QWidget):
 
         self._navigator = NavigatorPanel()
         self._navigator.anchoring_changed.connect(self._on_navigator_changed)
+        self._navigator.scale_requested.connect(self._scale_overlay)
         body.addWidget(self._navigator)
 
         self._panel_slot = QWidget()
@@ -94,12 +92,6 @@ class AlignView(QWidget):
         filename remains visible even when buttons spill into the extension
         popup.
         """
-        small_btn_qss = (
-            "QPushButton { border-radius: 3px; padding: 2px 7px; color: #ccc;"
-            " background: #383838; border: 1px solid #555; font-size: 11px; }"
-            "QPushButton:hover { background: #484848; }"
-            "QPushButton:disabled { color: #555; background: #2a2a2a; border-color: #333; }"
-        )
         plain_btn_qss = (
             "QPushButton { border-radius: 4px; padding: 2px 10px; color: #ccc;"
             " background: #383838; border: 1px solid #555; }"
@@ -138,28 +130,6 @@ class AlignView(QWidget):
         # Let the toolbar shrink horizontally; Qt will surface a `>>` extension
         # button for any items that don't fit.
         tb.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-
-        tb.addSeparator()
-
-        scale_specs = [
-            ("↔+", "Wider (2%)",    1.0 / _SCALE_STEP,  1.0),
-            ("↔−", "Narrower (2%)", _SCALE_STEP,   1.0),
-            ("↕+", "Taller (2%)",   1.0,        1.0 / _SCALE_STEP),
-            ("↕−", "Shorter (2%)", 1.0,    _SCALE_STEP),
-        ]
-        self._scale_btns: list[QPushButton] = []
-        for sym, tip, su, sv in scale_specs:
-            btn = QPushButton(sym)
-            btn.setFixedHeight(28)
-            btn.setFixedWidth(32)
-            btn.setToolTip(tip)
-            btn.setStyleSheet(small_btn_qss)
-            btn.setEnabled(False)
-            btn.clicked.connect(lambda _, s=su, t=sv: self._scale_overlay(s, t))
-            tb.addWidget(btn)
-            self._scale_btns.append(btn)
-
-        tb.addSeparator()
 
         self._deepslice_btn = QPushButton("Run DeepSlice")
         self._deepslice_btn.setFixedHeight(28)
@@ -281,8 +251,7 @@ class AlignView(QWidget):
     # ------------------------------------------------------------------
 
     def _on_section_loaded(self, section) -> None:
-        for btn in self._scale_btns:
-            btn.setEnabled(section is not None)
+        self._navigator.set_stretch_enabled(section is not None)
         self._store_btn.setEnabled(section is not None)
         if section is None:
             self._clear_btn.setEnabled(False)

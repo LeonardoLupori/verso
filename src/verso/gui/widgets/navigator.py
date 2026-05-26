@@ -32,7 +32,9 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import (
     QApplication,
+    QFrame,
     QGridLayout,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -43,6 +45,10 @@ from PyQt6.QtWidgets import (
 )
 
 _ICONS_DIR = Path(__file__).parent.parent / "icons"
+
+# Scale step per stretch button click
+_SCALE_STEP = 1.02
+_SCALE_STEP_FAST = 1.10
 
 
 def _white_icon(name: str) -> QIcon:
@@ -62,8 +68,6 @@ _SIDE_BTN_H = 22
 # Bottom ← ⟲ ⟳ → buttons: same width as before, shorter height
 _BOTTOM_BTN_W = 22
 _BOTTOM_BTN_H = 18
-# Title-bar height
-_TITLE_H = 16
 # Per-click translation step (atlas voxels)
 _MOVE_STEP = 1
 _MOVE_STEP_FAST = 10
@@ -164,7 +168,6 @@ class _SliceView(QWidget):
     def __init__(
         self,
         axis: int,
-        title: str,
         dims: tuple[int, int, int],
         parent: QWidget | None = None,
     ) -> None:
@@ -186,14 +189,7 @@ class _SliceView(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
 
-        # Row 0: title spans both columns.
-        lbl_title = QLabel(title)
-        lbl_title.setFixedHeight(_TITLE_H)
-        lbl_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lbl_title.setStyleSheet("color: #aaa; font-size: 10px; background: #222;")
-        layout.addWidget(lbl_title, 0, 0, 1, 2)
-
-        # Row 1, col 0: canvas (the actual atlas slice).
+        # Row 0, col 0: canvas (the actual atlas slice).
         self._canvas = _SliceCanvas()
         self._canvas.setFixedSize(_VIEW_W, self._view_h)
         self._canvas.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -201,9 +197,9 @@ class _SliceView(QWidget):
         self._canvas.pressed.connect(self._on_canvas_pressed)
         self._canvas.moved.connect(self._on_canvas_moved)
         self._canvas.released.connect(self._on_canvas_released)
-        layout.addWidget(self._canvas, 1, 0)
+        layout.addWidget(self._canvas, 0, 0)
 
-        # Row 1, col 1: ↑↑ ↑ / ↓ ↓↓ side column.
+        # Row 0, col 1: ↑↑ ↑ / ↓ ↓↓ side column.
         self._btn_up_fast = self._make_btn("chevrons-up.svg", "Move up (10 voxels)", _SIDE_BTN_W, _SIDE_BTN_H)
         self._btn_up = self._make_btn("chevron-up.svg", "Move up (1 voxel)", _SIDE_BTN_W, _SIDE_BTN_H)
         self._btn_down = self._make_btn("chevron-down.svg", "Move down (1 voxel)", _SIDE_BTN_W, _SIDE_BTN_H)
@@ -221,9 +217,9 @@ class _SliceView(QWidget):
         side_widget = QWidget()
         side_widget.setLayout(side)
         side_widget.setFixedWidth(_SIDE_BTN_W)
-        layout.addWidget(side_widget, 1, 1)
+        layout.addWidget(side_widget, 0, 1)
 
-        # Row 2, col 0: «← ← ⟲ ⟳ → →» bottom row, centered under the canvas.
+        # Row 1, col 0: «← ← ⟲ ⟳ → →» bottom row, centered under the canvas.
         self._btn_left_fast = self._make_btn("chevrons-left.svg", "Move left (10 voxels)", _BOTTOM_BTN_W, _BOTTOM_BTN_H)
         self._btn_left = self._make_btn("chevron-left.svg", "Move left (1 voxel)", _BOTTOM_BTN_W, _BOTTOM_BTN_H)
         self._btn_ccw = self._make_btn(
@@ -244,7 +240,7 @@ class _SliceView(QWidget):
         bottom_widget = QWidget()
         bottom_widget.setLayout(bottom)
         bottom_widget.setFixedHeight(_BOTTOM_BTN_H)
-        layout.addWidget(bottom_widget, 2, 0)
+        layout.addWidget(bottom_widget, 1, 0)
 
         # Wire buttons → helpers.
         col_axis, row_axis = self._TRANSLATE_AXES[axis]
@@ -262,7 +258,7 @@ class _SliceView(QWidget):
         self.set_buttons_enabled(False)
 
         total_w = _VIEW_W + _SIDE_BTN_W + 4
-        total_h = _TITLE_H + self._view_h + _BOTTOM_BTN_H + 6
+        total_h = self._view_h + _BOTTOM_BTN_H + 6
         self.setFixedSize(total_w, total_h)
 
         self._base_pixmap: QPixmap | None = None
@@ -307,7 +303,7 @@ class _SliceView(QWidget):
             self._view_h = new_h
             self._canvas.setFixedSize(_VIEW_W, self._view_h)
             total_w = _VIEW_W + _SIDE_BTN_W + 4
-            total_h = _TITLE_H + self._view_h + _BOTTOM_BTN_H + 6
+            total_h = self._view_h + _BOTTOM_BTN_H + 6
             self.setFixedSize(total_w, total_h)
 
     def set_image(self, rgb: np.ndarray) -> None:
@@ -506,6 +502,7 @@ class NavigatorPanel(QWidget):
     """Scrollable vertical stack of three orthogonal atlas slice views."""
 
     anchoring_changed = pyqtSignal(list)
+    scale_requested = pyqtSignal(float, float)  # scale_u, scale_v
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -537,16 +534,114 @@ class NavigatorPanel(QWidget):
         layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         scroll.setWidget(content)
 
-        dims = (528, 320, 456)
-        self._sag = _SliceView(0, "Sagittal (LR)", dims)
-        self._cor = _SliceView(1, "Coronal (AP)", dims)
-        self._hor = _SliceView(2, "Horizontal (DV)", dims)
+        self._stretch_btns: list[QPushButton] = []
+        layout.addWidget(self._make_stretch_section())
 
-        for view in (self._sag, self._cor, self._hor):
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setFixedHeight(1)
+        sep.setStyleSheet("background: #333; border: none;")
+        layout.addWidget(sep)
+
+        dims = (528, 320, 456)
+        self._sag = _SliceView(0, dims)
+        self._cor = _SliceView(1, dims)
+        self._hor = _SliceView(2, dims)
+
+        view_titles = ["Sagittal (LR)", "Coronal (AP)", "Horizontal (DV)"]
+        for view, title in zip((self._sag, self._cor, self._hor), view_titles):
             view.anchoring_changed.connect(self._on_anchoring_changed)
-            layout.addWidget(view)
+            grp = QGroupBox(title)
+            grp_layout = QVBoxLayout(grp)
+            grp_layout.setContentsMargins(4, 4, 4, 4)
+            grp_layout.setSpacing(0)
+            grp_layout.addWidget(view)
+            layout.addWidget(grp)
 
         layout.addStretch()
+
+    def _make_stretch_section(self) -> QGroupBox:
+        # Match the navigator button style exactly, adding text colour
+        btn_qss = (
+            "QPushButton { border-radius: 3px; padding: 0px; color: #ccc;"
+            " background: #383838; border: 1px solid #555; }"
+            "QPushButton:hover { background: #484848; }"
+            "QPushButton:disabled { color: #555; background: #2a2a2a; border-color: #333; }"
+        )
+        group = QGroupBox("Atlas Stretch")
+        vbox = QVBoxLayout(group)
+        vbox.setContentsMargins(4, 6, 4, 6)
+        vbox.setSpacing(4)
+
+        rows = [
+            ("chevrons-left-right-ellipsis.svg", [
+                ("−−", "Narrower (10%)", _SCALE_STEP_FAST, 1.0),
+                ("−",  "Narrower (2%)",  _SCALE_STEP,      1.0),
+                ("+",  "Wider (2%)",     1.0 / _SCALE_STEP,      1.0),
+                ("++", "Wider (10%)",    1.0 / _SCALE_STEP_FAST, 1.0),
+            ]),
+            ("chevrons-up-down-ellipsis.svg", [
+                ("−−", "Shorter (10%)", 1.0, _SCALE_STEP_FAST),
+                ("−",  "Shorter (2%)",  1.0, _SCALE_STEP),
+                ("+",  "Taller (2%)",   1.0, 1.0 / _SCALE_STEP),
+                ("++", "Taller (10%)",  1.0, 1.0 / _SCALE_STEP_FAST),
+            ]),
+        ]
+
+        for icon_name, specs in rows:
+            # Inner widget pinned to _VIEW_W so buttons centre under the atlas image
+            inner = QHBoxLayout()
+            inner.setContentsMargins(0, 0, 0, 0)
+            inner.setSpacing(3)
+            inner.addStretch()
+
+            for sym, tip, su, sv in specs[:2]:
+                btn = QPushButton(sym)
+                btn.setFixedSize(_BOTTOM_BTN_W + 8, _BOTTOM_BTN_H + 4)
+                btn.setToolTip(tip)
+                btn.setStyleSheet(btn_qss)
+                btn.setEnabled(False)
+                btn.clicked.connect(lambda _, s=su, t=sv: self.scale_requested.emit(s, t))
+                inner.addWidget(btn)
+                self._stretch_btns.append(btn)
+
+            icon_lbl = QLabel()
+            icon_lbl.setPixmap(_white_icon(icon_name).pixmap(QSize(16, 16)))
+            icon_lbl.setFixedSize(18, 18)
+            icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            inner.addWidget(icon_lbl)
+
+            for sym, tip, su, sv in specs[2:]:
+                btn = QPushButton(sym)
+                btn.setFixedSize(_BOTTOM_BTN_W + 8, _BOTTOM_BTN_H + 4)
+                btn.setToolTip(tip)
+                btn.setStyleSheet(btn_qss)
+                btn.setEnabled(False)
+                btn.clicked.connect(lambda _, s=su, t=sv: self.scale_requested.emit(s, t))
+                inner.addWidget(btn)
+                self._stretch_btns.append(btn)
+
+            inner.addStretch()
+
+            inner_w = QWidget()
+            inner_w.setFixedWidth(_VIEW_W)
+            inner_w.setLayout(inner)
+
+            outer_row = QHBoxLayout()
+            outer_row.setContentsMargins(0, 0, 0, 0)
+            outer_row.setSpacing(0)
+            outer_row.addWidget(inner_w)
+            outer_row.addStretch()
+
+            row_w = QWidget()
+            row_w.setLayout(outer_row)
+            vbox.addWidget(row_w)
+
+        return group
+
+    def set_stretch_enabled(self, enabled: bool) -> None:
+        for btn in self._stretch_btns:
+            btn.setEnabled(enabled)
 
     def set_reverse_ap(self, reverse: bool) -> None:
         for view in (self._sag, self._cor, self._hor):
