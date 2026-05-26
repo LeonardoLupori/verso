@@ -82,6 +82,8 @@ class WarpView(QWidget):
         h.setContentsMargins(8, 2, 8, 2)
         h.setSpacing(4)
 
+        h.addWidget(self._panel.make_status_label())
+
         h.addStretch()
 
         self._clear_cps_btn = QPushButton("Clear CPs")
@@ -96,8 +98,6 @@ class WarpView(QWidget):
         self._clear_cps_btn.setEnabled(False)
         self._clear_cps_btn.clicked.connect(self._clear_all_cps)
         h.addWidget(self._clear_cps_btn)
-
-        h.addWidget(self._panel.make_status_label())
         return bar
 
     def _wire_panel(self) -> None:

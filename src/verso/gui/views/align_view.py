@@ -147,16 +147,6 @@ class AlignView(QWidget):
         self._default_btn.clicked.connect(self.default_proposal_requested)
         tb.addWidget(self._default_btn)
 
-        self._clear_all_btn = QPushButton("Clear all")
-        self._clear_all_btn.setFixedHeight(28)
-        self._clear_all_btn.setToolTip(
-            "Clear every stored alignment and restore the default AP proposal"
-        )
-        self._clear_all_btn.setStyleSheet(red_btn_qss)
-        self._clear_all_btn.setEnabled(False)
-        self._clear_all_btn.clicked.connect(self.clear_all_alignments_requested)
-        tb.addWidget(self._clear_all_btn)
-
         self._reverse_btn = QPushButton("Reverse proposal")
         self._reverse_btn.setFixedHeight(28)
         self._reverse_btn.setToolTip(
@@ -197,10 +187,20 @@ class AlignView(QWidget):
         container.setFixedHeight(36)
         container.setStyleSheet("background: #252525;")
         layout = QHBoxLayout(container)
-        layout.setContentsMargins(0, 0, 8, 0)
+        self._clear_all_btn = QPushButton("Clear all")
+        self._clear_all_btn.setFixedHeight(28)
+        self._clear_all_btn.setToolTip(
+            "Clear every stored alignment and restore the default AP proposal"
+        )
+        self._clear_all_btn.setStyleSheet(red_btn_qss)
+        self._clear_all_btn.setEnabled(False)
+        self._clear_all_btn.clicked.connect(self.clear_all_alignments_requested)
+
+        layout.setContentsMargins(8, 0, 8, 0)
         layout.setSpacing(0)
-        layout.addWidget(tb, stretch=1)
         layout.addWidget(self._panel.make_status_label())
+        layout.addWidget(tb, stretch=1)
+        layout.addWidget(self._clear_all_btn)
         return container
 
     def _wire_panel(self) -> None:
