@@ -256,6 +256,23 @@ class MainWindow(QMainWindow):
         act_batch_mask.triggered.connect(self._batch_autodetect_masks)
         batch_menu.addAction(act_batch_mask)
 
+        batch_menu.addSeparator()
+
+        self._act_deepslice = QAction("Align: Run &DeepSlice", self)
+        self._act_deepslice.setEnabled(False)
+        self._act_deepslice.triggered.connect(self._run_deepslice)
+        batch_menu.addAction(self._act_deepslice)
+
+        self._act_default_proposal = QAction("Align: &Default proposal", self)
+        self._act_default_proposal.setEnabled(False)
+        self._act_default_proposal.triggered.connect(self._revert_to_default_proposal)
+        batch_menu.addAction(self._act_default_proposal)
+
+        self._act_reverse_proposal = QAction("Align: &Reverse proposal", self)
+        self._act_reverse_proposal.setEnabled(False)
+        self._act_reverse_proposal.triggered.connect(self._reverse_section_order)
+        batch_menu.addAction(self._act_reverse_proposal)
+
         export_menu = mb.addMenu("&Export")
         act_export_images = QAction("Images with atlas &overlay…", self)
         act_export_images.triggered.connect(self._export_images_with_overlay)
@@ -444,9 +461,6 @@ class MainWindow(QMainWindow):
         self._align.section_modified.connect(self._on_align_modified)
         self._align.anchoring_changed.connect(self._on_anchoring_changed)
         self._align.alignments_updated.connect(self._on_alignments_updated)
-        self._align.reverse_requested.connect(self._reverse_section_order)
-        self._align.deepslice_requested.connect(self._run_deepslice)
-        self._align.default_proposal_requested.connect(self._revert_to_default_proposal)
         self._align.clear_all_alignments_requested.connect(self._clear_all_alignments)
         self._warp.section_modified.connect(self._on_align_modified)
         self._props.cp_style_changed.connect(self._on_cp_style_changed)
@@ -1039,13 +1053,13 @@ class MainWindow(QMainWindow):
     def _update_reverse_order_enabled(self) -> None:
         project = self._state.project
         if project is None:
-            self._align.set_reverse_enabled(False)
+            self._act_reverse_proposal.setEnabled(False)
             return
         has_stored_alignment = any(
             section.alignment.status == AlignmentStatus.COMPLETE
             for section in project.sections
         )
-        self._align.set_reverse_enabled(
+        self._act_reverse_proposal.setEnabled(
             self._state.atlas is not None
             and len(project.sections) > 1
             and not has_stored_alignment
@@ -1058,7 +1072,12 @@ class MainWindow(QMainWindow):
             and bool(project.sections)
             and self._state.atlas is not None
         )
-        self._align.set_deepslice_enabled(enabled, running=running)
+        self._act_deepslice.setEnabled(enabled and not running)
+        self._act_deepslice.setText(
+            "Align: DeepSlice running…" if running else "Align: Run &DeepSlice"
+        )
+        self._act_default_proposal.setEnabled(enabled and not running)
+        self._align.set_clear_all_enabled(enabled and not running)
 
     def _sync_ap_mm(self, sections: list) -> None:
         """Populate ap_position_mm for every section that has a valid anchoring."""

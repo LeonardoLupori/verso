@@ -39,9 +39,6 @@ class AlignView(QWidget):
     section_modified = pyqtSignal()
     anchoring_changed = pyqtSignal(list)
     alignments_updated = pyqtSignal()
-    reverse_requested = pyqtSignal()
-    deepslice_requested = pyqtSignal()
-    default_proposal_requested = pyqtSignal()
     clear_all_alignments_requested = pyqtSignal()
 
     def __init__(self, panel: SectionCanvasPanel, parent: QWidget | None = None) -> None:
@@ -131,32 +128,6 @@ class AlignView(QWidget):
         # button for any items that don't fit.
         tb.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
 
-        self._deepslice_btn = QPushButton("Run DeepSlice")
-        self._deepslice_btn.setFixedHeight(28)
-        self._deepslice_btn.setToolTip("Generate editable affine suggestions with DeepSlice")
-        self._deepslice_btn.setStyleSheet(plain_btn_qss)
-        self._deepslice_btn.setEnabled(False)
-        self._deepslice_btn.clicked.connect(self.deepslice_requested)
-        tb.addWidget(self._deepslice_btn)
-
-        self._default_btn = QPushButton("Default proposal")
-        self._default_btn.setFixedHeight(28)
-        self._default_btn.setToolTip("Revert editable suggestions to VERSO's default AP proposal")
-        self._default_btn.setStyleSheet(plain_btn_qss)
-        self._default_btn.setEnabled(False)
-        self._default_btn.clicked.connect(self.default_proposal_requested)
-        tb.addWidget(self._default_btn)
-
-        self._reverse_btn = QPushButton("Reverse proposal")
-        self._reverse_btn.setFixedHeight(28)
-        self._reverse_btn.setToolTip(
-            "Reverse the initial AP proposal before storing any alignment"
-        )
-        self._reverse_btn.setStyleSheet(plain_btn_qss)
-        self._reverse_btn.setEnabled(False)
-        self._reverse_btn.clicked.connect(self.reverse_requested)
-        tb.addWidget(self._reverse_btn)
-
         self._store_btn = QPushButton("Store")
         self._store_btn.setFixedHeight(28)
         self._store_btn.setToolTip("Lock current atlas plane to this section")
@@ -237,14 +208,8 @@ class AlignView(QWidget):
         self._reverse_ap = reverse
         self._navigator.set_reverse_ap(reverse)
 
-    def set_reverse_enabled(self, enabled: bool) -> None:
-        self._reverse_btn.setEnabled(enabled)
-
-    def set_deepslice_enabled(self, enabled: bool, running: bool = False) -> None:
-        self._deepslice_btn.setEnabled(enabled and not running)
-        self._deepslice_btn.setText("DeepSlice running..." if running else "Run DeepSlice")
-        self._default_btn.setEnabled(enabled and not running)
-        self._clear_all_btn.setEnabled(enabled and not running)
+    def set_clear_all_enabled(self, enabled: bool) -> None:
+        self._clear_all_btn.setEnabled(enabled)
 
     # ------------------------------------------------------------------
     # Panel events
