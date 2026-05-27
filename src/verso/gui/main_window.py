@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import QObject, QSettings, Qt, QThread, QTimer, pyqtSignal
+from PyQt6.QtCore import QObject, Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QAction, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QAbstractSlider,
@@ -57,9 +57,6 @@ _VIEW_OVERVIEW = 0
 _VIEW_PREP = 1
 _VIEW_ALIGN = 2
 _VIEW_WARP = 3
-_DEEPSLICE_PATH_KEY = "deepslice/env_path"
-
-
 class _DeepSliceWorker(QObject):
     done = pyqtSignal(object)
     error = pyqtSignal(str)
@@ -67,13 +64,13 @@ class _DeepSliceWorker(QObject):
     def __init__(
         self,
         project: Project,
-        python_executable: str,
         reverse_section_order: bool = False,
+        bad_section_ids: list[str] | None = None,
     ) -> None:
         super().__init__()
         self._project = project
-        self._python_executable = python_executable
         self._reverse_section_order = reverse_section_order
+        self._bad_section_ids = bad_section_ids or []
 
     def run(self) -> None:
         try:
@@ -81,10 +78,10 @@ class _DeepSliceWorker(QObject):
 
             result = run_deepslice_suggestions(
                 self._project,
-                self._python_executable,
                 DeepSliceOptions(
                     species="mouse",
                     reverse_section_order=self._reverse_section_order,
+                    bad_section_ids=self._bad_section_ids,
                 ),
             )
             self.done.emit(result)
@@ -210,10 +207,6 @@ class MainWindow(QMainWindow):
         act_open_va.triggered.connect(self._open_visualign)
         file_menu.addAction(act_open_va)
 
-        act_configure_ds = QAction("Configure &DeepSlice Runtime…", self)
-        act_configure_ds.triggered.connect(self._configure_deepslice)
-        file_menu.addAction(act_configure_ds)
-
         file_menu.addSeparator()
 
         act_save = QAction("&Save project", self)
@@ -314,7 +307,7 @@ class MainWindow(QMainWindow):
         self._view_buttons: list[QPushButton] = []
         view_specs = [
             ("Overview", _VIEW_OVERVIEW),
-            ("Prep", _VIEW_PREP),
+            ("Preprocess", _VIEW_PREP),
             ("Align", _VIEW_ALIGN),
             ("Warp", _VIEW_WARP),
         ]
@@ -1176,18 +1169,13 @@ class MainWindow(QMainWindow):
         if self._deepslice_thread and self._deepslice_thread.isRunning():
             return
 
-        executable = self._configured_deepslice_python()
-        if executable is None:
-            if not self._configure_deepslice():
-                return
-            executable = self._configured_deepslice_python()
-        if executable is None:
-            QMessageBox.warning(
-                self,
-                "DeepSlice not configured",
-                "Select a Python environment folder or executable with DeepSlice installed first.",
-            )
+        from verso.gui.dialogs.bad_sections import BadSectionsDialog
+
+        dlg = BadSectionsDialog(project.sections, reverse_order=self._reverse_ap_proposal, parent=self)
+        if dlg.exec() != BadSectionsDialog.DialogCode.Accepted:
             return
+        bad_ids = dlg.bad_section_ids()
+        self._reverse_ap_proposal = dlg.reverse_section_order()
 
         self._update_deepslice_enabled(running=True)
         self.statusBar().showMessage("Running DeepSlice suggestions...")
@@ -1196,8 +1184,8 @@ class MainWindow(QMainWindow):
         thread = QThread(self)
         worker = _DeepSliceWorker(
             project,
-            executable,
             reverse_section_order=self._reverse_ap_proposal,
+            bad_section_ids=bad_ids,
         )
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
@@ -1234,73 +1222,6 @@ class MainWindow(QMainWindow):
         self._deepslice_progress.close()
         self._deepslice_progress.deleteLater()
         self._deepslice_progress = None
-
-    def _configure_deepslice(self) -> bool:
-        box = QMessageBox(self)
-        box.setWindowTitle("Select DeepSlice Runtime")
-        box.setText("Choose how to locate a Python runtime that has DeepSlice installed.")
-        env_btn = box.addButton("Environment folder", QMessageBox.ButtonRole.AcceptRole)
-        box.addButton("Python executable", QMessageBox.ButtonRole.ActionRole)
-        box.addButton(QMessageBox.StandardButton.Cancel)
-        box.setDefaultButton(env_btn)
-        box.exec()
-
-        clicked = box.clickedButton()
-        if clicked is None or clicked == box.button(QMessageBox.StandardButton.Cancel):
-            return False
-
-        settings = QSettings("VERSO", "VERSO")
-        current = str(settings.value(_DEEPSLICE_PATH_KEY, ""))
-        if clicked == env_btn:
-            path = QFileDialog.getExistingDirectory(
-                self,
-                "Select DeepSlice Runtime",
-                current,
-            )
-        else:
-            path, _ = QFileDialog.getOpenFileName(
-                self,
-                "Select DeepSlice Runtime",
-                current,
-                "Python executable (python.exe python);;All files (*)",
-            )
-        if not path:
-            return False
-
-        settings.setValue(_DEEPSLICE_PATH_KEY, path)
-        executable = self._python_executable_from_deepslice_path(path)
-        if executable is None:
-            QMessageBox.warning(
-                self,
-                "DeepSlice path saved",
-                "The path was saved, but VERSO could not find a Python executable there.",
-            )
-        else:
-            self.statusBar().showMessage(f"DeepSlice Python set to {executable}", 5000)
-        return True
-
-    def _configured_deepslice_python(self) -> str | None:
-        settings = QSettings("VERSO", "VERSO")
-        path = settings.value(_DEEPSLICE_PATH_KEY, "")
-        if not path:
-            return None
-        return self._python_executable_from_deepslice_path(str(path))
-
-    def _python_executable_from_deepslice_path(self, path: str) -> str | None:
-        p = Path(path)
-        if p.is_file():
-            return str(p)
-
-        candidates = [
-            p / "python.exe",
-            p / "Scripts" / "python.exe",
-            p / "bin" / "python",
-            p / "bin" / "python3",
-        ]
-        for candidate in candidates:
-            if candidate.exists() and candidate.is_file():
-                return str(candidate)
-        return None
 
     def _on_deepslice_done(self, result) -> None:
         project = self._state.project

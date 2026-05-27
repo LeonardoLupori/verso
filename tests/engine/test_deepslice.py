@@ -15,7 +15,7 @@ from verso.engine.deepslice import (
     run_deepslice_suggestions,
 )
 from verso.engine.model.alignment import AlignmentStatus, ControlPoint
-from verso.engine.model.project import AtlasRef, Preprocessing, Project, Section
+from verso.engine.model.project import AtlasRef, ChannelSpec, Preprocessing, Project, Section
 from verso.engine.registration import (
     quicknii_pack_anchoring,
     quicknii_unpack_anchoring,
@@ -40,16 +40,19 @@ def _make_project(tmp_path: Path) -> Project:
 def test_run_deepslice_suggestions_reads_generated_json(tmp_path: Path, monkeypatch):
     project = _make_project(tmp_path)
 
-    def fake_run(args, check, capture_output, text, timeout):
+    def fake_run(args, check, capture_output, text, **kwargs):
         payload = json.loads(args[3])
         copied = sorted(Path(payload["folder"]).glob("*.png"))
-        assert copied[0].name == "s001_s001.png"
+        assert payload["section_numbers"] is True
+        assert payload["propagate_angles"] is True
+        assert payload["enforce_index_order"] is True
+        assert copied[0].name == "001_s001.png"
         output = Path(payload["output_base"]).with_suffix(".json")
         output.write_text(
             json.dumps({
                 "name": "out",
-                "target": "allen_mouse_25um",
-                "sections": [
+                "target": "ABA_Mouse_CCFv3_2017_25um.cutlas",
+                "slices": [
                     {
                         "filename": copied[0].name,
                         "nr": 1,
@@ -63,10 +66,10 @@ def test_run_deepslice_suggestions_reads_generated_json(tmp_path: Path, monkeypa
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
-    result = run_deepslice_suggestions(project, "python")
+    result = run_deepslice_suggestions(project)
 
     assert len(result.suggestions) == 1
-    assert result.suggestions[0].filename == "s001_s001.png"
+    assert result.suggestions[0].anchoring == [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]
     assert result.suggestions[0].confidence == 0.8
     assert result.stdout == "ok"
 
@@ -81,7 +84,7 @@ def test_run_deepslice_failure_does_not_mutate_project(tmp_path: Path, monkeypat
     monkeypatch.setattr(subprocess, "run", fake_run)
 
     try:
-        run_deepslice_suggestions(project, "missing-python")
+        run_deepslice_suggestions(project)
     except Exception:
         pass
 
@@ -165,19 +168,53 @@ def test_apply_deepslice_suggestions_converts_quicknii_convention(tmp_path: Path
     ]
 
 
+def test_apply_deepslice_suggestions_does_not_mirror_for_reversed_section_order(
+    tmp_path: Path,
+):
+    """DeepSlice predicts each image's AP from pixel content, and
+    ``enforce_section_ordering`` re-sorts predictions monotonically by ``nr``.
+    Both happen regardless of how VERSO renames filenames for the reversed
+    case, so the QuickNII→BG convention conversion is the only adjustment
+    needed on apply.
+    """
+    project = _make_project(tmp_path)
+    result = DeepSliceRunResult(
+        run_id="run-1",
+        suggestions=[
+            DeepSliceSectionSuggestion(
+                filename="s001_s002.png",
+                serial_number=2,
+                anchoring=[10.0, 428.0, 280.0, 20.0, -3.0, -4.0, 5.0, -6.0, -7.0],
+            )
+        ],
+    )
+
+    apply_deepslice_suggestions_with_atlas(
+        project,
+        result,
+        atlas_shape=(528, 320, 456),
+    )
+
+    assert project.sections[0].alignment.anchoring == [
+        10.0, 100.0, 40.0,
+        20.0, 3.0, 4.0,
+        5.0, 6.0, 7.0,
+    ]
+
+
 def test_run_deepslice_can_reverse_temporary_section_numbers(tmp_path: Path, monkeypatch):
     project = _make_project(tmp_path)
 
-    def fake_run(args, check, capture_output, text, timeout):
+    def fake_run(args, check, capture_output, text, **kwargs):
         payload = json.loads(args[3])
         copied = sorted(path.name for path in Path(payload["folder"]).glob("*.png"))
-        assert copied == ["s001_s002.png", "s002_s001.png"]
+        assert copied == ["001_s002.png", "002_s001.png"]
         output = Path(payload["output_base"]).with_suffix(".json")
         output.write_text(
             json.dumps({
                 "name": "out",
-                "target": "allen_mouse_25um",
-                "sections": [
+                "target": "ABA_Mouse_CCFv3_2017_25um.cutlas",
+                "slices": [
                     {"filename": copied[0], "nr": 2, "anchoring": [1.0] * 9},
                     {"filename": copied[1], "nr": 1, "anchoring": [2.0] * 9},
                 ],
@@ -191,11 +228,347 @@ def test_run_deepslice_can_reverse_temporary_section_numbers(tmp_path: Path, mon
 
     result = run_deepslice_suggestions(
         project,
-        "python",
         DeepSliceOptions(reverse_section_order=True),
     )
 
-    assert [s.filename for s in result.suggestions] == ["s001_s002.png", "s002_s001.png"]
+    assert [s.filename for s in result.suggestions] == ["001_s002.png", "002_s001.png"]
+
+
+def test_run_deepslice_reverses_section_numbers_by_reflection_preserving_gaps(
+    tmp_path: Path,
+    monkeypatch,
+):
+    image_paths = []
+    for serial in (10, 20, 40):
+        path = tmp_path / f"s{serial:03d}.png"
+        Image.new("RGB", (100, 80)).save(path)
+        image_paths.append(path)
+    project = Project(
+        name="deep",
+        atlas=AtlasRef(name="allen_mouse_25um"),
+        sections=[
+            Section("s010", 10, str(image_paths[0]), str(image_paths[0])),
+            Section("s020", 20, str(image_paths[1]), str(image_paths[1])),
+            Section("s040", 40, str(image_paths[2]), str(image_paths[2])),
+        ],
+    )
+
+    def fake_run(args, check, capture_output, text, **kwargs):
+        payload = json.loads(args[3])
+        copied = sorted(path.name for path in Path(payload["folder"]).glob("*.png"))
+        assert copied == ["010_s040.png", "020_s030.png", "040_s010.png"]
+        output = Path(payload["output_base"]).with_suffix(".json")
+        output.write_text(
+            json.dumps({
+                "name": "out",
+                "target": "ABA_Mouse_CCFv3_2017_25um.cutlas",
+                "slices": [
+                    {"filename": name, "nr": i + 1, "anchoring": [1.0] * 9}
+                    for i, name in enumerate(copied)
+                ],
+            })
+        )
+        return subprocess.CompletedProcess(args, 0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    from verso.engine.deepslice import DeepSliceOptions
+
+    run_deepslice_suggestions(
+        project,
+        DeepSliceOptions(reverse_section_order=True),
+    )
+
+
+def test_apply_deepslice_discards_bad_predictions_and_interpolates(tmp_path: Path):
+    """Bad sections keep no DeepSlice prediction and instead get an
+    anchoring interpolated from the neighbouring good sections."""
+    image_paths = []
+    for i in range(3):
+        path = tmp_path / f"s{i + 1:03d}.png"
+        Image.new("RGB", (100, 80)).save(path)
+        image_paths.append(path)
+    project = Project(
+        name="bad-interp",
+        atlas=AtlasRef(name="allen_mouse_25um"),
+        sections=[
+            Section("s001", 1, str(image_paths[0]), str(image_paths[0])),
+            Section("s002", 2, str(image_paths[1]), str(image_paths[1])),
+            Section("s003", 3, str(image_paths[2]), str(image_paths[2])),
+        ],
+    )
+
+    # Suggestions for all three sections; the middle one is flagged as bad so
+    # its predicted (extreme) anchoring should be discarded.
+    suggestions = [
+        DeepSliceSectionSuggestion(
+            filename="001_s001.png",
+            serial_number=1,
+            anchoring=[228.0, 100.0, 160.0, 456.0, 0.0, 0.0, 0.0, 0.0, 320.0],
+        ),
+        DeepSliceSectionSuggestion(
+            filename="002_s002.png",
+            serial_number=2,
+            anchoring=[0.0, 999.0, 0.0, 999.0, 999.0, 999.0, 999.0, 999.0, 999.0],
+        ),
+        DeepSliceSectionSuggestion(
+            filename="003_s003.png",
+            serial_number=3,
+            anchoring=[228.0, 400.0, 160.0, 456.0, 0.0, 0.0, 0.0, 0.0, 320.0],
+        ),
+    ]
+    result = DeepSliceRunResult(
+        run_id="run-1",
+        suggestions=suggestions,
+        bad_section_ids=["s002"],
+    )
+
+    applied = apply_deepslice_suggestions_with_atlas(
+        project,
+        result,
+        atlas_shape=(528, 320, 456),
+    )
+    assert applied == 3  # 2 from DeepSlice, 1 interpolated.
+
+    s2 = project.sections[1]
+    assert s2.alignment.source == "deepslice_bad_interpolated"
+    # The bogus 999 values must not have leaked through.
+    assert all(abs(v) < 600 for v in s2.alignment.anchoring)
+    # AP should land between the two neighbours' AP values after the QN->BG
+    # convention flip applied to the good predictions.
+    s1_ap = project.sections[0].alignment.anchoring[1]
+    s3_ap = project.sections[2].alignment.anchoring[1]
+    s2_ap = s2.alignment.anchoring[1]
+    assert min(s1_ap, s3_ap) <= s2_ap <= max(s1_ap, s3_ap)
+
+
+def test_run_deepslice_uses_user_serial_as_filename_prefix(tmp_path: Path, monkeypatch):
+    """Staged PNG names lead with the user's true serial number (which may be
+    non-contiguous), not VERSO's internal sequential ``section.id``."""
+    image_paths = []
+    for serial in (10, 30, 50):
+        path = tmp_path / f"s{serial:03d}.png"
+        Image.new("RGB", (50, 40)).save(path)
+        image_paths.append(path)
+    project = Project(
+        name="non-contig",
+        atlas=AtlasRef(name="allen_mouse_25um"),
+        sections=[
+            Section("s001", 10, str(image_paths[0]), str(image_paths[0])),
+            Section("s002", 30, str(image_paths[1]), str(image_paths[1])),
+            Section("s003", 50, str(image_paths[2]), str(image_paths[2])),
+        ],
+    )
+
+    def fake_run(args, check, capture_output, text, **kwargs):
+        payload = json.loads(args[3])
+        copied = sorted(p.name for p in Path(payload["folder"]).glob("*.png"))
+        # Prefix is the user's serial, not s001/s002/s003.
+        assert copied == ["010_s010.png", "030_s030.png", "050_s050.png"]
+        output = Path(payload["output_base"]).with_suffix(".json")
+        output.write_text(
+            json.dumps({
+                "name": "out",
+                "target": "ABA_Mouse_CCFv3_2017_25um.cutlas",
+                "slices": [
+                    {"filename": copied[0], "nr": 10, "anchoring": [1.0] * 9},
+                    {"filename": copied[1], "nr": 30, "anchoring": [2.0] * 9},
+                    {"filename": copied[2], "nr": 50, "anchoring": [3.0] * 9},
+                ],
+            })
+        )
+        return subprocess.CompletedProcess(args, 0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    result = run_deepslice_suggestions(project)
+    applied = apply_deepslice_suggestions(project, result)
+    assert applied == 3
+    # Each section keeps its own anchoring — matched via the serial prefix.
+    assert project.sections[0].alignment.anchoring == [1.0] * 9  # serial 10
+    assert project.sections[2].alignment.anchoring == [3.0] * 9  # serial 50
+
+
+def test_run_deepslice_reverse_visible_in_filenames_for_non_contiguous_serials(
+    tmp_path: Path,
+    monkeypatch,
+):
+    """When ``reverse_section_order`` is set, the staged-name suffix differs
+    from the prefix so the reflection is visible in the folder."""
+    image_paths = []
+    for serial in (10, 30, 50):
+        path = tmp_path / f"s{serial:03d}.png"
+        Image.new("RGB", (50, 40)).save(path)
+        image_paths.append(path)
+    project = Project(
+        name="non-contig-rev",
+        atlas=AtlasRef(name="allen_mouse_25um"),
+        sections=[
+            Section("s001", 10, str(image_paths[0]), str(image_paths[0])),
+            Section("s002", 30, str(image_paths[1]), str(image_paths[1])),
+            Section("s003", 50, str(image_paths[2]), str(image_paths[2])),
+        ],
+    )
+
+    def fake_run(args, check, capture_output, text, **kwargs):
+        payload = json.loads(args[3])
+        copied = sorted(p.name for p in Path(payload["folder"]).glob("*.png"))
+        # Prefix = user serial, suffix = reflected DeepSlice nr.
+        assert copied == ["010_s050.png", "030_s030.png", "050_s010.png"]
+        output = Path(payload["output_base"]).with_suffix(".json")
+        output.write_text(
+            json.dumps({
+                "name": "out",
+                "target": "ABA_Mouse_CCFv3_2017_25um.cutlas",
+                "slices": [
+                    {"filename": name, "nr": int(name.split("_s")[-1].split(".")[0]),
+                     "anchoring": [1.0] * 9}
+                    for name in copied
+                ],
+            })
+        )
+        return subprocess.CompletedProcess(args, 0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    from verso.engine.deepslice import DeepSliceOptions
+
+    run_deepslice_suggestions(
+        project,
+        DeepSliceOptions(reverse_section_order=True),
+    )
+
+
+def test_run_deepslice_applies_gamma_to_staged_png(tmp_path: Path, monkeypatch):
+    """Gamma < 1 brightens midtones so peaky fluorescence flattens out.
+
+    A flat mid-gray (128) image with gamma=0.5 should map to
+    ``round(255 * (128/255)**0.5)`` = ~181, well above 128.
+    """
+    img_path = tmp_path / "s001.png"
+    Image.new("RGB", (50, 40), color=(128, 128, 128)).save(img_path)
+    project = Project(
+        name="gamma",
+        atlas=AtlasRef(name="allen_mouse_25um"),
+        sections=[Section("s001", 1, str(img_path), str(img_path))],
+    )
+
+    captured: dict[str, int] = {}
+
+    def fake_run(args, check, capture_output, text, **kwargs):
+        payload = json.loads(args[3])
+        copied = sorted(Path(payload["folder"]).glob("*.png"))
+        with Image.open(copied[0]) as staged:
+            captured["mean"] = int(np.asarray(staged).mean())
+        output = Path(payload["output_base"]).with_suffix(".json")
+        output.write_text(
+            json.dumps({
+                "name": "out",
+                "target": "ABA_Mouse_CCFv3_2017_25um.cutlas",
+                "slices": [
+                    {"filename": copied[0].name, "nr": 1, "anchoring": [1.0] * 9}
+                ],
+            })
+        )
+        return subprocess.CompletedProcess(args, 0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    from verso.engine.deepslice import DeepSliceOptions
+
+    run_deepslice_suggestions(project, DeepSliceOptions(gamma=0.5))
+    # 128^0.5 in normalized space → ~181 in uint8; allow a tolerance.
+    assert 175 <= captured["mean"] <= 185
+
+
+def test_run_deepslice_uses_channel_composite_for_multichannel(tmp_path: Path, monkeypatch):
+    """With ``project.channels`` set, the staged PNG should match the user's
+    on-screen composite rather than the raw ``max(channels)`` fallback."""
+    img_path = tmp_path / "s001.png"
+    Image.new("RGB", (50, 40)).save(img_path)
+    project = Project(
+        name="multich",
+        atlas=AtlasRef(name="allen_mouse_25um"),
+        sections=[Section("s001", 1, str(img_path), str(img_path))],
+        channels=[
+            ChannelSpec(name="DAPI", color=(0, 0, 255)),
+            ChannelSpec(name="GFP", color=(0, 255, 0)),
+            ChannelSpec(name="Cy5", color=(255, 0, 0)),
+        ],
+    )
+
+    captured: dict[str, tuple] = {}
+
+    def fake_run(args, check, capture_output, text, **kwargs):
+        payload = json.loads(args[3])
+        copied = sorted(Path(payload["folder"]).glob("*.png"))
+        with Image.open(copied[0]) as staged:
+            captured["info"] = (staged.mode, staged.size)
+        output = Path(payload["output_base"]).with_suffix(".json")
+        output.write_text(
+            json.dumps({
+                "name": "out",
+                "target": "ABA_Mouse_CCFv3_2017_25um.cutlas",
+                "slices": [
+                    {"filename": copied[0].name, "nr": 1, "anchoring": [1.0] * 9}
+                ],
+            })
+        )
+        return subprocess.CompletedProcess(args, 0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    run_deepslice_suggestions(project)
+
+    assert captured["info"] == ("RGB", (50, 40))
+
+
+def test_run_deepslice_stages_working_resolution_png_with_display_flips(
+    tmp_path: Path,
+    monkeypatch,
+):
+    original = tmp_path / "s001.png"
+    image = Image.new("RGB", (500, 400), color=(0, 0, 0))
+    image.putpixel((0, 0), (255, 0, 0))
+    image.save(original)
+    project = Project(
+        name="deep",
+        atlas=AtlasRef(name="allen_mouse_25um"),
+        sections=[
+            Section(
+                "s001",
+                1,
+                str(original),
+                str(tmp_path / "missing-thumb.ome.tif"),
+                preprocessing=Preprocessing(flip_horizontal=True, flip_vertical=True),
+            )
+        ],
+    )
+
+    def fake_run(args, check, capture_output, text, **kwargs):
+        payload = json.loads(args[3])
+        copied = sorted(Path(payload["folder"]).glob("*.png"))
+        assert len(copied) == 1
+        with Image.open(copied[0]) as staged:
+            assert staged.size == (100, 80)
+            assert staged.mode == "RGB"
+            staged_arr = np.asarray(staged)
+        assert staged_arr[-1, -1, 0] > staged_arr[0, 0, 0]
+        output = Path(payload["output_base"]).with_suffix(".json")
+        output.write_text(
+            json.dumps({
+                "name": "out",
+                "target": "ABA_Mouse_CCFv3_2017_25um.cutlas",
+                "slices": [
+                    {"filename": copied[0].name, "nr": 1, "anchoring": [1.0] * 9}
+                ],
+            })
+        )
+        return subprocess.CompletedProcess(args, 0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    run_deepslice_suggestions(project)
 
 
 def test_reset_in_progress_to_default_proposals_clears_deepslice_metadata(tmp_path: Path):
