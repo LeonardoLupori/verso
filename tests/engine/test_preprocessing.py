@@ -5,6 +5,7 @@ import numpy as np
 from verso.engine.model.project import ChannelSpec, Preprocessing
 from verso.engine.preprocessing import (
     _sensitive_threshold,
+    apply_brush_stroke,
     apply_flip,
     apply_freehand_stroke,
     apply_mask,
@@ -46,8 +47,8 @@ def test_apply_mask_zeros_background_pixels() -> None:
 
 def test_composite_channels_max_blends_visible_channels() -> None:
     image = np.zeros((1, 3, 2), dtype=np.uint8)
-    image[0, :, 0] = [200, 0, 0]      # bright in channel 0
-    image[0, :, 1] = [0, 200, 0]      # bright in channel 1
+    image[0, :, 0] = [200, 0, 0]  # bright in channel 0
+    image[0, :, 1] = [0, 200, 0]  # bright in channel 1
     channels = [
         ChannelSpec(name="ch0", color=(255, 0, 0), scale=1.0, visible=True),
         ChannelSpec(name="ch1", color=(0, 255, 0), scale=1.0, visible=True),
@@ -77,20 +78,14 @@ def test_composite_channels_invisible_channel_contributes_nothing() -> None:
 
 def test_composite_channels_scale_brightens_channel() -> None:
     image = np.full((1, 1, 1), 50, dtype=np.uint8)
-    full_scale = composite_channels(
-        image, [ChannelSpec(name="x", color=(255, 0, 0), scale=1.0)]
-    )
-    boosted = composite_channels(
-        image, [ChannelSpec(name="x", color=(255, 0, 0), scale=0.5)]
-    )
+    full_scale = composite_channels(image, [ChannelSpec(name="x", color=(255, 0, 0), scale=1.0)])
+    boosted = composite_channels(image, [ChannelSpec(name="x", color=(255, 0, 0), scale=0.5)])
     assert boosted[0, 0, 0] > full_scale[0, 0, 0]
 
 
 def test_composite_channels_handles_2d_input() -> None:
     image = np.full((2, 2), 128, dtype=np.uint8)
-    rgb = composite_channels(
-        image, [ChannelSpec(name="x", color=(255, 255, 255), scale=1.0)]
-    )
+    rgb = composite_channels(image, [ChannelSpec(name="x", color=(255, 255, 255), scale=1.0)])
     assert rgb.shape == (2, 2, 3)
     assert rgb[0, 0, 0] == 128
 
@@ -143,6 +138,32 @@ def test_apply_freehand_stroke_adds_and_erases_polygon() -> None:
     assert added[4, 4]
     assert not added[0, 0]
     assert not erased[4, 4]
+
+
+def test_apply_brush_stroke_single_point_paints_disk() -> None:
+    mask = np.zeros((50, 50), dtype=bool)
+    out = apply_brush_stroke(mask, np.array([[25, 25]]), radius=5, add=True)
+
+    assert out[25, 25]
+    assert out[25, 29]  # within radius
+    assert not out[25, 40]  # outside radius
+    assert not mask[25, 25]  # original untouched
+
+
+def test_apply_brush_stroke_connects_sparse_points() -> None:
+    mask = np.zeros((20, 60), dtype=bool)
+    out = apply_brush_stroke(mask, np.array([[5, 10], [55, 10]]), radius=3, add=True)
+
+    # The midpoint between the two stamps must be filled (no gap).
+    assert out[10, 30]
+
+
+def test_apply_brush_stroke_erases() -> None:
+    mask = np.ones((30, 30), dtype=bool)
+    out = apply_brush_stroke(mask, np.array([[15, 15]]), radius=4, add=False)
+
+    assert not out[15, 15]
+    assert out[0, 0]  # outside the brush untouched
 
 
 def test_detect_foreground_dark_tissue_on_bright_background() -> None:
@@ -266,7 +287,8 @@ def test_save_load_lr_mask_round_trip(tmp_path) -> None:
 def test_lr_mask_to_rgba_assigns_distinct_colors_and_alpha() -> None:
     mask = np.array([[0, 1, 2]], dtype=np.uint8)
     rgba = lr_mask_to_rgba(
-        mask, opacity=0.5,
+        mask,
+        opacity=0.5,
         left_color=(10, 20, 30),
         right_color=(40, 50, 60),
     )

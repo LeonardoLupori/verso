@@ -41,9 +41,31 @@ def _make_cross_cursor(rgb: tuple[int, int, int], size: int = 19) -> QCursor:
     painter.end()
     return QCursor(pm, mid, mid)
 
+
+def _make_circle_cursor(rgb: tuple[int, int, int], diameter_px: int) -> QCursor:
+    """Build a 1-px colored circle cursor with hotspot at center.
+
+    ``diameter_px`` is the on-screen diameter; it is clamped to a sane range so
+    huge brushes at high zoom don't create an unusable pixmap.
+    """
+    d = int(min(max(diameter_px, 4), 256))
+    pm = QPixmap(d + 1, d + 1)
+    pm.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pm)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    painter.setPen(QPen(QColor(*rgb), 1))
+    painter.drawEllipse(0, 0, d, d)
+    mid = d // 2
+    # Small center dot so the user can see the exact hotspot.
+    painter.drawPoint(mid, mid)
+    painter.end()
+    return QCursor(pm, mid, mid)
+
+
 # ---------------------------------------------------------------------------
 # Application-level space-key tracker (singleton, installed once)
 # ---------------------------------------------------------------------------
+
 
 class _SpaceState:
     held: bool = False
@@ -96,16 +118,17 @@ def _ensure_space_filter() -> None:
 # Custom ViewBox with overlay-pan support
 # ---------------------------------------------------------------------------
 
+
 class _OverlayViewBox(pg.ViewBox):
     """ViewBox that emits overlay_panned(dx, dy) when space is held during drag,
     and canvas_clicked / canvas_dragged for warp control-point interaction."""
 
     overlay_panned = pyqtSignal(float, float)
     # Emitted in image-pixel coordinates
-    canvas_clicked = pyqtSignal(float, float)   # single click (no drag)
-    canvas_drag_started = pyqtSignal(float, float)   # drag begin
-    canvas_dragged = pyqtSignal(float, float)        # drag update
-    canvas_drag_ended = pyqtSignal(float, float)     # drag finish
+    canvas_clicked = pyqtSignal(float, float)  # single click (no drag)
+    canvas_drag_started = pyqtSignal(float, float)  # drag begin
+    canvas_dragged = pyqtSignal(float, float)  # drag update
+    canvas_drag_ended = pyqtSignal(float, float)  # drag finish
 
     _InteractionMode = Literal["align", "warp", "prep", "view"]
 
@@ -168,6 +191,7 @@ class _OverlayViewBox(pg.ViewBox):
 # Public widget
 # ---------------------------------------------------------------------------
 
+
 class ImageCanvas(QWidget):
     """PyQtGraph canvas with a background and an optional semi-transparent overlay."""
 
@@ -191,8 +215,11 @@ class ImageCanvas(QWidget):
         self._interaction_mode: ImageCanvas._InteractionMode = "align"
         self._lr_draw_active: bool = False
         # Pre-built cursors swapped in/out by the prep-mode hover filter.
-        self._cursor_draw = _make_cross_cursor((80, 160, 255))   # blue
-        self._cursor_erase = _make_cross_cursor((255, 90, 90))   # red
+        self._cursor_draw = _make_cross_cursor((80, 160, 255))  # blue
+        self._cursor_erase = _make_cross_cursor((255, 90, 90))  # red
+        # Brush mode: circular cursor sized to the brush footprint in image px.
+        self._brush_mode: bool = False
+        self._brush_radius_img: int = 20
         self._build_ui()
         self._install_prep_cursor_filter()
 
@@ -210,7 +237,7 @@ class ImageCanvas(QWidget):
 
         self.plot = self.view.addPlot(viewBox=self._vb)
         self.plot.setAspectLocked(True)
-        self.plot.invertY(True)          # image coords: row 0 at top
+        self.plot.invertY(True)  # image coords: row 0 at top
         self.plot.hideAxis("left")
         self.plot.hideAxis("bottom")
         self.plot.setMenuEnabled(False)
@@ -257,6 +284,9 @@ class ImageCanvas(QWidget):
 
         # Forward scene mouse moves as image-pixel coordinates
         self.plot.scene().sigMouseMoved.connect(self._on_scene_mouse_moved)
+
+        # Keep the brush cursor sized to the brush footprint as the user zooms.
+        self._vb.sigRangeChanged.connect(self._on_view_range_changed)
 
         # Forward warp interaction signals from the ViewBox
         self._vb.canvas_clicked.connect(self.canvas_clicked)
@@ -318,13 +348,29 @@ class ImageCanvas(QWidget):
         if self.view.underMouse():
             self._refresh_prep_cursor()
 
+    def set_brush_cursor(self, active: bool, radius_img: int) -> None:
+        """Enable the circular brush cursor (``active``) sized to ``radius_img``
+        image pixels. When inactive the crosshair cursor is used."""
+        self._brush_mode = bool(active)
+        self._brush_radius_img = max(int(radius_img), 1)
+        if self._interaction_mode == "prep" and self.view.underMouse():
+            self._refresh_prep_cursor()
+
+    def _on_view_range_changed(self, *_args: object) -> None:
+        if self._brush_mode and self._interaction_mode == "prep" and self.view.underMouse():
+            self._refresh_prep_cursor()
+
     def _refresh_prep_cursor(self) -> None:
         if self._interaction_mode != "prep" or self._lr_draw_active:
             self.view.unsetCursor()
             return
-        self.view.setCursor(
-            self._cursor_erase if _ShiftState.held else self._cursor_draw
-        )
+        rgb = (255, 90, 90) if _ShiftState.held else (80, 160, 255)
+        if self._brush_mode:
+            px_per_img = 1.0 / max(self._vb.viewPixelSize()[0], 1e-9)
+            diameter = int(round(2 * self._brush_radius_img * px_per_img))
+            self.view.setCursor(_make_circle_cursor(rgb, diameter))
+            return
+        self.view.setCursor(self._cursor_erase if _ShiftState.held else self._cursor_draw)
 
     def set_channel_planes(self, planes: list[np.ndarray | None]) -> None:
         """Install the per-channel raw uint8 planes that drive the section view.
@@ -409,6 +455,7 @@ class ImageCanvas(QWidget):
         self.overlay_item.setImage(image)
         if display_w is not None and display_h is not None:
             from PyQt6.QtCore import QRectF
+
             self.overlay_item.setRect(QRectF(0, 0, display_w, display_h))
 
     def set_lr_overlay(
@@ -428,6 +475,7 @@ class ImageCanvas(QWidget):
         self.lr_overlay_item.setImage(image)
         if display_w is not None and display_h is not None:
             from PyQt6.QtCore import QRectF
+
             self.lr_overlay_item.setRect(QRectF(0, 0, display_w, display_h))
 
     def _on_scene_mouse_moved(self, scene_pos) -> None:
@@ -435,7 +483,10 @@ class ImageCanvas(QWidget):
         self.mouse_position_changed.emit(vb_pos.x(), vb_pos.y())
 
     _CP_SYMBOLS: dict[str, str] = {
-        "Circle": "o", "Cross": "+", "Square": "s", "Diamond": "d",
+        "Circle": "o",
+        "Cross": "+",
+        "Square": "s",
+        "Diamond": "d",
     }
     _CP_COLOR_RGB: dict[str, tuple[int, int, int]] = {
         "Orange": (255, 96, 0),
@@ -490,9 +541,7 @@ class ImageCanvas(QWidget):
                 xs += [ss * display_w, ds * display_w]
                 ys += [st * display_h, dt * display_h]
             self.disp_halo_item.setData(x=xs, y=ys)
-            self.disp_item.setPen(
-                pg.mkPen((r, g, b, 255), width=2.75)
-            )
+            self.disp_item.setPen(pg.mkPen((r, g, b, 255), width=2.75))
             self.disp_item.setData(x=xs, y=ys)
         else:
             self.disp_halo_item.clear()
@@ -502,17 +551,25 @@ class ImageCanvas(QWidget):
         for i, (s, t) in enumerate(dst_pts):
             px, py = s * display_w, t * display_h
             if i == hovered_idx:
-                spots.append({
-                    "pos": (px, py), "size": hov_size, "symbol": symbol,
-                    "brush": pg.mkBrush(r, g, b, 255),
-                    "pen": pg.mkPen(255, 255, 255, 255, width=2.5),
-                })
+                spots.append(
+                    {
+                        "pos": (px, py),
+                        "size": hov_size,
+                        "symbol": symbol,
+                        "brush": pg.mkBrush(r, g, b, 255),
+                        "pen": pg.mkPen(255, 255, 255, 255, width=2.5),
+                    }
+                )
             else:
-                spots.append({
-                    "pos": (px, py), "size": cp_size, "symbol": symbol,
-                    "brush": pg.mkBrush(r, g, b, 255),
-                    "pen": pg.mkPen(0, 0, 0, 240, width=1.5),
-                })
+                spots.append(
+                    {
+                        "pos": (px, py),
+                        "size": cp_size,
+                        "symbol": symbol,
+                        "brush": pg.mkBrush(r, g, b, 255),
+                        "pen": pg.mkPen(0, 0, 0, 240, width=1.5),
+                    }
+                )
         self.cp_item.setData(spots)
 
     def clear_control_points(self) -> None:

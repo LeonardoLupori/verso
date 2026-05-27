@@ -188,6 +188,46 @@ def apply_freehand_stroke(
     return out
 
 
+def apply_brush_stroke(
+    mask: np.ndarray,
+    points_xy: np.ndarray,
+    radius: int,
+    add: bool,
+) -> np.ndarray:
+    """Paint filled disks of ``radius`` along a brush stroke into a copy of the mask.
+
+    Unlike :func:`apply_freehand_stroke`, a single point paints one disk. Sparse
+    drag samples are densified along each segment so fast strokes leave no gaps.
+    ``add=True`` sets painted pixels to True; ``add=False`` clears them. Radius is
+    measured in mask pixels.
+    """
+    from skimage.draw import disk
+
+    out = np.asarray(mask, dtype=bool).copy()
+    pts = np.asarray(points_xy, dtype=float).reshape(-1, 2)
+    if len(pts) == 0:
+        return out
+    radius = max(int(radius), 1)
+    value = bool(add)
+
+    def stamp(cx: float, cy: float) -> None:
+        rr, cc = disk((cy, cx), radius, shape=out.shape)
+        out[rr, cc] = value
+
+    stamp(pts[0, 0], pts[0, 1])
+    step = max(radius / 2.0, 1.0)
+    for i in range(1, len(pts)):
+        x0, y0 = pts[i - 1]
+        x1, y1 = pts[i]
+        dist = float(np.hypot(x1 - x0, y1 - y0))
+        n = int(dist / step)
+        for k in range(1, n + 1):
+            t = k / (n + 1)
+            stamp(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t)
+        stamp(x1, y1)
+    return out
+
+
 def detect_foreground(image: np.ndarray) -> np.ndarray:
     """Auto-segment tissue from bright or dark background.
 
@@ -412,8 +452,7 @@ def line_side_polygons(
     zero vertices), the corresponding output is an empty (0, 2) array.
     """
     rect = np.array(
-        [(0.0, 0.0), (float(width), 0.0),
-         (float(width), float(height)), (0.0, float(height))],
+        [(0.0, 0.0), (float(width), 0.0), (float(width), float(height)), (0.0, float(height))],
         dtype=np.float64,
     )
 
