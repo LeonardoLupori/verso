@@ -209,6 +209,12 @@ class MainWindow(QMainWindow):
 
         file_menu.addSeparator()
 
+        act_import_settings = QAction("Import &settings from project…", self)
+        act_import_settings.triggered.connect(self._import_settings_from_project)
+        file_menu.addAction(act_import_settings)
+
+        file_menu.addSeparator()
+
         act_save = QAction("&Save project", self)
         act_save.setShortcut(QKeySequence.StandardKey.Save)
         act_save.triggered.connect(self._save_project)
@@ -562,6 +568,52 @@ class MainWindow(QMainWindow):
         if path:
             project = load_visualign(Path(path))
             self._state.load_project(project)
+
+    def _import_settings_from_project(self) -> None:
+        """Copy channel colors and control-point styling from another project."""
+        project = self._state.project
+        if project is None:
+            QMessageBox.information(
+                self,
+                "No project loaded",
+                "Open or create a project before importing settings.",
+            )
+            return
+
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Import settings from project",
+            "",
+            "VERSO project (*.json);;JSON files (*.json);;All files (*)",
+        )
+        if not path:
+            return
+
+        try:
+            source = Project.load(Path(path))
+        except Exception as exc:
+            QMessageBox.critical(self, "Cannot read project", str(exc))
+            return
+
+        from verso.engine.io.project_io import import_project_styling
+
+        import_project_styling(project, source)
+
+        # Refresh widgets that depend on channel display or CP styling.
+        self._panel.set_channels(project.channels)
+        self._prep.set_channels(project.channels)
+        if self._brightness_dialog is not None:
+            self._brightness_dialog.set_channels(project.channels)
+        self._filmstrip.populate(project.sections, project.channels)
+        self._props.apply_cp_style(project.cp_size, project.cp_shape, project.cp_color)
+        self._warp.set_cp_style(project.cp_size, project.cp_shape, project.cp_color)
+
+        if self._state.project_path is not None:
+            self._write_project(self._state.project_path)
+
+        self.statusBar().showMessage(
+            f"Imported settings from {Path(path).name}", 3000
+        )
 
     def _save_project(self) -> None:
         self._prep.save_current_mask_if_dirty()

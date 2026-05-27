@@ -27,3 +27,29 @@ def load_project(path: Path) -> Project:
         Reconstructed :class:`~verso.engine.model.project.Project`.
     """
     raise NotImplementedError
+
+
+def import_project_styling(target: Project, source: Project) -> None:
+    """Copy color and styling settings from *source* into *target* in place.
+
+    Imports:
+      - Per-channel ``color``, ``scale``, ``visible``, matched by position
+        (index). Channel ``name`` is preserved on the target. Channels past
+        the end of either list are left untouched.
+      - Control-point style: ``cp_size``, ``cp_shape``, ``cp_color``.
+
+    Args:
+        target: Project to update in place.
+        source: Project whose styling is read.
+    """
+    overlap = min(len(target.channels), len(source.channels))
+    for i in range(overlap):
+        src = source.channels[i]
+        tgt = target.channels[i]
+        tgt.color = src.color
+        tgt.scale = src.scale
+        tgt.visible = src.visible
+
+    target.cp_size = source.cp_size
+    target.cp_shape = source.cp_shape
+    target.cp_color = source.cp_color
