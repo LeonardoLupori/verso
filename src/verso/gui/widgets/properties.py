@@ -113,6 +113,8 @@ class _PrepProperties(QWidget):
     mask_opacity_changed = pyqtSignal(float)
     mask_color_changed = pyqtSignal(tuple)
     mask_negative_changed = pyqtSignal(bool)
+    mask_draw_mode_changed = pyqtSignal(str)  # "freehand" | "brush"
+    brush_size_changed = pyqtSignal(int)
     autodetect_requested = pyqtSignal()
     clear_mask_requested = pyqtSignal()
     # Hemisphere subpanel signals
@@ -204,7 +206,58 @@ class _PrepProperties(QWidget):
         opacity_row.addWidget(self._opacity_value)
         mask_layout.addLayout(opacity_row)
 
-        # Row 3: auto-detect + clear
+        # Row 3: draw-mode selector (Freehand / Brush)
+        _mode_specs = [("freehand", "Freehand"), ("brush", "Brush")]
+        self._draw_mode_btns: dict[str, QPushButton] = {}
+        self._draw_mode_group = QButtonGroup(self)
+        self._draw_mode_group.setExclusive(True)
+        mode_row = QHBoxLayout()
+        mode_row.setSpacing(0)
+        for i, (mode, label) in enumerate(_mode_specs):
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setChecked(mode == "freehand")
+            btn.setFixedHeight(24)
+            if i == 0:
+                radius = (
+                    "border-top-left-radius: 4px; border-bottom-left-radius: 4px;"
+                    " border-top-right-radius: 0px; border-bottom-right-radius: 0px;"
+                )
+                margin = ""
+            else:
+                radius = (
+                    "border-top-right-radius: 4px; border-bottom-right-radius: 4px;"
+                    " border-top-left-radius: 0px; border-bottom-left-radius: 0px;"
+                )
+                margin = "margin-left: -1px;"
+            btn.setStyleSheet(
+                f"QPushButton {{ {radius} {margin} padding: 2px 6px; color: #ccc;"
+                f" background: #3a3a3a; border: 1px solid #555; }}"
+                "QPushButton:checked { background: #1e5a8a; color: #fff;"
+                " border-color: #1e5a8a; }"
+                "QPushButton:hover:!checked { background: #4a4a4a; }"
+            )
+            self._draw_mode_btns[mode] = btn
+            self._draw_mode_group.addButton(btn)
+            mode_row.addWidget(btn)
+        self._draw_mode_group.buttonClicked.connect(self._on_draw_mode_btn_clicked)
+        mask_layout.addLayout(mode_row)
+
+        # Row 4: brush size slider (disabled while Freehand is active)
+        self._brush_value = QLabel("20")
+        self._brush_slider = QSlider(Qt.Orientation.Horizontal)
+        self._brush_slider.setRange(1, 100)
+        self._brush_slider.setValue(20)
+        self._brush_slider.setMinimumWidth(20)
+        self._brush_slider.setEnabled(False)
+        self._brush_slider.valueChanged.connect(self._emit_brush_size)
+        brush_row = QHBoxLayout()
+        brush_row.addWidget(QLabel("Brush"))
+        brush_row.addWidget(self._brush_slider, stretch=1)
+        brush_row.addWidget(self._brush_value)
+        mask_layout.addLayout(brush_row)
+
+        # Row 5: auto-detect + clear
         action_row = QHBoxLayout()
         self._autodetect_btn = QPushButton("Auto-detect")
         self._autodetect_btn.clicked.connect(self.autodetect_requested)
@@ -274,9 +327,7 @@ class _PrepProperties(QWidget):
         hemi_draw_row = QHBoxLayout()
         self._btn_draw_line = QPushButton("Draw line")
         self._btn_draw_line.setCheckable(True)
-        self._btn_draw_line.setToolTip(
-            "Draw a line to split left and right hemispheres"
-        )
+        self._btn_draw_line.setToolTip("Draw a line to split left and right hemispheres")
         self._btn_draw_line.toggled.connect(self.lr_draw_mode_toggled)
         hemi_draw_row.addWidget(self._btn_draw_line)
         self._btn_clear_lr = QPushButton("Clear")
@@ -341,9 +392,7 @@ class _PrepProperties(QWidget):
         self._btn_draw_line.blockSignals(True)
         self._btn_draw_line.setChecked(active)
         self._btn_draw_line.blockSignals(False)
-        self._btn_draw_line.setText(
-            "Drawing..." if active else "Draw line"
-        )
+        self._btn_draw_line.setText("Drawing..." if active else "Draw line")
         self._lr_draw_toolbar.setVisible(active)
         # Disable competing actions while editing the line.
         self._btn_all_left.setEnabled(not active)
@@ -359,6 +408,16 @@ class _PrepProperties(QWidget):
         opacity = self._lr_opacity_slider.value() / 100.0
         self._lr_opacity_value.setText(f"{opacity:.2f}")
         self.lr_opacity_changed.emit(opacity)
+
+    def _on_draw_mode_btn_clicked(self, btn: QPushButton) -> None:
+        mode = "brush" if btn is self._draw_mode_btns["brush"] else "freehand"
+        self._brush_slider.setEnabled(mode == "brush")
+        self.mask_draw_mode_changed.emit(mode)
+
+    def _emit_brush_size(self) -> None:
+        size = self._brush_slider.value()
+        self._brush_value.setText(str(size))
+        self.brush_size_changed.emit(size)
 
     def _refresh_mask_color_btn(self) -> None:
         r, g, b = self._mask_color_rgb
@@ -405,6 +464,7 @@ class _PrepProperties(QWidget):
             self._refresh_lr_right_color_btn()
             self.lr_right_color_changed.emit(self._lr_right_color_rgb)
 
+
 _CP_SHAPES = ["Circle", "Cross", "Square", "Diamond"]
 
 
@@ -413,7 +473,7 @@ class _AlignProperties(QWidget):
 
     opacity_changed = pyqtSignal(float)
     overlay_color_changed = pyqtSignal(tuple)  # (r, g, b) — outline color
-    overlay_mode_changed = pyqtSignal(str)     # "annotation" | "outline" | "reference"
+    overlay_mode_changed = pyqtSignal(str)  # "annotation" | "outline" | "reference"
     cp_style_changed = pyqtSignal(int, str, str)  # size, shape, color
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -439,8 +499,8 @@ class _AlignProperties(QWidget):
 
         _overlay_specs = [
             ("annotation", "Annotation"),
-            ("outline",    "Outline"),
-            ("reference",  "Template"),
+            ("outline", "Outline"),
+            ("reference", "Template"),
         ]
         self._overlay_mode_btns: dict[str, QPushButton] = {}
         self._overlay_btn_group = QButtonGroup(self)
@@ -454,12 +514,16 @@ class _AlignProperties(QWidget):
             btn.setFixedHeight(24)
             n = len(_overlay_specs)
             if i == 0:
-                radius = ("border-top-left-radius: 4px; border-bottom-left-radius: 4px;"
-                          " border-top-right-radius: 0px; border-bottom-right-radius: 0px;")
+                radius = (
+                    "border-top-left-radius: 4px; border-bottom-left-radius: 4px;"
+                    " border-top-right-radius: 0px; border-bottom-right-radius: 0px;"
+                )
                 margin = ""
             elif i == n - 1:
-                radius = ("border-top-right-radius: 4px; border-bottom-right-radius: 4px;"
-                          " border-top-left-radius: 0px; border-bottom-left-radius: 0px;")
+                radius = (
+                    "border-top-right-radius: 4px; border-bottom-right-radius: 4px;"
+                    " border-top-left-radius: 0px; border-bottom-left-radius: 0px;"
+                )
                 margin = "margin-left: -1px;"
             else:
                 radius = "border-radius: 0px;"
@@ -480,9 +544,7 @@ class _AlignProperties(QWidget):
         self._opacity_slider = QSlider(Qt.Orientation.Horizontal)
         self._opacity_slider.setRange(0, 100)
         self._opacity_slider.setValue(50)
-        self._opacity_slider.valueChanged.connect(
-            lambda v: self.opacity_changed.emit(v / 100.0)
-        )
+        self._opacity_slider.valueChanged.connect(lambda v: self.opacity_changed.emit(v / 100.0))
         overlay_layout.addRow("Opacity:", self._opacity_slider)
 
         self._outline_color_rgb: tuple[int, int, int] = (255, 255, 255)
@@ -626,7 +688,7 @@ class _AlignProperties(QWidget):
 
     def set_overlay_mode(self, mode: str) -> None:
         for m, btn in self._overlay_mode_btns.items():
-            checked = (m == mode)
+            checked = m == mode
             if btn.isChecked() != checked:
                 btn.blockSignals(True)
                 btn.setChecked(checked)
@@ -731,6 +793,8 @@ class PropertiesPanel(QWidget):
     mask_opacity_changed = pyqtSignal(float)
     mask_color_changed = pyqtSignal(tuple)
     mask_negative_changed = pyqtSignal(bool)
+    mask_draw_mode_changed = pyqtSignal(str)  # "freehand" | "brush"
+    brush_size_changed = pyqtSignal(int)
     autodetect_requested = pyqtSignal()
     clear_mask_requested = pyqtSignal()
     # Hemisphere subpanel signals (re-exposed from _PrepProperties)
@@ -745,7 +809,7 @@ class PropertiesPanel(QWidget):
     lr_right_color_changed = pyqtSignal(tuple)
     opacity_changed = pyqtSignal(float)
     overlay_color_changed = pyqtSignal(tuple)  # (r, g, b) — outline color
-    overlay_mode_changed = pyqtSignal(str)     # "annotation" | "outline" | "reference"
+    overlay_mode_changed = pyqtSignal(str)  # "annotation" | "outline" | "reference"
     cp_style_changed = pyqtSignal(int, str, str)  # size, shape, color
 
     _MODES = ("overview", "prep", "align")
@@ -776,6 +840,8 @@ class PropertiesPanel(QWidget):
         self._prep_page.mask_opacity_changed.connect(self.mask_opacity_changed)
         self._prep_page.mask_color_changed.connect(self.mask_color_changed)
         self._prep_page.mask_negative_changed.connect(self.mask_negative_changed)
+        self._prep_page.mask_draw_mode_changed.connect(self.mask_draw_mode_changed)
+        self._prep_page.brush_size_changed.connect(self.brush_size_changed)
         self._prep_page.autodetect_requested.connect(self.autodetect_requested)
         self._prep_page.clear_mask_requested.connect(self.clear_mask_requested)
         self._prep_page.lr_set_all_left_requested.connect(self.lr_set_all_left_requested)

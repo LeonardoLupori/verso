@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
 
 from verso.engine.model.project import ChannelSpec, Section
 from verso.engine.preprocessing import (
+    apply_brush_stroke,
     apply_freehand_stroke,
     channel_lut,
     detect_foreground,
@@ -68,6 +69,10 @@ class PrepView(QWidget):
         # mid-stroke does not flip add/erase, matching the cursor color the
         # user committed to when they began the drag.
         self._stroke_erase = False
+        # Slice-mask draw mode: "freehand" (polygon fill on release) or
+        # "brush" (live disk painting). Brush radius is in mask pixels.
+        self._draw_mode = "freehand"
+        self._brush_radius = 20
         # L/R hemisphere mask state.  Stored unflipped (matches slice mask).
         self._lr_mask: np.ndarray | None = None
         self._lr_dirty = False
@@ -126,9 +131,11 @@ class PrepView(QWidget):
 
     def _gated(self, slot):
         """Wrap a shortcut slot so it only fires while this view is visible."""
+
         def wrapper() -> None:
             if self.isVisible():
                 slot()
+
         return wrapper
 
     # ------------------------------------------------------------------
@@ -230,6 +237,14 @@ class PrepView(QWidget):
         self._mask_color = color
         self._update_mask_overlay()
 
+    def set_draw_mode(self, mode: str) -> None:
+        self._draw_mode = "brush" if mode == "brush" else "freehand"
+        self._canvas.set_brush_cursor(self._draw_mode == "brush", self._brush_radius)
+
+    def set_brush_size(self, size: int) -> None:
+        self._brush_radius = max(int(size), 1)
+        self._canvas.set_brush_cursor(self._draw_mode == "brush", self._brush_radius)
+
     def set_channels(self, channels: list[ChannelSpec]) -> None:
         self._channels = list(channels)
         self._display_image()
@@ -276,9 +291,7 @@ class PrepView(QWidget):
             raise ValueError(f"side must be 1 (left) or 2 (right), got {side}")
         if self._section is None or self._raw_image is None:
             return
-        self._lr_mask = np.full(
-            self._raw_image.shape[:2], np.uint8(side), dtype=np.uint8
-        )
+        self._lr_mask = np.full(self._raw_image.shape[:2], np.uint8(side), dtype=np.uint8)
         self._section.preprocessing.lr_line = None
         path = self._lr_mask_path_for_section(self._section)
         save_lr_mask(self._lr_mask, path)
@@ -350,7 +363,10 @@ class PrepView(QWidget):
 
         self._lr_editor = LRLineEditor(self._canvas)
         self._lr_editor.begin(
-            p0, p1, w, h,
+            p0,
+            p1,
+            w,
+            h,
             left_color=self._lr_left_color,
             right_color=self._lr_right_color,
         )
@@ -369,8 +385,12 @@ class PrepView(QWidget):
             return
         self._canvas.set_lr_draw_active(False)
 
-        if apply and self._lr_editor is not None and self._section is not None \
-                and self._raw_image is not None:
+        if (
+            apply
+            and self._lr_editor is not None
+            and self._section is not None
+            and self._raw_image is not None
+        ):
             eps = self._lr_editor.endpoints()
             if eps is not None:
                 p0_disp, p1_disp = eps
@@ -390,8 +410,7 @@ class PrepView(QWidget):
         elif not apply and self._section is not None:
             # Cancel: restore the snapshot (path may or may not exist on disk).
             self._section.preprocessing.lr_line = (
-                [list(p) for p in self._saved_lr_line]
-                if self._saved_lr_line is not None else None
+                [list(p) for p in self._saved_lr_line] if self._saved_lr_line is not None else None
             )
             self._section.preprocessing.lr_mask_path = self._saved_lr_mask_path
             self._load_or_init_lr_mask()
@@ -450,9 +469,7 @@ class PrepView(QWidget):
 
     def _push_channel_planes(self, img: np.ndarray, flip_h: bool, flip_v: bool, n: int) -> None:
         """Push raw uint8 planes to the canvas (only when section / flip changes)."""
-        planes: list[np.ndarray | None] = [
-            np.ascontiguousarray(img[:, :, i]) for i in range(n)
-        ]
+        planes: list[np.ndarray | None] = [np.ascontiguousarray(img[:, :, i]) for i in range(n)]
         self._canvas.set_channel_planes(planes)
 
     def _display_image(self) -> None:
@@ -622,20 +639,41 @@ class PrepView(QWidget):
         self._stroke_points = [point]
         self._stroke_active = True
         self._canvas.clear_stroke_preview()
+        if self._draw_mode == "brush":
+            # Brush paints live; snapshot once for undo and stamp the first dab.
+            self._ensure_mask()
+            self._push_undo()
+            self._paint_brush_segment([point])
 
     def _on_canvas_dragged(self, x: float, y: float) -> None:
         if not self._stroke_active:
             return
-        self._stroke_points.append(self._clamped_display_point(x, y))
+        point = self._clamped_display_point(x, y)
+        if self._draw_mode == "brush":
+            # Paint the new segment (previous point → this one) into the mask.
+            prev = self._stroke_points[-1]
+            self._stroke_points.append(point)
+            self._paint_brush_segment([prev, point])
+            return
+        self._stroke_points.append(point)
         color = self._ERASE_COLOR if self._stroke_erase else self._DRAW_COLOR
         self._canvas.set_stroke_preview(self._stroke_points, color=color)
 
     def _on_canvas_drag_ended(self, x: float, y: float) -> None:
         if not self._stroke_active:
             return
-        self._stroke_points.append(self._clamped_display_point(x, y))
+        point = self._clamped_display_point(x, y)
         self._stroke_active = False
         self._canvas.clear_stroke_preview()
+
+        if self._draw_mode == "brush":
+            # Mask already updated incrementally; just paint the final segment.
+            prev = self._stroke_points[-1] if self._stroke_points else point
+            self._paint_brush_segment([prev, point])
+            self._stroke_points.clear()
+            return
+
+        self._stroke_points.append(point)
         if len(self._stroke_points) < 3:
             self._stroke_points.clear()
             return
@@ -649,6 +687,18 @@ class PrepView(QWidget):
             add=not self._stroke_erase,
         )
         self._stroke_points.clear()
+        self._mask_dirty = True
+        self._update_mask_overlay()
+
+    def _paint_brush_segment(self, display_points: list[tuple[float, float]]) -> None:
+        """Stamp the brush along ``display_points`` into the live mask."""
+        pts = self._stroke_points_to_mask_coords(display_points)
+        self._current_mask = apply_brush_stroke(
+            self._current_mask,
+            pts,
+            radius=self._brush_radius,
+            add=not self._stroke_erase,
+        )
         self._mask_dirty = True
         self._update_mask_overlay()
 
