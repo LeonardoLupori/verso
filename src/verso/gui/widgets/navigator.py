@@ -200,10 +200,18 @@ class _SliceView(QWidget):
         layout.addWidget(self._canvas, 0, 0)
 
         # Row 0, col 1: ↑↑ ↑ / ↓ ↓↓ side column.
-        self._btn_up_fast = self._make_btn("chevrons-up.svg", "Move up (10 voxels)", _SIDE_BTN_W, _SIDE_BTN_H)
-        self._btn_up = self._make_btn("chevron-up.svg", "Move up (1 voxel)", _SIDE_BTN_W, _SIDE_BTN_H)
-        self._btn_down = self._make_btn("chevron-down.svg", "Move down (1 voxel)", _SIDE_BTN_W, _SIDE_BTN_H)
-        self._btn_down_fast = self._make_btn("chevrons-down.svg", "Move down (10 voxels)", _SIDE_BTN_W, _SIDE_BTN_H)
+        self._btn_up_fast = self._make_btn(
+            "chevrons-up.svg", "Move up (10 voxels)", _SIDE_BTN_W, _SIDE_BTN_H
+        )
+        self._btn_up = self._make_btn(
+            "chevron-up.svg", "Move up (1 voxel)", _SIDE_BTN_W, _SIDE_BTN_H
+        )
+        self._btn_down = self._make_btn(
+            "chevron-down.svg", "Move down (1 voxel)", _SIDE_BTN_W, _SIDE_BTN_H
+        )
+        self._btn_down_fast = self._make_btn(
+            "chevrons-down.svg", "Move down (10 voxels)", _SIDE_BTN_W, _SIDE_BTN_H
+        )
         side = QVBoxLayout()
         side.setContentsMargins(0, 0, 0, 0)
         side.setSpacing(2)
@@ -220,21 +228,36 @@ class _SliceView(QWidget):
         layout.addWidget(side_widget, 0, 1)
 
         # Row 1, col 0: «← ← ⟲ ⟳ → →» bottom row, centered under the canvas.
-        self._btn_left_fast = self._make_btn("chevrons-left.svg", "Move left (10 voxels)", _BOTTOM_BTN_W, _BOTTOM_BTN_H)
-        self._btn_left = self._make_btn("chevron-left.svg", "Move left (1 voxel)", _BOTTOM_BTN_W, _BOTTOM_BTN_H)
+        self._btn_left_fast = self._make_btn(
+            "chevrons-left.svg", "Move left (10 voxels)", _BOTTOM_BTN_W, _BOTTOM_BTN_H
+        )
+        self._btn_left = self._make_btn(
+            "chevron-left.svg", "Move left (1 voxel)", _BOTTOM_BTN_W, _BOTTOM_BTN_H
+        )
         self._btn_ccw = self._make_btn(
             "rotate-ccw.svg", "Rotate counter-clockwise (1°)", _BOTTOM_BTN_W, _BOTTOM_BTN_H
         )
         self._btn_cw = self._make_btn(
             "rotate-cw.svg", "Rotate clockwise (1°)", _BOTTOM_BTN_W, _BOTTOM_BTN_H
         )
-        self._btn_right = self._make_btn("chevron-right.svg", "Move right (1 voxel)", _BOTTOM_BTN_W, _BOTTOM_BTN_H)
-        self._btn_right_fast = self._make_btn("chevrons-right.svg", "Move right (10 voxels)", _BOTTOM_BTN_W, _BOTTOM_BTN_H)
+        self._btn_right = self._make_btn(
+            "chevron-right.svg", "Move right (1 voxel)", _BOTTOM_BTN_W, _BOTTOM_BTN_H
+        )
+        self._btn_right_fast = self._make_btn(
+            "chevrons-right.svg", "Move right (10 voxels)", _BOTTOM_BTN_W, _BOTTOM_BTN_H
+        )
         bottom = QHBoxLayout()
         bottom.setContentsMargins(0, 0, 0, 0)
         bottom.setSpacing(2)
         bottom.addStretch()
-        for b in (self._btn_left_fast, self._btn_left, self._btn_ccw, self._btn_cw, self._btn_right, self._btn_right_fast):
+        for b in (
+            self._btn_left_fast,
+            self._btn_left,
+            self._btn_ccw,
+            self._btn_cw,
+            self._btn_right,
+            self._btn_right_fast,
+        ):
             bottom.addWidget(b)
         bottom.addStretch()
         bottom_widget = QWidget()
@@ -244,14 +267,22 @@ class _SliceView(QWidget):
 
         # Wire buttons → helpers.
         col_axis, row_axis = self._TRANSLATE_AXES[axis]
-        self._btn_left_fast.clicked.connect(lambda: self._translate_step(col_axis, -_MOVE_STEP_FAST))
+        self._btn_left_fast.clicked.connect(
+            lambda: self._translate_step(col_axis, -_MOVE_STEP_FAST)
+        )
         self._btn_left.clicked.connect(lambda: self._translate_step(col_axis, -_MOVE_STEP))
         self._btn_right.clicked.connect(lambda: self._translate_step(col_axis, +_MOVE_STEP))
-        self._btn_right_fast.clicked.connect(lambda: self._translate_step(col_axis, +_MOVE_STEP_FAST))
-        self._btn_up_fast.clicked.connect(lambda: self._translate_step(row_axis, -_MOVE_STEP_FAST))
+        self._btn_right_fast.clicked.connect(
+            lambda: self._translate_step(col_axis, +_MOVE_STEP_FAST)
+        )
+        self._btn_up_fast.clicked.connect(
+            lambda: self._translate_step(row_axis, -_MOVE_STEP_FAST)
+        )
         self._btn_up.clicked.connect(lambda: self._translate_step(row_axis, -_MOVE_STEP))
         self._btn_down.clicked.connect(lambda: self._translate_step(row_axis, +_MOVE_STEP))
-        self._btn_down_fast.clicked.connect(lambda: self._translate_step(row_axis, +_MOVE_STEP_FAST))
+        self._btn_down_fast.clicked.connect(
+            lambda: self._translate_step(row_axis, +_MOVE_STEP_FAST)
+        )
         self._btn_ccw.clicked.connect(lambda: self._rotate_step(-_ROTATE_STEP_DEG))
         self._btn_cw.clicked.connect(lambda: self._rotate_step(+_ROTATE_STEP_DEG))
 

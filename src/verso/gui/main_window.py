@@ -1226,7 +1226,9 @@ class MainWindow(QMainWindow):
 
         from verso.gui.dialogs.bad_sections import BadSectionsDialog
 
-        dlg = BadSectionsDialog(project.sections, reverse_order=self._reverse_ap_proposal, parent=self)
+        dlg = BadSectionsDialog(
+            project.sections, reverse_order=self._reverse_ap_proposal, parent=self
+        )
         if dlg.exec() != BadSectionsDialog.DialogCode.Accepted:
             return
         bad_ids = dlg.bad_section_ids()

@@ -89,12 +89,6 @@ class AlignView(QWidget):
         filename remains visible even when buttons spill into the extension
         popup.
         """
-        plain_btn_qss = (
-            "QPushButton { border-radius: 4px; padding: 2px 10px; color: #ccc;"
-            " background: #383838; border: 1px solid #555; }"
-            "QPushButton:hover { background: #484848; }"
-            "QPushButton:disabled { color: #555; background: #2a2a2a; border-color: #333; }"
-        )
         red_btn_qss = (
             "QPushButton { border-radius: 4px; padding: 2px 10px; color: #ccc;"
             " background: #5a2a2a; }"
