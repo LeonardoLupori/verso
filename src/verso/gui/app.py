@@ -92,7 +92,7 @@ def _build_dark_palette() -> QPalette:
     return palette
 
 
-def run() -> None:
+def run(project_path: Path | None = None) -> None:
     # Must be called before any pg widget is created.
     pg.setConfigOption("imageAxisOrder", "row-major")
     pg.setConfigOption("antialias", True)
@@ -119,4 +119,6 @@ def run() -> None:
     window.setWindowIcon(app_icon)
     window.show()
     _center_on_screen(window)
+    if project_path is not None:
+        window.open_project_path(project_path)
     sys.exit(app.exec())

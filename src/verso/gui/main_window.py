@@ -537,13 +537,14 @@ class MainWindow(QMainWindow):
             "VERSO project (*.json);;JSON files (*.json);;All files (*)",
         )
         if path:
-            try:
-                project_path = Path(path)
-                project = Project.load(project_path)
-                self._state.load_project(project, project_path)
-            except Exception as exc:
-                from PyQt6.QtWidgets import QMessageBox
-                QMessageBox.critical(self, "Cannot open project", str(exc))
+            self.open_project_path(Path(path))
+
+    def open_project_path(self, project_path: Path) -> None:
+        try:
+            project = Project.load(project_path)
+            self._state.load_project(project, project_path)
+        except Exception as exc:
+            QMessageBox.critical(self, "Cannot open project", str(exc))
 
     def _new_project(self) -> None:
         self._save_prep_mask_before_transition()
