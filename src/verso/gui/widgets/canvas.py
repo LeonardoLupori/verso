@@ -51,7 +51,7 @@ def _make_circle_cursor(rgb: tuple[int, int, int], diameter_px: int) -> QCursor:
     ``diameter_px`` is the on-screen diameter; it is clamped to a sane range so
     huge brushes at high zoom don't create an unusable pixmap.
     """
-    d = int(min(max(diameter_px, 4), 256))
+    d = int(min(max(diameter_px, 3), 1024))
     pad = 2
     sz = d + 2 * pad + 1
     pm = QPixmap(sz, sz)

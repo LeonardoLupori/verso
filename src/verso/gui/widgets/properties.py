@@ -246,7 +246,7 @@ class _PrepProperties(QWidget):
         # Row 4: brush size slider (disabled while Freehand is active)
         self._brush_value = QLabel("20")
         self._brush_slider = QSlider(Qt.Orientation.Horizontal)
-        self._brush_slider.setRange(1, 100)
+        self._brush_slider.setRange(5, 200)
         self._brush_slider.setValue(20)
         self._brush_slider.setMinimumWidth(20)
         self._brush_slider.setEnabled(False)
