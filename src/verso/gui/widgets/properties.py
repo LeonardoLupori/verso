@@ -213,6 +213,10 @@ class _PrepProperties(QWidget):
 
         # Row 3: draw-mode selector (Freehand / Brush)
         _mode_specs = [("freehand", "Freehand"), ("brush", "Brush")]
+        _mode_tooltips = [
+            "Freehand draw areas (hold shift to remove)",
+            "Paint pixels (hold shift to remove)"
+            ]
         self._draw_mode_btns: dict[str, QPushButton] = {}
         self._draw_mode_group = QButtonGroup(self)
         self._draw_mode_group.setExclusive(True)
@@ -222,6 +226,7 @@ class _PrepProperties(QWidget):
             btn = QPushButton(label)
             btn.setCheckable(True)
             btn.setChecked(mode == "freehand")
+            btn.setToolTip(_mode_tooltips[i])
             btn.setFixedHeight(24)
             if i == 0:
                 radius = (
@@ -267,8 +272,10 @@ class _PrepProperties(QWidget):
         self._morph_spin.setRange(1, 20)
         self._morph_spin.setValue(5)
         self._erode_btn = QPushButton("Erode")
+        self._erode_btn.setToolTip("Erode the mask area by a set amount of pixels")
         self._erode_btn.clicked.connect(lambda: self.erode_mask_requested.emit(self._morph_spin.value()))
         self._expand_btn = QPushButton("Expand")
+        self._expand_btn.setToolTip("Expand the mask area by a set amount of pixels")
         self._expand_btn.clicked.connect(lambda: self.expand_mask_requested.emit(self._morph_spin.value()))
         morph_row = QHBoxLayout()
         morph_row.addWidget(self._erode_btn, stretch=1)
@@ -283,8 +290,10 @@ class _PrepProperties(QWidget):
         # Row 5: auto-detect + clear
         action_row = QHBoxLayout()
         self._autodetect_btn = QPushButton("Auto-detect")
+        self._autodetect_btn.setToolTip("Set slice mask based on adaptive threshold")
         self._autodetect_btn.clicked.connect(self.autodetect_requested)
         self._clear_mask_btn = QPushButton("Clear")
+        self._autodetect_btn.setToolTip("Delete the current slice mask")
         self._clear_mask_btn.clicked.connect(self.clear_mask_requested)
         action_row.addWidget(self._autodetect_btn)
         action_row.addWidget(self._clear_mask_btn)
