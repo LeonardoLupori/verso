@@ -28,35 +28,44 @@ from PyQt6.QtGui import QColor, QCursor, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import QAbstractButton, QApplication, QSizePolicy, QVBoxLayout, QWidget
 
 
-def _make_cross_cursor(rgb: tuple[int, int, int], size: int = 19) -> QCursor:
-    """Build a 1-px colored crosshair cursor with hotspot at center."""
+def _make_cross_cursor(rgb: tuple[int, int, int], size: int = 21) -> QCursor:
+    """Build a 1-px colored crosshair with a 1-px black outline, hotspot at center."""
     pm = QPixmap(size, size)
     pm.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pm)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
-    painter.setPen(QPen(QColor(*rgb), 1))
     mid = size // 2
-    painter.drawLine(0, mid, size - 1, mid)
-    painter.drawLine(mid, 0, mid, size - 1)
+    painter.setPen(QPen(QColor(0, 0, 0), 3))
+    painter.drawLine(1, mid, size - 2, mid)
+    painter.drawLine(mid, 1, mid, size - 2)
+    painter.setPen(QPen(QColor(*rgb), 1))
+    painter.drawLine(1, mid, size - 2, mid)
+    painter.drawLine(mid, 1, mid, size - 2)
     painter.end()
     return QCursor(pm, mid, mid)
 
 
 def _make_circle_cursor(rgb: tuple[int, int, int], diameter_px: int) -> QCursor:
-    """Build a 1-px colored circle cursor with hotspot at center.
+    """Build a 1-px colored circle with a 1-px black outline, hotspot at center.
 
     ``diameter_px`` is the on-screen diameter; it is clamped to a sane range so
     huge brushes at high zoom don't create an unusable pixmap.
     """
     d = int(min(max(diameter_px, 4), 256))
-    pm = QPixmap(d + 1, d + 1)
+    pad = 2
+    sz = d + 2 * pad + 1
+    pm = QPixmap(sz, sz)
     pm.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pm)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    painter.setPen(QPen(QColor(0, 0, 0), 3))
+    painter.drawEllipse(pad, pad, d, d)
     painter.setPen(QPen(QColor(*rgb), 1))
-    painter.drawEllipse(0, 0, d, d)
-    mid = d // 2
-    # Small center dot so the user can see the exact hotspot.
+    painter.drawEllipse(pad, pad, d, d)
+    mid = sz // 2
+    painter.setPen(QPen(QColor(0, 0, 0), 3))
+    painter.drawPoint(mid, mid)
+    painter.setPen(QPen(QColor(*rgb), 1))
     painter.drawPoint(mid, mid)
     painter.end()
     return QCursor(pm, mid, mid)
@@ -215,8 +224,8 @@ class ImageCanvas(QWidget):
         self._interaction_mode: ImageCanvas._InteractionMode = "align"
         self._lr_draw_active: bool = False
         # Pre-built cursors swapped in/out by the prep-mode hover filter.
-        self._cursor_draw = _make_cross_cursor((80, 160, 255))  # blue
-        self._cursor_erase = _make_cross_cursor((255, 90, 90))  # red
+        self._cursor_draw = _make_cross_cursor((120, 200, 255))  # bright sky-blue
+        self._cursor_erase = _make_cross_cursor((255, 140, 140))  # bright coral
         # Brush mode: circular cursor sized to the brush footprint in image px.
         self._brush_mode: bool = False
         self._brush_radius_img: int = 20
@@ -364,7 +373,7 @@ class ImageCanvas(QWidget):
         if self._interaction_mode != "prep" or self._lr_draw_active:
             self.view.unsetCursor()
             return
-        rgb = (255, 90, 90) if _ShiftState.held else (80, 160, 255)
+        rgb = (255, 140, 140) if _ShiftState.held else (120, 200, 255)
         if self._brush_mode:
             px_per_img = 1.0 / max(self._vb.viewPixelSize()[0], 1e-9)
             diameter = int(round(2 * self._brush_radius_img * px_per_img))

@@ -106,6 +106,7 @@ class PrepView(QWidget):
 
         self._canvas = ImageCanvas()
         self._canvas.set_interaction_mode("prep")
+        self._canvas.canvas_clicked.connect(self._on_canvas_clicked)
         self._canvas.canvas_drag_started.connect(self._on_canvas_drag_started)
         self._canvas.canvas_dragged.connect(self._on_canvas_dragged)
         self._canvas.canvas_drag_ended.connect(self._on_canvas_drag_ended)
@@ -629,6 +630,18 @@ class PrepView(QWidget):
     # ------------------------------------------------------------------
     # Tool / stroke handling
     # ------------------------------------------------------------------
+
+    def _on_canvas_clicked(self, x: float, y: float) -> None:
+        if self._raw_image is None or self._section is None:
+            return
+        if self._draw_mode != "brush":
+            return
+        mods = QGuiApplication.keyboardModifiers()
+        self._stroke_erase = bool(mods & Qt.KeyboardModifier.ShiftModifier)
+        point = self._clamped_display_point(x, y)
+        self._ensure_mask()
+        self._push_undo()
+        self._paint_brush_segment([point])
 
     def _on_canvas_drag_started(self, x: float, y: float) -> None:
         if self._raw_image is None or self._section is None:
