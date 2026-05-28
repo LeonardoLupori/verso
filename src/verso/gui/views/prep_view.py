@@ -25,6 +25,7 @@ from verso.engine.preprocessing import (
     load_mask,
     lr_mask_to_rgba,
     mask_to_rgba,
+    morph_mask,
     rasterize_lr_line,
     save_lr_mask,
     save_mask,
@@ -265,6 +266,15 @@ class PrepView(QWidget):
         self._ensure_mask()
         self._push_undo()
         self._current_mask = np.zeros(self._raw_image.shape[:2], dtype=bool)
+        self._mask_dirty = True
+        self._update_mask_overlay()
+
+    def apply_morph(self, pixels: int, operation: str) -> None:
+        if self._current_mask is None or self._raw_image is None:
+            return
+        self._ensure_mask()
+        self._push_undo()
+        self._current_mask = morph_mask(self._current_mask, pixels, operation)
         self._mask_dirty = True
         self._update_mask_overlay()
 

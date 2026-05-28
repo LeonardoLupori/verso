@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
     QColorDialog,
     QComboBox,
     QFormLayout,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -117,6 +118,8 @@ class _PrepProperties(QWidget):
     brush_size_changed = pyqtSignal(int)
     autodetect_requested = pyqtSignal()
     clear_mask_requested = pyqtSignal()
+    erode_mask_requested = pyqtSignal(int)
+    expand_mask_requested = pyqtSignal(int)
     # Hemisphere subpanel signals
     lr_set_all_left_requested = pyqtSignal()
     lr_set_all_right_requested = pyqtSignal()
@@ -206,6 +209,8 @@ class _PrepProperties(QWidget):
         opacity_row.addWidget(self._opacity_value)
         mask_layout.addLayout(opacity_row)
 
+        mask_layout.addSpacing(8)
+
         # Row 3: draw-mode selector (Freehand / Brush)
         _mode_specs = [("freehand", "Freehand"), ("brush", "Brush")]
         self._draw_mode_btns: dict[str, QPushButton] = {}
@@ -249,13 +254,31 @@ class _PrepProperties(QWidget):
         self._brush_slider.setRange(5, 200)
         self._brush_slider.setValue(20)
         self._brush_slider.setMinimumWidth(20)
-        self._brush_slider.setEnabled(False)
+
         self._brush_slider.valueChanged.connect(self._emit_brush_size)
         brush_row = QHBoxLayout()
         brush_row.addWidget(QLabel("Brush"))
         brush_row.addWidget(self._brush_slider, stretch=1)
         brush_row.addWidget(self._brush_value)
         mask_layout.addLayout(brush_row)
+
+        # Row 6: erode + expand buttons + amount spinbox
+        self._morph_spin = QSpinBox()
+        self._morph_spin.setRange(1, 20)
+        self._morph_spin.setValue(5)
+        self._erode_btn = QPushButton("Erode")
+        self._erode_btn.clicked.connect(lambda: self.erode_mask_requested.emit(self._morph_spin.value()))
+        self._expand_btn = QPushButton("Expand")
+        self._expand_btn.clicked.connect(lambda: self.expand_mask_requested.emit(self._morph_spin.value()))
+        morph_row = QHBoxLayout()
+        morph_row.addWidget(self._erode_btn, stretch=1)
+        morph_row.addWidget(self._expand_btn, stretch=1)
+        morph_row.addWidget(self._morph_spin)
+        mask_layout.addLayout(morph_row)
+
+        layout.addWidget(mask_box)
+
+        mask_layout.addSpacing(8)
 
         # Row 5: auto-detect + clear
         action_row = QHBoxLayout()
@@ -266,8 +289,6 @@ class _PrepProperties(QWidget):
         action_row.addWidget(self._autodetect_btn)
         action_row.addWidget(self._clear_mask_btn)
         mask_layout.addLayout(action_row)
-
-        layout.addWidget(mask_box)
 
         # --- Hemisphere -----------------------------------------------
         hemi_box = QGroupBox("Hemisphere")
@@ -411,7 +432,6 @@ class _PrepProperties(QWidget):
 
     def _on_draw_mode_btn_clicked(self, btn: QPushButton) -> None:
         mode = "brush" if btn is self._draw_mode_btns["brush"] else "freehand"
-        self._brush_slider.setEnabled(mode == "brush")
         self.mask_draw_mode_changed.emit(mode)
 
     def _emit_brush_size(self) -> None:
@@ -797,6 +817,8 @@ class PropertiesPanel(QWidget):
     brush_size_changed = pyqtSignal(int)
     autodetect_requested = pyqtSignal()
     clear_mask_requested = pyqtSignal()
+    erode_mask_requested = pyqtSignal(int)
+    expand_mask_requested = pyqtSignal(int)
     # Hemisphere subpanel signals (re-exposed from _PrepProperties)
     lr_set_all_left_requested = pyqtSignal()
     lr_set_all_right_requested = pyqtSignal()
@@ -844,6 +866,8 @@ class PropertiesPanel(QWidget):
         self._prep_page.brush_size_changed.connect(self.brush_size_changed)
         self._prep_page.autodetect_requested.connect(self.autodetect_requested)
         self._prep_page.clear_mask_requested.connect(self.clear_mask_requested)
+        self._prep_page.erode_mask_requested.connect(self.erode_mask_requested)
+        self._prep_page.expand_mask_requested.connect(self.expand_mask_requested)
         self._prep_page.lr_set_all_left_requested.connect(self.lr_set_all_left_requested)
         self._prep_page.lr_set_all_right_requested.connect(self.lr_set_all_right_requested)
         self._prep_page.lr_draw_mode_toggled.connect(self.lr_draw_mode_toggled)

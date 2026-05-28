@@ -170,6 +170,30 @@ def mask_to_rgba(
     return rgba
 
 
+def morph_mask(mask: np.ndarray, pixels: int, operation: str) -> np.ndarray:
+    """Erode or expand a binary mask by *pixels* using a disk structuring element.
+
+    Args:
+        mask: Boolean H×W array.
+        pixels: Radius in mask pixels (1–20).
+        operation: ``"erode"`` or ``"expand"``.
+
+    Returns:
+        New bool H×W array with the morphological operation applied.
+    """
+    import cv2
+
+    radius = max(int(pixels), 1)
+    diameter = 2 * radius + 1
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (diameter, diameter))
+    src = np.asarray(mask, dtype=np.uint8) * 255
+    if operation == "erode":
+        result = cv2.erode(src, kernel)
+    else:
+        result = cv2.dilate(src, kernel)
+    return result > 0
+
+
 def apply_freehand_stroke(
     mask: np.ndarray,
     polygon_xy: np.ndarray,

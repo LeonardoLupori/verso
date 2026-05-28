@@ -434,6 +434,8 @@ class MainWindow(QMainWindow):
         self._props.brush_size_changed.connect(self._prep.set_brush_size)
         self._props.autodetect_requested.connect(self._on_prep_autodetect_requested)
         self._props.clear_mask_requested.connect(self._on_prep_clear_mask_requested)
+        self._props.erode_mask_requested.connect(lambda px: self._prep.apply_morph(px, "erode"))
+        self._props.expand_mask_requested.connect(lambda px: self._prep.apply_morph(px, "expand"))
         # Hemisphere subpanel — non-draw actions.
         self._props.lr_visibility_changed.connect(self._prep.set_lr_visible)
         self._props.lr_set_all_left_requested.connect(self._on_lr_set_all_left)
