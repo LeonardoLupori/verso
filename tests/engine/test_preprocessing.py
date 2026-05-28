@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import numpy as np
-
-from verso.engine.model.project import ChannelSpec, Preprocessing
 import pytest
 
+from verso.engine.model.project import ChannelSpec, Preprocessing
 from verso.engine.preprocessing import (
     apply_brush_stroke,
     apply_flip,
@@ -602,7 +601,7 @@ def test_line_side_polygons_line_outside_rect_one_side_empty() -> None:
 def test_rasterize_lr_line_diagonal_produces_valid_tri_values() -> None:
     mask = rasterize_lr_line((0.0, 0.0), (100.0, 100.0), shape=(100, 100))
     assert set(np.unique(mask)).issubset({1, 2})
-    # Upper-right corner (row=0, col=99): cross = dx*(0-0)-dy*(99-0) = 100*0 - 100*99 < 0 → left (1).
+    # Upper-right (row=0, col=99): cross = dx*(0-0)-dy*(99-0) = 100*0 - 100*99 < 0 → left (1).
     assert mask[0, 99] == 1
     # Lower-left corner (row=99, col=0): cross = 100*(99-0) - 100*(0-0) = 9900 > 0 → right (2).
     assert mask[99, 0] == 2
