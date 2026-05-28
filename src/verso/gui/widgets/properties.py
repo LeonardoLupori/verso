@@ -17,7 +17,6 @@ from PyQt6.QtWidgets import (
     QColorDialog,
     QComboBox,
     QFormLayout,
-    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -273,10 +272,14 @@ class _PrepProperties(QWidget):
         self._morph_spin.setValue(5)
         self._erode_btn = QPushButton("Erode")
         self._erode_btn.setToolTip("Erode the mask area by a set amount of pixels")
-        self._erode_btn.clicked.connect(lambda: self.erode_mask_requested.emit(self._morph_spin.value()))
+        self._erode_btn.clicked.connect(
+            lambda: self.erode_mask_requested.emit(self._morph_spin.value())
+        )
         self._expand_btn = QPushButton("Expand")
         self._expand_btn.setToolTip("Expand the mask area by a set amount of pixels")
-        self._expand_btn.clicked.connect(lambda: self.expand_mask_requested.emit(self._morph_spin.value()))
+        self._expand_btn.clicked.connect(
+            lambda: self.expand_mask_requested.emit(self._morph_spin.value())
+        )
         morph_row = QHBoxLayout()
         morph_row.addWidget(self._erode_btn, stretch=1)
         morph_row.addWidget(self._expand_btn, stretch=1)

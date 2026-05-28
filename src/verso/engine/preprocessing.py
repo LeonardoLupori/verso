@@ -13,6 +13,8 @@ import numpy as np
 from verso.engine.model.project import Preprocessing
 
 _FOREGROUND_SENSITIVITY = 0.25
+_MAX_HOLE_SIZE = 3500
+_EROSION_AMOUNT = 3
 
 
 def apply_flip(image: np.ndarray, preprocessing: Preprocessing) -> np.ndarray:
@@ -260,8 +262,7 @@ def detect_foreground(image: np.ndarray) -> np.ndarray:
     Background polarity is estimated from border luminance. The returned
     mask uses True=tissue/foreground.
     """
-    from scipy import ndimage as ndi
-    from skimage import morphology
+    from skimage import filters, morphology
 
     if image.ndim == 2:
         gray = image.astype(np.float32)
@@ -278,45 +279,16 @@ def detect_foreground(image: np.ndarray) -> np.ndarray:
     border = _border_values(gray)
     bright_background = float(np.median(border)) >= 0.5
 
-    try:
-        threshold = _sensitive_threshold(
-            gray,
-            bright_background=bright_background,
-            background_level=float(np.median(border)),
-            sensitivity=_FOREGROUND_SENSITIVITY,
-        )
-    except ValueError:
-        return np.ones(gray.shape, dtype=bool)
-
-    foreground = gray < threshold if bright_background else gray > threshold
-    foreground = morphology.closing(foreground, morphology.disk(3))
-    foreground = ndi.binary_fill_holes(foreground)
-    min_size = max(16, int(gray.size * 0.001))
-    foreground = morphology.remove_small_objects(
-        foreground.astype(bool),
-        max_size=min_size - 1,
-    )
+    smoothed = filters.gaussian(gray, sigma=3)
+    threshold = filters.threshold_li(smoothed)
+    foreground = smoothed < threshold if bright_background else smoothed > threshold
+    foreground = morphology.erosion(foreground, morphology.disk(_EROSION_AMOUNT))
     foreground = _largest_component(foreground)
+    foreground = morphology.remove_small_holes(foreground, max_size=_MAX_HOLE_SIZE)
 
     if not _usable_mask(foreground):
         return np.ones(gray.shape, dtype=bool)
     return foreground
-
-
-def _sensitive_threshold(
-    gray: np.ndarray,
-    *,
-    bright_background: bool,
-    background_level: float,
-    sensitivity: float,
-) -> float:
-    from skimage import filters
-
-    threshold = float(filters.threshold_otsu(gray))
-    sensitivity = min(max(float(sensitivity), 0.0), 1.0)
-    if bright_background:
-        return threshold + max(0.0, background_level - threshold) * sensitivity
-    return threshold - max(0.0, threshold - background_level) * sensitivity
 
 
 def _border_values(gray: np.ndarray) -> np.ndarray:
