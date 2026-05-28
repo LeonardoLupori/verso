@@ -1,10 +1,7 @@
 from types import SimpleNamespace
 
-import numpy as np
-
 from verso.engine.model.alignment import Alignment, AlignmentStatus
 from verso.engine.model.project import Section
-from verso.engine.registration import anchoring_to_vectors, flip_anchoring_horizontal
 from verso.gui.main_window import MainWindow
 
 
@@ -22,8 +19,14 @@ class _NoopMainWindow(SimpleNamespace):
     def _update_ap_plot(self):
         pass
 
+    def _clear_alignment_for_flip(self, section):
+        MainWindow._clear_alignment_for_flip(self, section)
 
-def test_horizontal_flip_updates_in_progress_default_anchoring_before_store():
+    def _after_flip_refresh(self):
+        pass
+
+
+def test_horizontal_flip_clears_alignment():
     anchoring = [
         10.0, 20.0, 30.0,
         100.0, 12.0, 0.0,
@@ -50,17 +53,13 @@ def test_horizontal_flip_updates_in_progress_default_anchoring_before_store():
 
     MainWindow._on_flip_h_changed(window, True)
 
-    expected = flip_anchoring_horizontal(anchoring)
-    np.testing.assert_allclose(section.alignment.anchoring, expected)
-    np.testing.assert_allclose(section.alignment.proposal_anchoring, expected)
-    o, u, v = anchoring_to_vectors(section.alignment.anchoring)
-    old_o, old_u, old_v = anchoring_to_vectors(anchoring)
-    np.testing.assert_allclose(o, old_o + old_u)
-    np.testing.assert_allclose(u, -old_u)
-    np.testing.assert_allclose(v, old_v)
+    assert section.alignment.anchoring == [0.0] * 9
+    assert section.alignment.status == AlignmentStatus.NOT_STARTED
+    assert section.alignment.source is None
+    assert section.alignment.proposal_anchoring is None
 
 
-def test_horizontal_flip_does_not_update_stored_anchoring():
+def test_horizontal_flip_clears_complete_alignment():
     anchoring = [
         10.0, 20.0, 30.0,
         100.0, 12.0, 0.0,
@@ -77,7 +76,6 @@ def test_horizontal_flip_does_not_update_stored_anchoring():
             status=AlignmentStatus.COMPLETE,
         ),
     )
-    original_stored = list(anchoring)
     window = _NoopMainWindow(
         _state=SimpleNamespace(current_section=section, atlas=None, section_index=0),
         _current_mode="overview",
@@ -87,5 +85,6 @@ def test_horizontal_flip_does_not_update_stored_anchoring():
 
     MainWindow._on_flip_h_changed(window, True)
 
-    np.testing.assert_allclose(section.alignment.anchoring, flip_anchoring_horizontal(anchoring))
-    np.testing.assert_allclose(section.alignment.stored_anchoring, original_stored)
+    assert section.alignment.anchoring == [0.0] * 9
+    assert section.alignment.status == AlignmentStatus.NOT_STARTED
+    assert section.alignment.stored_anchoring is None

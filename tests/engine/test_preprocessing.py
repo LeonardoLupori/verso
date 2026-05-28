@@ -3,8 +3,9 @@ from __future__ import annotations
 import numpy as np
 
 from verso.engine.model.project import ChannelSpec, Preprocessing
+import pytest
+
 from verso.engine.preprocessing import (
-    _sensitive_threshold,
     apply_brush_stroke,
     apply_flip,
     apply_freehand_stroke,
@@ -18,6 +19,7 @@ from verso.engine.preprocessing import (
     load_mask,
     lr_mask_to_rgba,
     mask_to_rgba,
+    morph_mask,
     rasterize_lr_line,
     save_lr_mask,
     save_mask,
@@ -186,46 +188,6 @@ def test_detect_foreground_bright_tissue_on_dark_background() -> None:
     assert not mask[5, 5]
 
 
-def test_sensitive_threshold_includes_more_dim_foreground() -> None:
-    gray = np.full((40, 40), 0.85, dtype=np.float32)
-    gray[10:30, 10:30] = 0.35
-    gray[14:26, 14:26] = 0.1
-
-    base = _sensitive_threshold(
-        gray,
-        bright_background=True,
-        background_level=0.85,
-        sensitivity=0.0,
-    )
-    sensitive = _sensitive_threshold(
-        gray,
-        bright_background=True,
-        background_level=0.85,
-        sensitivity=0.25,
-    )
-
-    assert sensitive > base
-
-
-def test_sensitive_threshold_includes_more_faint_bright_foreground() -> None:
-    gray = np.full((40, 40), 0.05, dtype=np.float32)
-    gray[10:30, 10:30] = 0.45
-    gray[14:26, 14:26] = 0.9
-
-    base = _sensitive_threshold(
-        gray,
-        bright_background=False,
-        background_level=0.05,
-        sensitivity=0.0,
-    )
-    sensitive = _sensitive_threshold(
-        gray,
-        bright_background=False,
-        background_level=0.05,
-        sensitivity=0.25,
-    )
-
-    assert sensitive < base
 
 
 # ---------------------------------------------------------------------------
@@ -364,3 +326,308 @@ def test_channel_lut_matches_composite_channels_for_single_channel() -> None:
     lut = channel_lut(spec)
     via_lut = lut[plane][..., :3]
     np.testing.assert_array_equal(via_lut, expected)
+
+
+# ---------------------------------------------------------------------------
+# apply_flip — individual flags and 3-D images
+# ---------------------------------------------------------------------------
+
+
+def test_apply_flip_horizontal_only() -> None:
+    image = np.arange(12, dtype=np.uint8).reshape(3, 4)
+    preprocessing = Preprocessing(flip_horizontal=True, flip_vertical=False)
+    flipped = apply_flip(image, preprocessing)
+    np.testing.assert_array_equal(flipped, np.fliplr(image))
+    assert flipped.flags.c_contiguous
+
+
+def test_apply_flip_vertical_only() -> None:
+    image = np.arange(12, dtype=np.uint8).reshape(3, 4)
+    preprocessing = Preprocessing(flip_horizontal=False, flip_vertical=True)
+    flipped = apply_flip(image, preprocessing)
+    np.testing.assert_array_equal(flipped, np.flipud(image))
+
+
+def test_apply_flip_no_flags_returns_identical_array() -> None:
+    image = np.arange(12, dtype=np.uint8).reshape(3, 4)
+    preprocessing = Preprocessing(flip_horizontal=False, flip_vertical=False)
+    out = apply_flip(image, preprocessing)
+    np.testing.assert_array_equal(out, image)
+
+
+def test_apply_flip_3d_image() -> None:
+    image = np.arange(24, dtype=np.uint8).reshape(2, 4, 3)
+    preprocessing = Preprocessing(flip_horizontal=True, flip_vertical=True)
+    out = apply_flip(image, preprocessing)
+    np.testing.assert_array_equal(out, np.flipud(np.fliplr(image)))
+    assert out.flags.c_contiguous
+
+
+# ---------------------------------------------------------------------------
+# apply_mask — 2-D image, shape mismatch, copy semantics
+# ---------------------------------------------------------------------------
+
+
+def test_apply_mask_2d_image() -> None:
+    image = np.arange(6, dtype=np.uint8).reshape(2, 3)
+    mask = np.array([[True, False, True], [False, True, False]])
+    out = apply_mask(image, mask)
+    assert out[0, 0] == image[0, 0]
+    assert out[0, 1] == 0
+    assert out[1, 2] == 0
+
+
+def test_apply_mask_raises_on_shape_mismatch() -> None:
+    image = np.zeros((4, 4), dtype=np.uint8)
+    mask = np.ones((3, 4), dtype=bool)
+    with pytest.raises(ValueError, match="shape"):
+        apply_mask(image, mask)
+
+
+def test_apply_mask_does_not_mutate_original() -> None:
+    image = np.ones((3, 3), dtype=np.uint8) * 100
+    mask = np.zeros((3, 3), dtype=bool)
+    apply_mask(image, mask)
+    assert (image == 100).all()
+
+
+# ---------------------------------------------------------------------------
+# composite_channels — edge cases
+# ---------------------------------------------------------------------------
+
+
+def test_composite_channels_zero_scale_contributes_nothing() -> None:
+    image = np.full((1, 1, 1), 200, dtype=np.uint8)
+    channels = [ChannelSpec(name="x", color=(255, 0, 0), scale=0.0, visible=True)]
+    rgb = composite_channels(image, channels)
+    assert np.all(rgb == 0)
+
+
+def test_composite_channels_more_specs_than_planes_ignores_excess() -> None:
+    image = np.full((1, 1, 1), 100, dtype=np.uint8)
+    channels = [
+        ChannelSpec(name="ch0", color=(255, 0, 0), scale=1.0, visible=True),
+        ChannelSpec(name="ch1", color=(0, 255, 0), scale=1.0, visible=True),
+    ]
+    rgb = composite_channels(image, channels)
+    assert rgb.shape == (1, 1, 3)
+    assert rgb[0, 0, 0] > 0
+    assert rgb[0, 0, 1] == 0
+
+
+def test_composite_channels_invalid_ndim_raises() -> None:
+    image = np.zeros((2, 2, 2, 2), dtype=np.uint8)
+    with pytest.raises(ValueError):
+        composite_channels(image, [])
+
+
+# ---------------------------------------------------------------------------
+# detect_foreground — 2-D input and uniform-image fallback
+# ---------------------------------------------------------------------------
+
+
+def test_detect_foreground_2d_grayscale_input() -> None:
+    gray = np.full((80, 80), 240, dtype=np.uint8)
+    gray[20:60, 25:55] = 40
+    mask = detect_foreground(gray)
+    assert mask[40, 40]
+    assert not mask[5, 5]
+
+
+def test_detect_foreground_uniform_image_returns_all_ones() -> None:
+    # Completely uniform image: _usable_mask will fail → fallback to all-True.
+    image = np.full((50, 50), 128, dtype=np.uint8)
+    mask = detect_foreground(image)
+    assert mask.shape == (50, 50)
+    assert mask.all()
+
+
+# ---------------------------------------------------------------------------
+# apply_freehand_stroke — degenerate polygon inputs
+# ---------------------------------------------------------------------------
+
+
+def test_apply_freehand_stroke_fewer_than_3_points_is_noop() -> None:
+    mask = np.zeros((10, 10), dtype=bool)
+    out = apply_freehand_stroke(mask, np.array([[2, 2], [7, 7]]), add=True)
+    np.testing.assert_array_equal(out, mask)
+
+
+def test_apply_freehand_stroke_empty_polygon_is_noop() -> None:
+    mask = np.zeros((10, 10), dtype=bool)
+    out = apply_freehand_stroke(mask, np.empty((0, 2)), add=True)
+    np.testing.assert_array_equal(out, mask)
+
+
+# ---------------------------------------------------------------------------
+# apply_brush_stroke — empty input and zero radius clamp
+# ---------------------------------------------------------------------------
+
+
+def test_apply_brush_stroke_empty_points_is_noop() -> None:
+    mask = np.zeros((20, 20), dtype=bool)
+    out = apply_brush_stroke(mask, np.empty((0, 2)), radius=5, add=True)
+    np.testing.assert_array_equal(out, mask)
+
+
+def test_apply_brush_stroke_zero_radius_clamped_to_1() -> None:
+    mask = np.zeros((20, 20), dtype=bool)
+    out = apply_brush_stroke(mask, np.array([[10, 10]]), radius=0, add=True)
+    assert out[10, 10]
+
+
+# ---------------------------------------------------------------------------
+# morph_mask — erode and expand (completely untested previously)
+# ---------------------------------------------------------------------------
+
+
+def test_morph_mask_expand_grows_foreground() -> None:
+    mask = np.zeros((30, 30), dtype=bool)
+    mask[14:16, 14:16] = True
+    expanded = morph_mask(mask, pixels=4, operation="expand")
+    assert expanded.dtype == bool
+    assert expanded[10, 14]  # 4 px above seed, within radius
+    assert not expanded[0, 0]
+
+
+def test_morph_mask_erode_shrinks_foreground() -> None:
+    mask = np.ones((30, 30), dtype=bool)
+    mask[0, :] = False
+    mask[-1, :] = False
+    mask[:, 0] = False
+    mask[:, -1] = False
+    eroded = morph_mask(mask, pixels=3, operation="erode")
+    assert eroded.dtype == bool
+    assert not eroded[1, 1]  # border area should be eroded away
+    assert eroded[15, 15]  # centre should survive
+
+
+def test_morph_mask_expand_then_erode_approximates_original() -> None:
+    mask = np.zeros((60, 60), dtype=bool)
+    mask[20:40, 20:40] = True
+    expanded = morph_mask(mask, pixels=5, operation="expand")
+    restored = morph_mask(expanded, pixels=5, operation="erode")
+    # After expand+erode the original interior must still be foreground.
+    assert restored[25:35, 25:35].all()
+
+
+def test_morph_mask_radius_1_is_minimum() -> None:
+    mask = np.zeros((10, 10), dtype=bool)
+    mask[5, 5] = True
+    out = morph_mask(mask, pixels=0, operation="expand")
+    assert out[5, 5]
+
+
+def test_morph_mask_returns_bool_array() -> None:
+    mask = np.zeros((10, 10), dtype=bool)
+    assert morph_mask(mask, pixels=2, operation="expand").dtype == bool
+    assert morph_mask(mask, pixels=2, operation="erode").dtype == bool
+
+
+# ---------------------------------------------------------------------------
+# mask_to_rgba / lr_mask_to_rgba — opacity clamping
+# ---------------------------------------------------------------------------
+
+
+def test_mask_to_rgba_opacity_clamped_above_1() -> None:
+    mask = np.array([[True]])
+    rgba = mask_to_rgba(mask, negative=False, opacity=5.0)
+    assert rgba[0, 0, 3] == 255
+
+
+def test_mask_to_rgba_opacity_clamped_below_0() -> None:
+    mask = np.array([[True]])
+    rgba = mask_to_rgba(mask, negative=False, opacity=-1.0)
+    assert rgba[0, 0, 3] == 0
+
+
+def test_lr_mask_to_rgba_opacity_clamped_above_1() -> None:
+    mask = np.array([[1]], dtype=np.uint8)
+    rgba = lr_mask_to_rgba(mask, opacity=99.0)
+    assert rgba[0, 0, 3] == 255
+
+
+def test_lr_mask_to_rgba_opacity_clamped_below_0() -> None:
+    mask = np.array([[1]], dtype=np.uint8)
+    rgba = lr_mask_to_rgba(mask, opacity=-1.0)
+    assert rgba[0, 0, 3] == 0
+
+
+# ---------------------------------------------------------------------------
+# load_lr_mask — resize branch
+# ---------------------------------------------------------------------------
+
+
+def test_load_lr_mask_resizes_to_target_shape(tmp_path) -> None:
+    mask = np.array([[0, 1], [2, 0]], dtype=np.uint8)
+    path = tmp_path / "lr.png"
+    save_lr_mask(mask, path)
+    loaded = load_lr_mask(path, shape=(4, 4))
+    assert loaded.shape == (4, 4)
+    assert loaded.dtype == np.uint8
+    # Corner values must survive NEAREST resize.
+    assert loaded[0, 0] == 0
+    assert loaded[0, 3] == 1
+    assert loaded[3, 0] == 2
+
+
+# ---------------------------------------------------------------------------
+# line_side_polygons — diagonal line and out-of-bounds line
+# ---------------------------------------------------------------------------
+
+
+def test_line_side_polygons_diagonal_areas_sum_to_rect() -> None:
+    w, h = 100.0, 80.0
+    left, right = line_side_polygons((0.0, 40.0), (100.0, 40.0), w, h)
+    # Each half-rect is a triangle or quadrilateral — shoelace area check.
+    def shoelace(poly: np.ndarray) -> float:
+        x, y = poly[:, 0], poly[:, 1]
+        return 0.5 * abs(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1)))
+
+    assert abs(shoelace(left) + shoelace(right) - w * h) < 1e-6
+
+
+def test_line_side_polygons_line_outside_rect_one_side_empty() -> None:
+    # Line entirely to the right of the rectangle.
+    left, right = line_side_polygons((200.0, 0.0), (200.0, 100.0), 100.0, 100.0)
+    # The entire rect is on one side; the other clip is empty.
+    assert len(left) == 0 or len(right) == 0
+
+
+# ---------------------------------------------------------------------------
+# rasterize_lr_line — diagonal line
+# ---------------------------------------------------------------------------
+
+
+def test_rasterize_lr_line_diagonal_produces_valid_tri_values() -> None:
+    mask = rasterize_lr_line((0.0, 0.0), (100.0, 100.0), shape=(100, 100))
+    assert set(np.unique(mask)).issubset({1, 2})
+    # Upper-right corner (row=0, col=99): cross = dx*(0-0)-dy*(99-0) = 100*0 - 100*99 < 0 → left (1).
+    assert mask[0, 99] == 1
+    # Lower-left corner (row=99, col=0): cross = 100*(99-0) - 100*(0-0) = 9900 > 0 → right (2).
+    assert mask[99, 0] == 2
+
+
+# ---------------------------------------------------------------------------
+# flip_lr_mask — both flags simultaneously and zero-value preservation
+# ---------------------------------------------------------------------------
+
+
+def test_flip_lr_mask_both_flags() -> None:
+    m = np.array([[1, 2], [0, 1]], dtype=np.uint8)
+    out = flip_lr_mask(m, horizontal=True, vertical=True)
+    # After fliplr+swap then flipud (or flipud then fliplr+swap — same result):
+    expected = flip_lr_mask(
+        flip_lr_mask(m, horizontal=True, vertical=False),
+        horizontal=False,
+        vertical=True,
+    )
+    np.testing.assert_array_equal(out, expected)
+
+
+def test_flip_lr_mask_zero_values_preserved() -> None:
+    m = np.array([[0, 1, 0]], dtype=np.uint8)
+    out = flip_lr_mask(m, horizontal=True, vertical=False)
+    # Zeros should remain zero after any flip.
+    assert out[0, 0] == 0
+    assert out[0, 2] == 0
