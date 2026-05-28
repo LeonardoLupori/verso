@@ -140,13 +140,12 @@ def load_mask(path: str | Path, shape: tuple[int, int]) -> np.ndarray:
 
 
 def save_mask(mask: np.ndarray, path: str | Path) -> None:
-    """Write a bool HxW mask as a single-channel PNG."""
+    """Write a bool HxW mask as a 1-bit PNG."""
     from PIL import Image
 
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    arr = (np.asarray(mask, dtype=bool).astype(np.uint8)) * 255
-    Image.fromarray(arr, mode="L").save(str(path), format="PNG")
+    Image.fromarray(np.asarray(mask, dtype=bool), mode="1").save(str(path), format="PNG")
 
 
 def mask_to_rgba(
