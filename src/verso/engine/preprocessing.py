@@ -145,7 +145,8 @@ def save_mask(mask: np.ndarray, path: str | Path) -> None:
 
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    Image.fromarray(np.asarray(mask, dtype=bool), mode="1").save(str(path), format="PNG")
+    arr = np.asarray(mask, dtype=bool).view(np.uint8) * 255
+    Image.fromarray(arr, mode="L").convert("1").save(str(path), format="PNG")
 
 
 def mask_to_rgba(
