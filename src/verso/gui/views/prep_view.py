@@ -266,7 +266,13 @@ class PrepView(QWidget):
             return
         self._ensure_mask()
         self._push_undo()
-        self._current_mask = detect_foreground(self._raw_image)
+        visible = [
+            i
+            for i, spec in enumerate(self._channels[: self._raw_image.shape[2]])
+            if getattr(spec, "visible", True) and float(spec.scale) > 0
+        ]
+        img = self._raw_image[:, :, visible] if visible else self._raw_image
+        self._current_mask = detect_foreground(img)
         self._mask_dirty = True
         self._update_mask_overlay()
 
