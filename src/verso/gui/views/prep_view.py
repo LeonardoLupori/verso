@@ -40,6 +40,7 @@ class PrepView(QWidget):
     section_modified = pyqtSignal()
     mask_negative_changed = pyqtSignal(bool)
     mask_visibility_changed = pyqtSignal(bool)
+    brush_size_changed = pyqtSignal(int)
 
     _UNDO_LIMIT = 20
     _DRAW_COLOR = (80, 160, 255)
@@ -111,6 +112,7 @@ class PrepView(QWidget):
         self._canvas.canvas_drag_started.connect(self._on_canvas_drag_started)
         self._canvas.canvas_dragged.connect(self._on_canvas_dragged)
         self._canvas.canvas_drag_ended.connect(self._on_canvas_drag_ended)
+        self._canvas.alt_wheel_scrolled.connect(self._on_alt_wheel)
         canvas_col.addWidget(self._canvas, stretch=1)
         layout.addLayout(canvas_col, stretch=1)
 
@@ -246,6 +248,14 @@ class PrepView(QWidget):
     def set_brush_size(self, size: int) -> None:
         self._brush_radius = max(int(size), 1)
         self._canvas.set_brush_cursor(self._draw_mode == "brush", self._brush_radius)
+
+    def _on_alt_wheel(self, delta: int) -> None:
+        if self._draw_mode != "brush":
+            return
+        step = (delta // 120) * 5
+        new_size = max(5, min(200, self._brush_radius + step))
+        self.set_brush_size(new_size)
+        self.brush_size_changed.emit(new_size)
 
     def set_channels(self, channels: list[ChannelSpec]) -> None:
         self._channels = list(channels)

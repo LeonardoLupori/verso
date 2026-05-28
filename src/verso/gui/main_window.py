@@ -432,6 +432,7 @@ class MainWindow(QMainWindow):
         self._props.mask_negative_changed.connect(self._prep.set_mask_negative)
         self._props.mask_draw_mode_changed.connect(self._prep.set_draw_mode)
         self._props.brush_size_changed.connect(self._prep.set_brush_size)
+        self._prep.brush_size_changed.connect(self._props.set_brush_size)
         self._props.autodetect_requested.connect(self._on_prep_autodetect_requested)
         self._props.clear_mask_requested.connect(self._on_prep_clear_mask_requested)
         self._props.erode_mask_requested.connect(lambda px: self._prep.apply_morph(px, "erode"))

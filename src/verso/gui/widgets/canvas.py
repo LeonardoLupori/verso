@@ -138,6 +138,8 @@ class _OverlayViewBox(pg.ViewBox):
     canvas_drag_started = pyqtSignal(float, float)  # drag begin
     canvas_dragged = pyqtSignal(float, float)  # drag update
     canvas_drag_ended = pyqtSignal(float, float)  # drag finish
+    # Emitted when Alt+scroll is detected (raw Qt delta, ±120 per tick)
+    alt_wheel_scrolled = pyqtSignal(int)
 
     _InteractionMode = Literal["align", "warp", "prep", "view"]
 
@@ -195,6 +197,13 @@ class _OverlayViewBox(pg.ViewBox):
         else:
             super().mouseDragEvent(ev, axis)
 
+    def wheelEvent(self, ev) -> None:
+        if ev.modifiers() & Qt.KeyboardModifier.AltModifier:
+            self.alt_wheel_scrolled.emit(ev.delta())
+            ev.accept()
+        else:
+            super().wheelEvent(ev)
+
 
 # ---------------------------------------------------------------------------
 # Public widget
@@ -213,6 +222,8 @@ class ImageCanvas(QWidget):
     canvas_drag_started = pyqtSignal(float, float)
     canvas_dragged = pyqtSignal(float, float)
     canvas_drag_ended = pyqtSignal(float, float)
+    # Alt+scroll forwarded from the viewbox (raw Qt delta, ±120 per tick)
+    alt_wheel_scrolled = pyqtSignal(int)
 
     _InteractionMode = Literal["align", "warp", "prep", "view"]
 
@@ -243,6 +254,7 @@ class ImageCanvas(QWidget):
         self._vb = _OverlayViewBox()
         self._vb.setBackgroundColor((0, 0, 0))  # black so Lighten(channel, black)=channel
         self._vb.overlay_panned.connect(self.overlay_panned)
+        self._vb.alt_wheel_scrolled.connect(self.alt_wheel_scrolled)
 
         self.plot = self.view.addPlot(viewBox=self._vb)
         self.plot.setAspectLocked(True)

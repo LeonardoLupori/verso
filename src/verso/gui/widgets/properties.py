@@ -451,6 +451,9 @@ class _PrepProperties(QWidget):
         self._brush_value.setText(str(size))
         self.brush_size_changed.emit(size)
 
+    def set_brush_size(self, size: int) -> None:
+        self._brush_slider.setValue(size)
+
     def _refresh_mask_color_btn(self) -> None:
         r, g, b = self._mask_color_rgb
         self._mask_color_btn.setStyleSheet(
@@ -937,3 +940,6 @@ class PropertiesPanel(QWidget):
 
     def set_overlay_mode(self, mode: str) -> None:
         self._align_page.set_overlay_mode(mode)
+
+    def set_brush_size(self, size: int) -> None:
+        self._prep_page.set_brush_size(size)
