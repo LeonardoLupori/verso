@@ -1,5 +1,8 @@
 # VERSO
 
+[![Tests](https://github.com/LeonardoLupori/verso/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/LeonardoLupori/verso/actions/workflows/tests.yml)
+
+
 **V**erso, **E**asy **R**egistration of **S**ections, **O**bviously
 
 VERSO is a desktop application for registering serial histological brain sections to 3D reference atlases. It replaces the QuickNII → VisuAlign → PyNutil pipeline with a single integrated tool.
