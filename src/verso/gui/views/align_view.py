@@ -43,7 +43,8 @@ class AlignView(QWidget):
     def __init__(self, panel: SectionCanvasPanel, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._panel = panel
-        self._reverse_ap = False
+        self._reverse_axis = False
+        self._interpolation_axis = 1
         # Snapshot of section.alignment taken at section-load time; restored
         # by discard() so unsaved navigator edits roll back when the user
         # switches slice or view.
@@ -119,10 +120,15 @@ class AlignView(QWidget):
     # External API used by MainWindow
     # ------------------------------------------------------------------
 
-    def set_reverse_ap(self, reverse: bool) -> None:
-        """Invert AP movement and tilt directions when the series is AP-reversed."""
-        self._reverse_ap = reverse
-        self._navigator.set_reverse_ap(reverse)
+    def set_reverse_axis(self, reverse: bool) -> None:
+        """Invert slicing-axis movement and tilt directions when the series is reversed."""
+        self._reverse_axis = reverse
+        self._navigator.set_reverse_axis(reverse)
+
+    def set_interpolation_axis(self, axis: int) -> None:
+        """Update the QuickNII voxel axis used to compute ``position_mm``."""
+        self._interpolation_axis = int(axis)
+        self._navigator.set_interpolation_axis(axis)
 
     # ------------------------------------------------------------------
     # Panel events
@@ -150,18 +156,18 @@ class AlignView(QWidget):
         if section is None:
             return
         section.alignment.anchoring = new_anchoring
-        self._sync_ap_from_anchoring(new_anchoring)
+        self._sync_position_from_anchoring(new_anchoring)
         self._panel.update_overlay()
         self._set_dirty(True)
         self.anchoring_changed.emit(new_anchoring)
 
-    def _sync_ap_from_anchoring(self, anchoring: list[float]) -> None:
+    def _sync_position_from_anchoring(self, anchoring: list[float]) -> None:
         section = self._panel.section
         atlas = self._panel.atlas
         if section is None or atlas is None:
             return
         center = atlas.cut_center(anchoring)
-        section.alignment.ap_position_mm = atlas.ap_voxel_to_mm(center[atlas.ap_axis])
+        section.alignment.position_mm = atlas.voxel_to_mm(center[self._interpolation_axis])
 
     # ------------------------------------------------------------------
     # Overlay pan (space + drag)
@@ -182,7 +188,7 @@ class AlignView(QWidget):
         new_o = o - (dx / w_bg) * u - (dy / h_bg) * v
         new_anchoring = new_o.tolist() + anchoring[3:]
         section.alignment.anchoring = new_anchoring
-        self._sync_ap_from_anchoring(new_anchoring)
+        self._sync_position_from_anchoring(new_anchoring)
         self._panel.update_overlay()
         self._set_dirty(True)
         self.anchoring_changed.emit(new_anchoring)
@@ -201,7 +207,7 @@ class AlignView(QWidget):
         from verso.engine.registration import scale_anchoring
         new_anchoring = scale_anchoring(anchoring, scale_u, scale_v)
         section.alignment.anchoring = new_anchoring
-        self._sync_ap_from_anchoring(new_anchoring)
+        self._sync_position_from_anchoring(new_anchoring)
         self._panel.update_overlay()
         self._set_dirty(True)
         self.anchoring_changed.emit(new_anchoring)
@@ -235,8 +241,11 @@ class AlignView(QWidget):
             if raw is None:
                 return False
             h, w = raw.shape[:2]
-            section.alignment.anchoring = atlas.default_anchoring(w / h)
-            self._sync_ap_from_anchoring(section.alignment.anchoring)
+            section.alignment.anchoring = atlas.default_anchoring(
+                axis=self._interpolation_axis,
+                aspect_ratio=w / h,
+            )
+            self._sync_position_from_anchoring(section.alignment.anchoring)
         section.alignment.stored_anchoring = list(section.alignment.anchoring)
         section.alignment.status = AlignmentStatus.COMPLETE
         self._baseline_alignment = copy.deepcopy(section.alignment)
@@ -250,7 +259,7 @@ class AlignView(QWidget):
         if section is None:
             return False
         section.alignment.anchoring = [0.0] * 9
-        section.alignment.ap_position_mm = None
+        section.alignment.position_mm = None
         section.alignment.status = AlignmentStatus.NOT_STARTED
         section.alignment.source = None
         section.alignment.stored_anchoring = None

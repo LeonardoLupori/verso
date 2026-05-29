@@ -50,7 +50,7 @@ class Alignment:
     """
 
     anchoring: list[float] = field(default_factory=lambda: [0.0] * 9)
-    ap_position_mm: float | None = None
+    position_mm: float | None = None
     status: AlignmentStatus = AlignmentStatus.NOT_STARTED
     source: str | None = None
     stored_anchoring: list[float] | None = None
@@ -70,7 +70,7 @@ class Alignment:
     def to_dict(self) -> dict[str, Any]:
         data = {
             "anchoring": self.anchoring,
-            "ap_position_mm": self.ap_position_mm,
+            "position_mm": self.position_mm,
             "status": self.status.value,
         }
         if self.source is not None:
@@ -89,7 +89,7 @@ class Alignment:
     def from_dict(cls, d: dict[str, Any]) -> Alignment:
         return cls(
             anchoring=d.get("anchoring", [0.0] * 9),
-            ap_position_mm=d.get("ap_position_mm"),
+            position_mm=d.get("position_mm", d.get("ap_position_mm")),
             status=AlignmentStatus(d.get("status", "not_started")),
             source=d.get("source"),
             stored_anchoring=d.get("stored_anchoring"),

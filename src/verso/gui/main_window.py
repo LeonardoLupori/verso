@@ -129,7 +129,7 @@ class MainWindow(QMainWindow):
 
         self._state = AppState(self)
         self._current_mode = "overview"
-        self._reverse_ap_proposal = False
+        self._reverse_axis_proposal = False
         self._deepslice_thread: QThread | None = None
         self._deepslice_worker: _DeepSliceWorker | None = None
         self._deepslice_progress: QProgressDialog | None = None
@@ -817,8 +817,10 @@ class MainWindow(QMainWindow):
 
         self._set_project_views_enabled(True)
 
-        self._reverse_ap_proposal = False
-        self._align.set_reverse_ap(False)
+        self._reverse_axis_proposal = False
+        self._align.set_reverse_axis(False)
+        self._align.set_interpolation_axis(project.interpolation_axis_index)
+        self._props.align.ap_plot.set_axis_name(project.interpolation_axis)
 
         # QuickNII interpolation needs atlas dimensions for the no-anchor and
         # one-anchor endpoint controls. If the atlas is still loading,
@@ -829,9 +831,10 @@ class MainWindow(QMainWindow):
             interpolate_anchorings(
                 project.sections,
                 atlas_shape=self._state.atlas.shape,
-                reverse_ap=self._reverse_ap_proposal,
+                interpolation_axis=project.interpolation_axis_index,
+                reverse_axis=self._reverse_axis_proposal,
             )
-        self._sync_ap_mm(project.sections)
+        self._sync_position_mm(project.sections)
 
         self._project_label.setText(project.name)
 
@@ -888,7 +891,7 @@ class MainWindow(QMainWindow):
             project = self._state.project
             if project is not None:
                 self._initialize_quicknii_anchorings(project.sections)
-                self._sync_ap_mm(project.sections)
+                self._sync_position_mm(project.sections)
                 self._panel.update_overlay()
                 self._update_ap_plot()
                 self._update_reverse_order_enabled()
@@ -1140,10 +1143,10 @@ class MainWindow(QMainWindow):
     def _on_anchoring_changed(self, anchoring: list[float]) -> None:
         atlas = self._state.atlas
         if atlas is not None:
-            ap_mm = self._anchoring_ap_mm(anchoring)
+            position_mm = self._anchoring_position_mm(anchoring)
             section = self._state.current_section
             if section is not None:
-                section.alignment.ap_position_mm = ap_mm
+                section.alignment.position_mm = position_mm
                 if section.alignment.status != AlignmentStatus.COMPLETE:
                     section.alignment.source = "manual"
         self._overview.refresh_row(self._state.section_index)
@@ -1156,7 +1159,7 @@ class MainWindow(QMainWindow):
         if project is None:
             return
         self._initialize_quicknii_anchorings(project.sections)
-        self._sync_ap_mm(project.sections)
+        self._sync_position_mm(project.sections)
         self._panel.update_overlay()
         for i in range(len(project.sections)):
             self._overview.refresh_row(i)
@@ -1165,7 +1168,7 @@ class MainWindow(QMainWindow):
         self._update_deepslice_enabled()
 
     def _reverse_section_order(self) -> None:
-        """Reverse the startup AP proposal before any alignment is stored."""
+        """Reverse the startup proposal direction before any alignment is stored."""
         project = self._state.project
         if project is None or len(project.sections) < 2:
             return
@@ -1182,11 +1185,11 @@ class MainWindow(QMainWindow):
             )
             return
 
-        self._reverse_ap_proposal = not self._reverse_ap_proposal
-        self._align.set_reverse_ap(self._reverse_ap_proposal)
+        self._reverse_axis_proposal = not self._reverse_axis_proposal
+        self._align.set_reverse_axis(self._reverse_axis_proposal)
         for section in project.sections:
             section.alignment.anchoring = [0.0] * 9
-            section.alignment.ap_position_mm = None
+            section.alignment.position_mm = None
             section.alignment.status = AlignmentStatus.NOT_STARTED
             section.alignment.source = None
             section.alignment.stored_anchoring = None
@@ -1197,7 +1200,7 @@ class MainWindow(QMainWindow):
             section.warp.status = AlignmentStatus.NOT_STARTED
 
         self._initialize_quicknii_anchorings(project.sections)
-        self._sync_ap_mm(project.sections)
+        self._sync_position_mm(project.sections)
 
         self._overview.refresh()
         self._on_section_changed(self._state.section_index)
@@ -1224,7 +1227,15 @@ class MainWindow(QMainWindow):
         project = self._state.project
         has_sections = project is not None and bool(project.sections)
         atlas_ready = has_sections and self._state.atlas is not None
-        self._act_deepslice.setEnabled(atlas_ready and not running)
+        # DeepSlice is trained on coronal sections only.
+        is_coronal = project is not None and project.interpolation_axis == "AP"
+        self._act_deepslice.setEnabled(atlas_ready and is_coronal and not running)
+        if project is not None and not is_coronal:
+            self._act_deepslice.setToolTip(
+                "DeepSlice supports coronal projects only."
+            )
+        else:
+            self._act_deepslice.setToolTip("")
         self._act_deepslice.setText(
             "DeepSlice running…" if running else "Run &DeepSlice"
         )
@@ -1235,8 +1246,15 @@ class MainWindow(QMainWindow):
         self._act_clear_all_lr_masks.setEnabled(has_sections and not running)
         self._act_clear_all_warps.setEnabled(has_sections and not running)
 
-    def _sync_ap_mm(self, sections: list) -> None:
-        """Populate ap_position_mm for every section that has a valid anchoring."""
+    def _interpolation_axis(self) -> int:
+        """Return the QuickNII voxel axis index for the current project."""
+        project = self._state.project
+        if project is None:
+            return 1
+        return project.interpolation_axis_index
+
+    def _sync_position_mm(self, sections: list) -> None:
+        """Populate position_mm for every section that has a valid anchoring."""
         atlas = self._state.atlas
         if atlas is None:
             return
@@ -1244,16 +1262,16 @@ class MainWindow(QMainWindow):
             if section.alignment.anchoring and any(
                 v != 0.0 for v in section.alignment.anchoring
             ):
-                section.alignment.ap_position_mm = self._anchoring_ap_mm(
+                section.alignment.position_mm = self._anchoring_position_mm(
                     section.alignment.anchoring
                 )
 
-    def _anchoring_ap_mm(self, anchoring: list[float]) -> float:
+    def _anchoring_position_mm(self, anchoring: list[float]) -> float:
         atlas = self._state.atlas
         if atlas is None:
             return 0.0
         center = atlas.cut_center(anchoring)
-        return atlas.ap_voxel_to_mm(center[atlas.ap_axis])
+        return atlas.voxel_to_mm(center[self._interpolation_axis()])
 
     def _initialize_quicknii_anchorings(self, sections: list) -> None:
         """Initialize empty section planes with QuickNII-compatible stretch."""
@@ -1263,7 +1281,7 @@ class MainWindow(QMainWindow):
 
         from verso.engine.io.image_io import registration_dimensions
         from verso.engine.model.alignment import AlignmentStatus
-        from verso.engine.registration import quicknii_coronal_series_anchorings
+        from verso.engine.registration import quicknii_series_anchorings
 
         usable = []
         for section in sections:
@@ -1287,12 +1305,13 @@ class MainWindow(QMainWindow):
             display_anchorings.append(
                 _display_space_anchoring(section) if is_complete else None
             )
-        propagated = quicknii_coronal_series_anchorings(
+        propagated = quicknii_series_anchorings(
             image_sizes=[(w, h) for _, w, h in usable],
             serial_numbers=[section.serial_number for section, _, _ in usable],
             atlas_shape=atlas.shape,
+            interpolation_axis=self._interpolation_axis(),
             stored_anchorings=display_anchorings,
-            reverse_ap=self._reverse_ap_proposal,
+            reverse_axis=self._reverse_axis_proposal,
             center_proposals=True,
         )
 
@@ -1335,12 +1354,12 @@ class MainWindow(QMainWindow):
         from verso.gui.dialogs.bad_sections import BadSectionsDialog
 
         dlg = BadSectionsDialog(
-            project.sections, reverse_order=self._reverse_ap_proposal, parent=self
+            project.sections, reverse_order=self._reverse_axis_proposal, parent=self
         )
         if dlg.exec() != BadSectionsDialog.DialogCode.Accepted:
             return
         bad_ids = dlg.bad_section_ids()
-        self._reverse_ap_proposal = dlg.reverse_section_order()
+        self._reverse_axis_proposal = dlg.reverse_section_order()
 
         self._update_deepslice_enabled(running=True)
         self.statusBar().showMessage("Running DeepSlice suggestions...")
@@ -1349,7 +1368,7 @@ class MainWindow(QMainWindow):
         thread = QThread(self)
         worker = _DeepSliceWorker(
             project,
-            reverse_section_order=self._reverse_ap_proposal,
+            reverse_section_order=self._reverse_axis_proposal,
             bad_section_ids=bad_ids,
         )
         worker.moveToThread(thread)
@@ -1401,7 +1420,7 @@ class MainWindow(QMainWindow):
             atlas.shape if atlas is not None else None,
         )
         if atlas is not None:
-            self._sync_ap_mm(project.sections)
+            self._sync_position_mm(project.sections)
         self._overview.refresh()
         self._panel.refresh_display()
         self._refresh_properties()
@@ -1428,9 +1447,10 @@ class MainWindow(QMainWindow):
         changed = reset_in_progress_to_default_proposals(
             project.sections,
             atlas.shape,
-            reverse_ap=self._reverse_ap_proposal,
+            interpolation_axis=self._interpolation_axis(),
+            reverse_axis=self._reverse_axis_proposal,
         )
-        self._sync_ap_mm(project.sections)
+        self._sync_position_mm(project.sections)
         self._overview.refresh()
         self._on_section_changed(self._state.section_index)
         self._update_ap_plot()
@@ -1446,7 +1466,7 @@ class MainWindow(QMainWindow):
             self,
             "Clear all alignments",
             "Clear every stored alignment, warp control point, and editable proposal, "
-            "then restore VERSO's default AP proposal for all sections?",
+            "then restore VERSO's default proposal for all sections?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -1460,10 +1480,11 @@ class MainWindow(QMainWindow):
         changed = reset_in_progress_to_default_proposals(
             project.sections,
             atlas.shape,
-            reverse_ap=self._reverse_ap_proposal,
+            interpolation_axis=self._interpolation_axis(),
+            reverse_axis=self._reverse_axis_proposal,
             include_complete=True,
         )
-        self._sync_ap_mm(project.sections)
+        self._sync_position_mm(project.sections)
         self._after_batch_clear()
         self.statusBar().showMessage(
             f"Cleared all alignments and restored {changed} default proposals",

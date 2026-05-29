@@ -229,28 +229,55 @@ class AtlasVolume:
         alpha = np.where(~in_bounds, 0, 255).astype(np.uint8)
         return np.dstack([rgb, alpha])
 
-    def default_anchoring(self, aspect_ratio: float = 1.0) -> list[float]:
-        """Centered coronal anchoring for this atlas."""
+    def default_anchoring(
+        self,
+        axis: int = 1,
+        aspect_ratio: float = 1.0,
+    ) -> list[float]:
+        """Return a centered anchoring perpendicular to ``axis`` for this atlas.
+
+        The plane is constructed in the two in-plane axes (derived from
+        :func:`verso.engine.registration._in_plane_axes`) with ``u`` spanning
+        the full in-plane width and ``v`` sized to ``aspect_ratio``.
+        """
+        from verso.engine.registration import _in_plane_axes
+
+        u_axis, v_axis = _in_plane_axes(axis)
         ap_dim, dv_dim, lr_dim = self._annotation.shape
-        lr_span = float(lr_dim)
-        dv_span = lr_span / aspect_ratio if aspect_ratio > 0 else float(dv_dim)
-        dv_span = min(dv_span, float(dv_dim))
-        oz = (dv_dim - dv_span) / 2.0
-        return [0.0, ap_dim / 2.0, oz, lr_span, 0.0, 0.0, 0.0, 0.0, dv_span]
+        # BrainGlobe shape (AP, DV, LR) indexed by QuickNII axis (ML=0, AP=1, DV=2).
+        qn_dims = (lr_dim, ap_dim, dv_dim)
+        u_dim = float(qn_dims[u_axis])
+        v_dim = float(qn_dims[v_axis])
 
-    @property
-    def ap_axis(self) -> int:
-        return 1
+        u_span = u_dim
+        v_span = u_span / aspect_ratio if aspect_ratio > 0 else v_dim
+        v_span = min(v_span, v_dim)
 
-    def ap_voxel_to_mm(self, voxel: float) -> float:
+        origin = [0.0, 0.0, 0.0]
+        origin[axis] = float(qn_dims[axis]) / 2.0
+        origin[u_axis] = 0.0
+        origin[v_axis] = (v_dim - v_span) / 2.0
+
+        u_vec = [0.0, 0.0, 0.0]
+        u_vec[u_axis] = u_span
+        v_vec = [0.0, 0.0, 0.0]
+        v_vec[v_axis] = v_span
+
+        return [*origin, *u_vec, *v_vec]
+
+    def voxel_to_mm(self, voxel: float) -> float:
         return voxel * self.resolution_um / 1000.0
 
-    def ap_mm_to_voxel(self, mm: float) -> float:
+    def mm_to_voxel(self, mm: float) -> float:
         return mm * 1000.0 / self.resolution_um
 
-    @property
-    def ap_extent_mm(self) -> float:
-        return self._annotation.shape[0] * self.resolution_um / 1000.0
+    def extent_mm_along(self, axis: int) -> float:
+        """Return the atlas extent in mm along the given QuickNII voxel axis."""
+        ap_dim, dv_dim, lr_dim = self._annotation.shape
+        qn_dims = (lr_dim, ap_dim, dv_dim)
+        if axis not in (0, 1, 2):
+            raise ValueError(f"axis must be 0, 1, or 2, got {axis}")
+        return qn_dims[axis] * self.resolution_um / 1000.0
 
     # ------------------------------------------------------------------
     # Orthogonal navigator views

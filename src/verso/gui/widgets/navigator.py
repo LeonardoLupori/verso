@@ -176,7 +176,11 @@ class _SliceView(QWidget):
         self._dims = dims
         self._anchoring: list[float] | None = None
         self._view_h = _view_height(axis, dims)
-        self._reverse_ap: bool = False
+        self._reverse_axis: bool = False
+        # The project's slicing axis (QuickNII voxel index 0/1/2).  Controls
+        # which translate/rotate steps get sign-flipped when the series is
+        # reversed.
+        self._interpolation_axis: int = 1
 
         # drag state
         self._drag_mode: str | None = None
@@ -323,8 +327,11 @@ class _SliceView(QWidget):
         ):
             btn.setEnabled(enabled)
 
-    def set_reverse_ap(self, reverse: bool) -> None:
-        self._reverse_ap = reverse
+    def set_reverse_axis(self, reverse: bool) -> None:
+        self._reverse_axis = reverse
+
+    def set_interpolation_axis(self, axis: int) -> None:
+        self._interpolation_axis = int(axis)
 
     def update_dims(self, dims: tuple[int, int, int]) -> None:
         """Update atlas dimensions and resize the widget to preserve proportions."""
@@ -362,7 +369,7 @@ class _SliceView(QWidget):
         """Translate cut-plane origin along an atlas axis by *delta* voxels."""
         if self._anchoring is None:
             return
-        if atlas_axis == 1 and self._reverse_ap:
+        if atlas_axis == self._interpolation_axis and self._reverse_axis:
             delta = -delta
         new_anchoring = list(self._anchoring)
         new_anchoring[atlas_axis] += delta
@@ -373,7 +380,7 @@ class _SliceView(QWidget):
         if self._anchoring is None:
             return
         deg = deg_signed * self._ANGLE_SIGNS[self._axis]
-        if self._reverse_ap and self._axis != 1:
+        if self._reverse_axis and self._axis != self._interpolation_axis:
             deg = -deg
         o = np.array(self._anchoring[:3])
         u = np.array(self._anchoring[3:6])
@@ -512,9 +519,10 @@ class _SliceView(QWidget):
         start_angle = math.atan2(sy - ccy, sx - ccx)
         cur_angle = math.atan2(cy - ccy, cx - ccx)
         deg = math.degrees(cur_angle - start_angle) * self._ANGLE_SIGNS[self._axis]
-        # Sagittal (axis=0) and horizontal (axis=2) rotate around axes that tilt
-        # the plane in the AP direction — invert when the series is AP-reversed.
-        if self._reverse_ap and self._axis != 1:
+        # The two views that aren't perpendicular to the slicing axis rotate
+        # around axes that tilt the plane along the slicing direction —
+        # invert when the series is reversed.
+        if self._reverse_axis and self._axis != self._interpolation_axis:
             deg = -deg
 
         o = np.array(self._drag_start_anchoring[:3])
@@ -674,9 +682,13 @@ class NavigatorPanel(QWidget):
         for btn in self._stretch_btns:
             btn.setEnabled(enabled)
 
-    def set_reverse_ap(self, reverse: bool) -> None:
+    def set_reverse_axis(self, reverse: bool) -> None:
         for view in (self._sag, self._cor, self._hor):
-            view.set_reverse_ap(reverse)
+            view.set_reverse_axis(reverse)
+
+    def set_interpolation_axis(self, axis: int) -> None:
+        for view in (self._sag, self._cor, self._hor):
+            view.set_interpolation_axis(axis)
 
     def set_atlas(self, atlas: AtlasVolume | None) -> None:
         self._atlas = atlas

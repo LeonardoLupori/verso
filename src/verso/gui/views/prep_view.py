@@ -620,7 +620,7 @@ class PrepView(QWidget):
         if self._section is None:
             return
         self._section.alignment.anchoring = [0.0] * 9
-        self._section.alignment.ap_position_mm = None
+        self._section.alignment.position_mm = None
         self._section.alignment.status = AlignmentStatus.NOT_STARTED
         self._section.alignment.source = None
         self._section.alignment.stored_anchoring = None

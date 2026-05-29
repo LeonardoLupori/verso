@@ -29,9 +29,10 @@ Top level:
 
 ```json
 {
-  "version": "1.0",
+  "version": "1.1",
   "name": "My Experiment",
   "atlas": { "name": "allen_mouse_25um", "source": "brainglobe" },
+  "interpolation_axis": "AP",
   "channels": [ ... ],
   "cp_size": 10,
   "cp_shape": "Cross",
@@ -42,9 +43,10 @@ Top level:
 
 | Field | Type | Notes |
 |---|---|---|
-| `version` | str | Schema version. |
+| `version` | str | Schema version. Current `"1.1"`; older `"1.0"` files load with default `interpolation_axis="AP"` and are upgraded on next save. |
 | `name` | str | Project display name. |
 | `atlas` | `AtlasRef` | `{name, source}`. Source defaults to `"brainglobe"`. |
+| `interpolation_axis` | str | Brain axis the cutting series runs along: `"AP"` (coronal, default), `"ML"` (sagittal), or `"DV"` (horizontal). Set at project creation; drives the QuickNII voxel axis used by `quicknii_series_anchorings`. See "Interpolation axis" below. |
 | `channels` | `list[ChannelSpec]` | Project-wide channel display settings (shared across all sections). |
 | `cp_size` / `cp_shape` / `cp_color` | int / str / hex | Warp control-point drawing style, project-wide. |
 | `sections` | `list[Section]` | Sections in the cutting series. |
@@ -105,7 +107,7 @@ Top level:
 ```json
 {
   "anchoring": [ox, oy, oz, ux, uy, uz, vx, vy, vz],
-  "ap_position_mm": -1.2,
+  "position_mm": -1.2,
   "status": "complete",
   "source": "manual",
   "stored_anchoring": [...],
@@ -118,7 +120,7 @@ Top level:
 | Field | Notes |
 |---|---|
 | `anchoring` | Current 9-float plane (see "Anchoring format" below). Mutated live by the navigator; only `stored_anchoring` is the canonical "saved" plane. |
-| `ap_position_mm` | Derived from `anchoring` via the atlas. Refreshed on every navigator move. |
+| `position_mm` | Section position in mm along the project's `interpolation_axis`. Derived from `anchoring` via the atlas; refreshed on every navigator move. Legacy `ap_position_mm` keys are read on load and rewritten as `position_mm` on next save. |
 | `status` | `not_started`, `in_progress`, or `complete`. `complete` ⇔ user clicked Save in Align. |
 | `source` | Origin of the current plane: `quicknii_default`, `deepslice`, `manual`, or `null`. |
 | `stored_anchoring` | The plane the user explicitly saved. Set by `AlignView.save()`. |
@@ -243,26 +245,66 @@ number column in the overview.
   underscore, falling back to the first integer anywhere, falling back
   to the import index.
 
+## Interpolation axis
+
+The project-level `interpolation_axis` field declares which atlas axis
+the cutting series runs along. It is one of:
+
+| Value | Slicing orientation (UI label) | QuickNII voxel axis |
+|---|---|---|
+| `"AP"` (default) | Coronal | 1 |
+| `"ML"` | Sagittal | 0 |
+| `"DV"` | Horizontal | 2 |
+
+The user picks the orientation at project creation (the New Project
+dialog shows the friendly slicing-orientation labels; the JSON stores
+the axis name). Currently read-only after creation. Defaults to
+`"AP"` for back-compat with v1.0 project files.
+
+`Project.interpolation_axis_index` returns the matching integer for
+engine math. Mappings live in `engine/model/project.py` as
+`AXIS_NAME_TO_INDEX` and `SLICING_ORIENTATION_TO_AXIS`.
+
+DeepSlice is coronal-only and is disabled in the UI when
+`interpolation_axis != "AP"`.
+
 ## Alignment interpolation
 
 When some sections are aligned and others are not, VERSO fills the
 unaligned ones with linearly-interpolated proposals so the user starts
 each section near the right pose. Implementation:
-`engine/registration.py` (`quicknii_coronal_series_anchorings`,
+`engine/registration.py` (`quicknii_series_anchorings`,
 `interpolate_anchorings`); matches QuickNII's `MgmtPanel.dointerpolate`.
 
 The 9-float anchoring is unpacked into 11 components (midpoint xyz,
 unit u-vector xyz, unit v-vector xyz, u-stretch, v-stretch) for
 component-wise interpolation between the nearest stored neighbours
-sorted by `serial_number`. After interpolation, in-plane rotation is
-stripped and the two non-AP axes are reset to the atlas midpoint —
-those vary erratically and are quicker to fix by hand than to clean up
-from a bad interpolation.
+sorted by `serial_number`. After interpolation:
 
-The Batch → Align → *Reverse proposal* action flips the AP direction
-of the proposal series (used when the user imported their sections
-back-to-front); it is only available before any alignment has been
-saved.
+| Component | Interpolated? |
+|---|---|
+| Position along the slicing axis (`interpolation_axis`) | ✅ yes |
+| Plane tilt (slicing-axis component of each unit vector) | ✅ yes |
+| Stretch / scale | ✅ yes |
+| In-plane rotation (rotation around the slicing axis) | ❌ stripped after interpolation |
+| Position on the two in-plane axes | ❌ reset to atlas midpoint |
+
+The two non-slicing axes vary erratically and are quicker to fix by
+hand than to clean up from a bad interpolation.
+
+The Batch → Align → *Reverse proposal* action flips the direction of
+the proposal series along the slicing axis (used when the user
+imported their sections back-to-front); it is only available before
+any alignment has been saved.
+
+### Future spec (not yet implemented)
+
+The original specification also called for split-slice handling
+(combining sections sharing a `serial_number` by median during
+interpolation), filename-based variance-driven serial-number seeding,
+and physical-distance-proportional lerp using raw `serial_number`
+differences. These remain on the roadmap but are not part of the
+current implementation.
 
 ## Persistence rules
 

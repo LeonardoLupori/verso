@@ -42,6 +42,7 @@ from verso.engine.io.image_io import (
 from verso.engine.model.alignment import Alignment, AlignmentStatus, WarpState
 from verso.engine.model.project import (
     DEFAULT_PROJECT_FILENAME,
+    SLICING_ORIENTATION_TO_AXIS,
     AtlasRef,
     ChannelSpec,
     Project,
@@ -142,6 +143,15 @@ class NewProjectDialog(QDialog):
         self._atlas_combo.setEditable(True)
         form.addRow("Atlas:", self._atlas_combo)
 
+        # Slicing orientation determines which atlas axis the series runs
+        # along and is the axis VERSO interpolates anchorings across.
+        self._orientation_combo = QComboBox()
+        self._orientation_combo.addItem("Coronal", "coronal")
+        self._orientation_combo.addItem("Sagittal", "sagittal")
+        self._orientation_combo.addItem("Horizontal", "horizontal")
+        self._orientation_combo.setCurrentIndex(0)
+        form.addRow("Slicing orientation:", self._orientation_combo)
+
         layout.addWidget(info_box)
 
         # ── Section images ────────────────────────────────────────────
@@ -239,6 +249,8 @@ class NewProjectDialog(QDialog):
         name = self._name_edit.text().strip()
         project_file = self._project_file_edit.text().strip()
         atlas = self._atlas_combo.currentText().strip()
+        orientation = self._orientation_combo.currentData() or "coronal"
+        interpolation_axis = SLICING_ORIENTATION_TO_AXIS[orientation]
 
         if not name:
             QMessageBox.warning(self, "Missing field", "Please enter a project name.")
@@ -295,6 +307,7 @@ class NewProjectDialog(QDialog):
             atlas=AtlasRef(name=atlas),
             sections=sections,
             channels=project_channels,
+            interpolation_axis=interpolation_axis,
         )
         self._project_path = project_path
         self._project.save(self._project_path)

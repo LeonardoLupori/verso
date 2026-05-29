@@ -9,6 +9,24 @@ from verso.engine.model.alignment import Alignment, WarpState
 
 DEFAULT_PROJECT_FILENAME = "project-verso.json"
 
+# Mapping between the stored axis-name field and the QuickNII voxel axis index.
+# QuickNII voxel space ordering is (LR=0, AP=1, DV=2); "ML" is the storage name
+# for the mediolateral / LR axis.
+AXIS_NAME_TO_INDEX: dict[str, int] = {"AP": 1, "ML": 0, "DV": 2}
+AXIS_INDEX_TO_NAME: dict[int, str] = {v: k for k, v in AXIS_NAME_TO_INDEX.items()}
+
+# Slicing orientation used in the New Project dialog. Each orientation declares
+# which atlas axis the cutting series runs along (= which axis interpolation
+# should target).
+SLICING_ORIENTATION_TO_AXIS: dict[str, str] = {
+    "coronal": "AP",
+    "sagittal": "ML",
+    "horizontal": "DV",
+}
+AXIS_TO_SLICING_ORIENTATION: dict[str, str] = {
+    v: k for k, v in SLICING_ORIENTATION_TO_AXIS.items()
+}
+
 
 @dataclass
 class AtlasRef:
@@ -158,13 +176,20 @@ class Project:
     cp_size: int = 10
     cp_shape: str = "Cross"
     cp_color: str = "#fff500"
-    version: str = "1.0"
+    interpolation_axis: str = "AP"
+    version: str = "1.1"
+
+    @property
+    def interpolation_axis_index(self) -> int:
+        """QuickNII voxel axis index (0=ML, 1=AP, 2=DV) for ``interpolation_axis``."""
+        return AXIS_NAME_TO_INDEX[self.interpolation_axis]
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "version": self.version,
             "name": self.name,
             "atlas": self.atlas.to_dict(),
+            "interpolation_axis": self.interpolation_axis,
             "channels": [c.to_dict() for c in self.channels],
             "cp_size": self.cp_size,
             "cp_shape": self.cp_shape,
@@ -182,6 +207,8 @@ class Project:
         cp_color = (
             raw_color if raw_color.startswith("#") else _LEGACY_CP_COLORS.get(raw_color, "#fff500")
         )
+        raw_axis = str(d.get("interpolation_axis", "AP")).upper()
+        interpolation_axis = raw_axis if raw_axis in AXIS_NAME_TO_INDEX else "AP"
         return cls(
             name=d["name"],
             atlas=AtlasRef.from_dict(d["atlas"]),
@@ -190,7 +217,8 @@ class Project:
             cp_size=int(d.get("cp_size", 10)),
             cp_shape=str(d.get("cp_shape", "Cross")),
             cp_color=cp_color,
-            version=d.get("version", "1.0"),
+            interpolation_axis=interpolation_axis,
+            version="1.1",
         )
 
     @classmethod

@@ -29,7 +29,7 @@ def test_alignment_defaults():
 def test_alignment_round_trip():
     a = Alignment(
         anchoring=[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0],
-        ap_position_mm=-1.5,
+        position_mm=-1.5,
         status=AlignmentStatus.COMPLETE,
         source="deepslice",
         stored_anchoring=[9.0, 8.0, 7.0, 6.0, 5.0, 4.0, 3.0, 2.0, 1.0],
@@ -46,11 +46,19 @@ def test_alignment_loads_legacy_dict_without_metadata():
         "ap_position_mm": 2.0,
         "status": "in_progress",
     })
+    assert a.position_mm == 2.0
     assert a.source is None
     assert a.stored_anchoring is None
     assert a.proposal_anchoring is None
     assert a.proposal_confidence is None
     assert a.proposal_run_id is None
+
+
+def test_alignment_writes_position_mm_not_ap_position_mm():
+    a = Alignment(position_mm=-1.5, status=AlignmentStatus.IN_PROGRESS)
+    data = a.to_dict()
+    assert "position_mm" in data
+    assert "ap_position_mm" not in data
 
 
 def test_alignment_loads_legacy_complete_as_stored():
@@ -200,6 +208,41 @@ def test_project_json_is_valid(tmp_path: Path):
     p.save(json_path)
 
     data = json.loads(json_path.read_text())
-    assert data["version"] == "1.0"
+    assert data["version"] == "1.1"
+    assert data["interpolation_axis"] == "AP"
     assert len(data["sections"]) == 1
     assert data["sections"][0]["id"] == "s001"
+
+
+def test_project_default_interpolation_axis_is_ap():
+    p = _make_project()
+    assert p.interpolation_axis == "AP"
+    assert p.interpolation_axis_index == 1
+
+
+def test_project_round_trips_non_coronal_axis():
+    p = _make_project()
+    p.interpolation_axis = "ML"
+    loaded = Project.from_dict(p.to_dict())
+    assert loaded.interpolation_axis == "ML"
+    assert loaded.interpolation_axis_index == 0
+
+
+def test_project_legacy_v1_0_dict_loads_with_default_axis_and_upgrades_version():
+    p = _make_project()
+    legacy = p.to_dict()
+    legacy.pop("interpolation_axis")
+    legacy["version"] = "1.0"
+
+    loaded = Project.from_dict(legacy)
+    assert loaded.interpolation_axis == "AP"
+    assert loaded.version == "1.1"
+
+
+def test_project_invalid_axis_falls_back_to_ap():
+    p = _make_project()
+    legacy = p.to_dict()
+    legacy["interpolation_axis"] = "nonsense"
+
+    loaded = Project.from_dict(legacy)
+    assert loaded.interpolation_axis == "AP"

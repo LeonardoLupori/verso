@@ -1,4 +1,4 @@
-"""AP position strip chart (Align view)."""
+"""Position-along-slicing-axis strip chart (Align view)."""
 
 from __future__ import annotations
 
@@ -12,6 +12,8 @@ class APPlotBox(QGroupBox):
         layout = QVBoxLayout(self)
         layout.setSpacing(4)
 
+        self._axis_name = "AP"
+
         self._plot = pg.PlotWidget(background="#1a1a1a")
         self._plot.setFixedHeight(200)
         self._plot.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -19,14 +21,20 @@ class APPlotBox(QGroupBox):
         pi.hideAxis("top")
         pi.hideAxis("right")
         pi.getAxis("bottom").setLabel("Section", color="#aaa")
-        pi.getAxis("left").setLabel("AP (mm)", color="#aaa")
+        pi.getAxis("left").setLabel(f"{self._axis_name} (mm)", color="#aaa")
         pi.getAxis("bottom").setTextPen(pg.mkPen("#aaa"))
         pi.getAxis("left").setTextPen(pg.mkPen("#aaa"))
         pi.setMenuEnabled(False)
         layout.addWidget(self._plot)
 
+    def set_axis_name(self, name: str) -> None:
+        """Update axis label to match the project's slicing axis (AP / ML / DV)."""
+        self._axis_name = name
+        self.setTitle(f"{name} position")
+        self._plot.getPlotItem().getAxis("left").setLabel(f"{name} (mm)", color="#aaa")
+
     def update_plot(self, sections: list, current_index: int) -> None:
-        """Redraw the AP position strip chart."""
+        """Redraw the position strip chart."""
         from verso.engine.model.alignment import AlignmentStatus
 
         pi = self._plot.getPlotItem()
@@ -40,19 +48,19 @@ class APPlotBox(QGroupBox):
         x_none, y_none = [], []
 
         for i, section in enumerate(sections):
-            ap = section.alignment.ap_position_mm
-            if ap is None or all(v == 0.0 for v in (section.alignment.anchoring or [])):
+            pos = section.alignment.position_mm
+            if pos is None or all(v == 0.0 for v in (section.alignment.anchoring or [])):
                 continue
             s = section.alignment.status
             if s == AlignmentStatus.COMPLETE:
                 x_complete.append(i)
-                y_complete.append(ap)
+                y_complete.append(pos)
             elif s == AlignmentStatus.IN_PROGRESS:
                 x_progress.append(i)
-                y_progress.append(ap)
+                y_progress.append(pos)
             else:
                 x_none.append(i)
-                y_none.append(ap)
+                y_none.append(pos)
 
         def _add_scatter(xs, ys, color, size=6) -> None:
             if not xs:
@@ -74,12 +82,12 @@ class APPlotBox(QGroupBox):
 
         if 0 <= current_index < len(sections):
             section = sections[current_index]
-            ap = section.alignment.ap_position_mm
-            if ap is not None and any(v != 0.0 for v in (section.alignment.anchoring or [])):
+            pos = section.alignment.position_mm
+            if pos is not None and any(v != 0.0 for v in (section.alignment.anchoring or [])):
                 pi.addItem(
                     pg.ScatterPlotItem(
                         x=[current_index],
-                        y=[ap],
+                        y=[pos],
                         symbol="o",
                         size=11,
                         brush=pg.mkBrush(255, 255, 255, 230),

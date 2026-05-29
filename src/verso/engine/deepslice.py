@@ -252,7 +252,7 @@ def _interpolate_bad_sections(
 ) -> int:
     """Fill bad-section anchorings by interpolating from the good DeepSlice ones."""
     from verso.engine.io.image_io import registration_dimensions
-    from verso.engine.registration import quicknii_coronal_series_anchorings
+    from verso.engine.registration import quicknii_series_anchorings
 
     usable: list[tuple[Section, int, int]] = []
     for section in project.sections:
@@ -273,10 +273,12 @@ def _interpolate_bad_sections(
     if not any(a is not None for a in stored):
         return 0
 
-    propagated = quicknii_coronal_series_anchorings(
+    # DeepSlice is coronal-only, so this interpolation always runs along AP.
+    propagated = quicknii_series_anchorings(
         image_sizes=[(w, h) for _, w, h in usable],
         serial_numbers=[s.serial_number for s, _, _ in usable],
         atlas_shape=atlas_shape,
+        interpolation_axis=1,
         stored_anchorings=stored,
         center_proposals=False,
     )
@@ -301,14 +303,15 @@ def _interpolate_bad_sections(
 def reset_in_progress_to_default_proposals(
     sections: list[Section],
     atlas_shape: tuple[int, int, int],
-    reverse_ap: bool = False,
+    interpolation_axis: int = 1,
+    reverse_axis: bool = False,
     include_complete: bool = False,
 ) -> int:
     """Clear editable suggestions and regenerate QuickNII-style default proposals."""
     from verso.engine.io.image_io import registration_dimensions
     from verso.engine.registration import (
         _display_space_anchoring,
-        quicknii_coronal_series_anchorings,
+        quicknii_series_anchorings,
     )
 
     usable: list[tuple[Section, int, int]] = []
@@ -334,12 +337,13 @@ def reset_in_progress_to_default_proposals(
             continue
         display = _display_space_anchoring(section)
         stored_anchorings.append(display if any(v != 0.0 for v in display) else None)
-    propagated = quicknii_coronal_series_anchorings(
+    propagated = quicknii_series_anchorings(
         image_sizes=[(w, h) for _, w, h in usable],
         serial_numbers=[section.serial_number for section, _, _ in usable],
         atlas_shape=atlas_shape,
+        interpolation_axis=interpolation_axis,
         stored_anchorings=stored_anchorings,
-        reverse_ap=reverse_ap,
+        reverse_axis=reverse_axis,
         center_proposals=True,
     )
 
@@ -348,7 +352,7 @@ def reset_in_progress_to_default_proposals(
         if stored is not None:
             continue
         section.alignment.anchoring = anchoring
-        section.alignment.ap_position_mm = None
+        section.alignment.position_mm = None
         section.alignment.status = AlignmentStatus.IN_PROGRESS
         section.alignment.source = "quicknii_default"
         if include_complete:

@@ -118,7 +118,10 @@ class OverviewView(QWidget):
         t = self._table
         n_cols = _COL_STEPS_START + len(_STEPS)
         t.setColumnCount(n_cols)
-        headers = ["#", "File", "Dimensions", "AP (mm)"] + list(_STEPS)
+        axis_name = (
+            self._project.interpolation_axis if self._project is not None else "AP"
+        )
+        headers = ["#", "File", "Dimensions", f"{axis_name} (mm)"] + list(_STEPS)
         t.setHorizontalHeaderLabels(headers)
 
         t.horizontalHeader().setSectionResizeMode(
@@ -170,6 +173,8 @@ class OverviewView(QWidget):
 
     def load_project(self, project: Project) -> None:
         self._project = project
+        axis_name = project.interpolation_axis if project is not None else "AP"
+        self._table.horizontalHeaderItem(_COL_AP).setText(f"{axis_name} (mm)")
         self._populate()
 
     def _populate(self) -> None:
@@ -229,8 +234,8 @@ class OverviewView(QWidget):
         )
         # Dimensions are loaded asynchronously by _DimensionLoader.
         t.setItem(row, _COL_DIMS, self._make_cell("—"))
-        ap = section.alignment.ap_position_mm
-        t.setItem(row, _COL_AP, self._make_cell(f"{ap:.2f}" if ap is not None else "—"))
+        pos = section.alignment.position_mm
+        t.setItem(row, _COL_AP, self._make_cell(f"{pos:.2f}" if pos is not None else "—"))
 
         # Status columns
         done = AlignmentStatus.COMPLETE
