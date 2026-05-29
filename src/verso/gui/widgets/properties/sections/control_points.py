@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QColorDialog,
     QComboBox,
-    QFormLayout,
+    QGridLayout,
     QGroupBox,
+    QLabel,
     QPushButton,
     QSpinBox,
 )
@@ -23,20 +24,17 @@ class ControlPointsBox(QGroupBox):
 
     def __init__(self) -> None:
         super().__init__("Control points")
-        layout = QFormLayout(self)
 
         self._size_spin = QSpinBox()
         self._size_spin.setRange(4, 30)
         self._size_spin.setValue(10)
         self._size_spin.setSuffix(" px")
         self._size_spin.valueChanged.connect(self._emit_style)
-        layout.addRow("Size:", self._size_spin)
 
         self._shape_combo = QComboBox()
         self._shape_combo.addItems(_CP_SHAPES)
         self._shape_combo.setCurrentText("Cross")
         self._shape_combo.currentTextChanged.connect(self._emit_style)
-        layout.addRow("Shape:", self._shape_combo)
 
         self._color_rgb: tuple[int, int, int] = (255, 245, 0)
         self._color_btn = QPushButton()
@@ -44,7 +42,19 @@ class ControlPointsBox(QGroupBox):
         self._color_btn.setToolTip("Pick control point color")
         self._color_btn.clicked.connect(self._on_color)
         self._refresh_color_btn()
-        layout.addRow("Color:", self._color_btn)
+
+        layout = QGridLayout(self)
+        layout.setHorizontalSpacing(8)
+        layout.setVerticalSpacing(6)
+        right_label = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        layout.addWidget(QLabel("Size:"), 0, 0, alignment=right_label)
+        layout.addWidget(self._size_spin, 0, 1)
+        layout.addWidget(QLabel("Color:"), 0, 2, alignment=right_label)
+        layout.addWidget(self._color_btn, 0, 3, alignment=Qt.AlignmentFlag.AlignLeft)
+        layout.addWidget(QLabel("Shape:"), 1, 0, alignment=right_label)
+        layout.addWidget(self._shape_combo, 1, 1, 1, 3)
+        layout.setColumnStretch(1, 1)
+        layout.setColumnStretch(3, 1)
 
     def apply_style(self, size: int, shape: str, color: str) -> None:
         """Set CP style widgets silently (no signal emitted)."""

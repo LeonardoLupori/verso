@@ -6,7 +6,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QScrollArea, QVBoxLayout, QWidget
 
 from verso.engine.model.project import Section
-from verso.gui.widgets.properties.sections import AlignActionsBox, APPlotBox, OverlayBox
+from verso.gui.widgets.properties.sections import APPlotBox, OverlayBox, SaveBarBox
 
 
 class AlignPage(QWidget):
@@ -20,7 +20,7 @@ class AlignPage(QWidget):
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setStyleSheet("QScrollArea { border: none; }")
-        outer.addWidget(scroll)
+        outer.addWidget(scroll, stretch=1)
 
         content = QWidget()
         layout = QVBoxLayout(content)
@@ -29,13 +29,14 @@ class AlignPage(QWidget):
         scroll.setWidget(content)
 
         self.overlay = OverlayBox()
-        self.actions = AlignActionsBox()
         self.ap_plot = APPlotBox()
 
         layout.addWidget(self.overlay)
-        layout.addWidget(self.actions)
         layout.addWidget(self.ap_plot)
         layout.addStretch()
+
+        self.save_bar = SaveBarBox()
+        outer.addWidget(self.save_bar)
 
     def update_section(self, _section: Section | None) -> None:
         pass

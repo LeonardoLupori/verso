@@ -6,7 +6,12 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QScrollArea, QVBoxLayout, QWidget
 
 from verso.engine.model.project import Section
-from verso.gui.widgets.properties.sections import FlipBox, HemisphereBox, MaskBox
+from verso.gui.widgets.properties.sections import (
+    FlipBox,
+    HemisphereBox,
+    MaskBox,
+    SaveBarBox,
+)
 
 
 class PrepPage(QWidget):
@@ -19,7 +24,7 @@ class PrepPage(QWidget):
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setStyleSheet("QScrollArea { border: none; }")
-        outer.addWidget(scroll)
+        outer.addWidget(scroll, stretch=1)
 
         content = QWidget()
         layout = QVBoxLayout(content)
@@ -35,6 +40,9 @@ class PrepPage(QWidget):
         layout.addWidget(self.mask)
         layout.addWidget(self.hemisphere)
         layout.addStretch()
+
+        self.save_bar = SaveBarBox()
+        outer.addWidget(self.save_bar)
 
     def update_section(self, section: Section | None) -> None:
         if section is None:

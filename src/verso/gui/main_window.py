@@ -173,7 +173,9 @@ class MainWindow(QMainWindow):
             )
             event.ignore()
             return
-        self._save_prep_mask_before_transition()
+        if not self._confirm_discard_active_draft():
+            event.ignore()
+            return
         self._filmstrip.shutdown()
         self._overview.shutdown()
         super().closeEvent(event)
@@ -257,6 +259,15 @@ class MainWindow(QMainWindow):
         act_batch_mask = QAction("Autodetect slice mask for &all slices", self)
         act_batch_mask.triggered.connect(self._batch_autodetect_masks)
         preprocess_menu.addAction(act_batch_mask)
+        preprocess_menu.addSeparator()
+        self._act_clear_all_slice_masks = QAction("Clear all &slice masks…", self)
+        self._act_clear_all_slice_masks.setEnabled(False)
+        self._act_clear_all_slice_masks.triggered.connect(self._clear_all_slice_masks)
+        preprocess_menu.addAction(self._act_clear_all_slice_masks)
+        self._act_clear_all_lr_masks = QAction("Clear all &L/R masks…", self)
+        self._act_clear_all_lr_masks.setEnabled(False)
+        self._act_clear_all_lr_masks.triggered.connect(self._clear_all_lr_masks)
+        preprocess_menu.addAction(self._act_clear_all_lr_masks)
 
         align_menu = batch_menu.addMenu("&Align")
         self._act_deepslice = QAction("Run &DeepSlice", self)
@@ -274,7 +285,17 @@ class MainWindow(QMainWindow):
         self._act_reverse_proposal.triggered.connect(self._reverse_section_order)
         align_menu.addAction(self._act_reverse_proposal)
 
-        batch_menu.addMenu("&Warp")
+        align_menu.addSeparator()
+        self._act_clear_all_alignments = QAction("&Clear all alignments…", self)
+        self._act_clear_all_alignments.setEnabled(False)
+        self._act_clear_all_alignments.triggered.connect(self._clear_all_alignments)
+        align_menu.addAction(self._act_clear_all_alignments)
+
+        warp_menu = batch_menu.addMenu("&Warp")
+        self._act_clear_all_warps = QAction("&Clear all warps…", self)
+        self._act_clear_all_warps.setEnabled(False)
+        self._act_clear_all_warps.triggered.connect(self._clear_all_warps)
+        warp_menu.addAction(self._act_clear_all_warps)
 
         export_menu = mb.addMenu("&Export")
         act_export_images = QAction("Images with atlas &overlay…", self)
@@ -464,29 +485,40 @@ class MainWindow(QMainWindow):
             overlay.mode_changed.connect(self._panel.set_overlay_mode)
 
         # PrepView edits
-        self._prep.section_modified.connect(self._on_prep_modified)
         self._prep.mask_negative_changed.connect(mask.set_negative)
         self._prep.mask_visibility_changed.connect(mask.set_visible_state)
+        self._prep.lr_status_changed.connect(self._refresh_lr_status)
 
-        # AlignView navigator + store/clear; WarpView edits.  Both views share
-        # the same SectionCanvasPanel, so section-modified signals from either
-        # collapse to the same handler.
-        self._align.bind_actions(self._props.align.actions)
-        self._align.section_modified.connect(self._on_align_modified)
+        # AlignView navigator drives the anchoring; alignments_updated fires
+        # when the user explicitly saves or clears, triggering re-interpolation.
         self._align.anchoring_changed.connect(self._on_anchoring_changed)
         self._align.alignments_updated.connect(self._on_alignments_updated)
-        self._align.clear_all_alignments_requested.connect(self._clear_all_alignments)
-        self._warp.section_modified.connect(self._on_align_modified)
         self._props.warp.cp.style_changed.connect(self._on_cp_style_changed)
+
+        # Save / Clear bars and per-view dirty signals.
+        view_bindings = (
+            (self._prep, self._props.prep,
+             self._on_prep_save_clicked, self._on_prep_clear_clicked),
+            (self._align, self._props.align,
+             self._on_align_save_clicked, self._on_align_clear_clicked),
+            (self._warp, self._props.warp,
+             self._on_warp_save_clicked, self._on_warp_clear_clicked),
+        )
+        for view, page, on_save, on_clear in view_bindings:
+            view.dirty_changed.connect(page.save_bar.set_dirty)
+            page.save_bar.save_requested.connect(on_save)
+            page.save_bar.clear_requested.connect(on_clear)
 
     # ------------------------------------------------------------------
     # View switching
     # ------------------------------------------------------------------
 
     def _switch_view(self, index: int) -> None:
-        leaving_prep = self._current_mode == "prep" and index != _VIEW_PREP
-        if leaving_prep:
-            self._save_prep_mask_before_transition()
+        modes = ("overview", "prep", "align", "warp")
+        leaving_mode = self._current_mode
+        entering_mode = modes[index]
+        if leaving_mode != entering_mode:
+            self._discard_view_draft(leaving_mode)
 
         # Release panel hooks from whichever Align/Warp view currently owns it.
         if self._current_mode == "align":
@@ -496,8 +528,7 @@ class MainWindow(QMainWindow):
 
         self._stack.setCurrentIndex(index)
 
-        modes = ("overview", "prep", "align", "warp")
-        self._current_mode = modes[index]
+        self._current_mode = entering_mode
 
         for i, btn in enumerate(self._view_buttons):
             btn.setChecked(i == index)
@@ -533,6 +564,7 @@ class MainWindow(QMainWindow):
         # Refresh properties with current section
         self._props.set_mode(self._current_mode)
         self._refresh_properties()
+        self._refresh_clear_enabled()
         self._update_reverse_order_enabled()
         self._update_deepslice_enabled()
 
@@ -541,7 +573,8 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _open_project(self) -> None:
-        self._save_prep_mask_before_transition()
+        if not self._confirm_discard_active_draft():
+            return
         path, _ = QFileDialog.getOpenFileName(
             self,
             "Open VERSO Project",
@@ -559,7 +592,8 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Cannot open project", str(exc))
 
     def _new_project(self) -> None:
-        self._save_prep_mask_before_transition()
+        if not self._confirm_discard_active_draft():
+            return
         dlg = NewProjectDialog(self)
         if dlg.exec() == NewProjectDialog.DialogCode.Accepted:
             project = dlg.result_project()
@@ -567,7 +601,8 @@ class MainWindow(QMainWindow):
                 self._state.load_project(project, dlg.result_project_path())
 
     def _open_quicknii(self) -> None:
-        self._save_prep_mask_before_transition()
+        if not self._confirm_discard_active_draft():
+            return
         path, _ = QFileDialog.getOpenFileName(
             self, "Open QuickNII JSON", "", "JSON files (*.json);;All files (*)"
         )
@@ -576,7 +611,8 @@ class MainWindow(QMainWindow):
             self._state.load_project(project)
 
     def _open_visualign(self) -> None:
-        self._save_prep_mask_before_transition()
+        if not self._confirm_discard_active_draft():
+            return
         path, _ = QFileDialog.getOpenFileName(
             self, "Open VisuAlign JSON", "", "JSON files (*.json);;All files (*)"
         )
@@ -631,16 +667,17 @@ class MainWindow(QMainWindow):
         )
 
     def _save_project(self) -> None:
-        self._prep.save_current_mask_if_dirty()
+        self._save_active_view()
         if self._state.project is None:
             return
         if self._state.project_path is None:
             self._save_project_as()
             return
         self._write_project(self._state.project_path)
+        self._refresh_clear_enabled()
 
     def _save_project_as(self) -> None:
-        self._prep.save_current_mask_if_dirty()
+        self._save_active_view()
         if self._state.project is None:
             return
         current_path = self._state.project_path
@@ -656,6 +693,7 @@ class MainWindow(QMainWindow):
                 project_path = project_path.with_suffix(".json")
             self._write_project(project_path)
             self._state.set_project_path(project_path)
+            self._refresh_clear_enabled()
 
     def _write_project(self, path: Path) -> None:
         project = self._state.project
@@ -668,10 +706,99 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             QMessageBox.critical(self, "Cannot save project", str(exc))
 
-    def _save_prep_mask_before_transition(self) -> None:
-        self._prep.save_current_mask_if_dirty()
+    # ------------------------------------------------------------------
+    # Per-view draft save / clear / discard
+    # ------------------------------------------------------------------
+
+    def _active_view(self):
+        if self._current_mode == "prep":
+            return self._prep
+        if self._current_mode == "align":
+            return self._align
+        if self._current_mode == "warp":
+            return self._warp
+        return None
+
+    def _save_active_view(self) -> bool:
+        view = self._active_view()
+        if view is None:
+            return False
+        return view.save()
+
+    def _discard_view_draft(self, mode: str) -> None:
+        if mode == "prep":
+            self._prep.discard()
+        elif mode == "align":
+            self._align.discard()
+        elif mode == "warp":
+            self._warp.discard()
+
+    def _confirm_discard_active_draft(self) -> bool:
+        """Prompt the user when leaving a context with unsaved draft edits.
+
+        Returns True if the caller may proceed (no draft, or user picked
+        Save / Discard); False on Cancel.
+        """
+        view = self._active_view()
+        if view is None or not view.is_dirty():
+            return True
+        reply = QMessageBox.question(
+            self,
+            "Unsaved changes",
+            "You have unsaved changes in the current view. "
+            "Save them before continuing?",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Save,
+        )
+        if reply == QMessageBox.StandardButton.Save:
+            view.save()
+            if self._state.project is not None and self._state.project_path is not None:
+                self._write_project(self._state.project_path)
+            return True
+        if reply == QMessageBox.StandardButton.Discard:
+            view.discard()
+            return True
+        return False
+
+    def _after_view_save(self) -> None:
+        """Refresh dependent UI after a per-view save/clear and write project."""
         if self._state.project is not None and self._state.project_path is not None:
             self._write_project(self._state.project_path)
+        self._overview.refresh()
+        self._update_ap_plot()
+        self._refresh_clear_enabled()
+
+    def _refresh_clear_enabled(self) -> None:
+        """Sync each save bar's Clear button to whether the slice has state to wipe."""
+        self._props.prep.save_bar.set_clear_enabled(self._prep.has_persisted_state())
+        self._props.align.save_bar.set_clear_enabled(self._align.has_persisted_state())
+        self._props.warp.save_bar.set_clear_enabled(self._warp.has_persisted_state())
+
+    def _on_prep_save_clicked(self) -> None:
+        if self._prep.save():
+            self._after_view_save()
+
+    def _on_prep_clear_clicked(self) -> None:
+        if self._prep.clear():
+            self._after_view_save()
+
+    def _on_align_save_clicked(self) -> None:
+        if self._align.save():
+            self._after_view_save()
+
+    def _on_align_clear_clicked(self) -> None:
+        if self._align.clear():
+            self._after_view_save()
+
+    def _on_warp_save_clicked(self) -> None:
+        if self._warp.save():
+            self._after_view_save()
+
+    def _on_warp_clear_clicked(self) -> None:
+        if self._warp.clear():
+            self._after_view_save()
 
     # ------------------------------------------------------------------
     # Slots — state changes
@@ -773,6 +900,10 @@ class MainWindow(QMainWindow):
         QMessageBox.warning(self, "Atlas load failed", message)
 
     def _on_section_changed(self, index: int) -> None:
+        # Drop any draft on the section we're leaving so the swap doesn't
+        # carry stale in-memory edits into the new slice's state.
+        self._discard_view_draft(self._current_mode)
+
         section = self._state.current_section
         self._filmstrip.set_current(index)
 
@@ -781,7 +912,11 @@ class MainWindow(QMainWindow):
         elif self._current_mode in ("align", "warp"):
             self._panel.load_section(section)
 
+        # The discard may have rolled back the previously-loaded section's
+        # in-memory state, so the overview row + AP plot can now be stale.
+        self._overview.refresh()
         self._refresh_properties()
+        self._refresh_clear_enabled()
         self._update_ap_plot()
         self._update_deepslice_enabled()
 
@@ -826,18 +961,6 @@ class MainWindow(QMainWindow):
     # Property change slots
     # ------------------------------------------------------------------
 
-    def _clear_alignment_for_flip(self, section) -> None:
-        section.alignment.anchoring = [0.0] * 9
-        section.alignment.ap_position_mm = None
-        section.alignment.status = AlignmentStatus.NOT_STARTED
-        section.alignment.source = None
-        section.alignment.stored_anchoring = None
-        section.alignment.proposal_anchoring = None
-        section.alignment.proposal_confidence = None
-        section.alignment.proposal_run_id = None
-        section.warp.control_points.clear()
-        section.warp.status = AlignmentStatus.NOT_STARTED
-
     def _on_flip_h_changed(self, value: bool) -> None:
         section = self._state.current_section
         if section is None:
@@ -847,8 +970,8 @@ class MainWindow(QMainWindow):
         if self._prep.cancel_lr_draw_if_active():
             self._props.prep.hemisphere.set_draw_active(False)
         section.preprocessing.flip_horizontal = value
-        self._clear_alignment_for_flip(section)
-        self._after_flip_refresh()
+        self._prep.mark_flip_changed()
+        self._prep.refresh_display()
 
     def _on_flip_v_changed(self, value: bool) -> None:
         section = self._state.current_section
@@ -859,15 +982,8 @@ class MainWindow(QMainWindow):
         if self._prep.cancel_lr_draw_if_active():
             self._props.prep.hemisphere.set_draw_active(False)
         section.preprocessing.flip_vertical = value
-        self._clear_alignment_for_flip(section)
-        self._after_flip_refresh()
-
-    def _after_flip_refresh(self) -> None:
-        if self._current_mode == "prep":
-            self._prep.refresh_display()
-        elif self._current_mode in ("align", "warp"):
-            self._panel.refresh_display()
-        self._on_alignments_updated()
+        self._prep.mark_flip_changed()
+        self._prep.refresh_display()
 
     def _on_opacity_changed(self, opacity: float) -> None:
         self._panel.canvas.set_overlay_opacity(opacity)
@@ -907,26 +1023,18 @@ class MainWindow(QMainWindow):
 
     def _on_prep_autodetect_requested(self) -> None:
         self._prep.autodetect_mask()
-        self._overview.refresh_row(self._state.section_index)
 
     def _on_prep_clear_mask_requested(self) -> None:
         self._prep.clear_mask()
-        self._overview.refresh_row(self._state.section_index)
 
     def _on_lr_set_all_left(self) -> None:
         self._prep.set_lr_all(1)
-        self._refresh_lr_status()
-        self._overview.refresh_row(self._state.section_index)
 
     def _on_lr_set_all_right(self) -> None:
         self._prep.set_lr_all(2)
-        self._refresh_lr_status()
-        self._overview.refresh_row(self._state.section_index)
 
     def _on_lr_clear_requested(self) -> None:
         self._prep.clear_lr_mask()
-        self._refresh_lr_status()
-        self._overview.refresh_row(self._state.section_index)
 
     def _on_lr_draw_mode_toggled(self, active: bool) -> None:
         """Draw-line button toggled by the user."""
@@ -941,9 +1049,6 @@ class MainWindow(QMainWindow):
     def _on_lr_draw_apply(self) -> None:
         self._prep.exit_lr_draw_mode(apply=True)
         self._props.prep.hemisphere.set_draw_active(False)
-        # section_modified emits inside exit_lr_draw_mode → status + project save
-        # are handled by _on_prep_modified.  Refresh overview row eagerly.
-        self._overview.refresh_row(self._state.section_index)
 
     def _on_lr_draw_cancel(self) -> None:
         self._prep.exit_lr_draw_mode(apply=False)
@@ -953,12 +1058,6 @@ class MainWindow(QMainWindow):
     def _refresh_lr_status(self) -> None:
         """Push the current PrepView L/R state into the properties panel label."""
         self._props.prep.hemisphere.set_status(self._prep.lr_status_text())
-
-    def _on_prep_modified(self) -> None:
-        self._overview.refresh_row(self._state.section_index)
-        self._refresh_lr_status()
-        if self._state.project is not None and self._state.project_path is not None:
-            self._write_project(self._state.project_path)
 
     def _batch_autodetect_masks(self) -> None:
         project = self._state.project
@@ -977,8 +1076,9 @@ class MainWindow(QMainWindow):
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
+        if not self._confirm_discard_active_draft():
+            return
 
-        self._save_prep_mask_before_transition()
         self._show_batch_mask_progress()
 
         thread = QThread(self)
@@ -1064,10 +1164,6 @@ class MainWindow(QMainWindow):
         self._update_reverse_order_enabled()
         self._update_deepslice_enabled()
 
-    def _on_align_modified(self) -> None:
-        self._overview.refresh_row(self._state.section_index)
-        self._refresh_properties()
-
     def _reverse_section_order(self) -> None:
         """Reverse the startup AP proposal before any alignment is stored."""
         project = self._state.project
@@ -1126,17 +1222,18 @@ class MainWindow(QMainWindow):
 
     def _update_deepslice_enabled(self, running: bool = False) -> None:
         project = self._state.project
-        enabled = (
-            project is not None
-            and bool(project.sections)
-            and self._state.atlas is not None
-        )
-        self._act_deepslice.setEnabled(enabled and not running)
+        has_sections = project is not None and bool(project.sections)
+        atlas_ready = has_sections and self._state.atlas is not None
+        self._act_deepslice.setEnabled(atlas_ready and not running)
         self._act_deepslice.setText(
-            "Align: DeepSlice running…" if running else "Align: Run &DeepSlice"
+            "DeepSlice running…" if running else "Run &DeepSlice"
         )
-        self._act_default_proposal.setEnabled(enabled and not running)
-        self._align.set_clear_all_enabled(enabled and not running)
+        self._act_default_proposal.setEnabled(atlas_ready and not running)
+        self._act_clear_all_alignments.setEnabled(atlas_ready and not running)
+        # Mask + warp wipes only need a project with sections; atlas not required.
+        self._act_clear_all_slice_masks.setEnabled(has_sections and not running)
+        self._act_clear_all_lr_masks.setEnabled(has_sections and not running)
+        self._act_clear_all_warps.setEnabled(has_sections and not running)
 
     def _sync_ap_mm(self, sections: list) -> None:
         """Populate ap_position_mm for every section that has a valid anchoring."""
@@ -1355,6 +1452,8 @@ class MainWindow(QMainWindow):
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
+        if not self._confirm_discard_active_draft():
+            return
 
         from verso.engine.deepslice import reset_in_progress_to_default_proposals
 
@@ -1365,14 +1464,116 @@ class MainWindow(QMainWindow):
             include_complete=True,
         )
         self._sync_ap_mm(project.sections)
-        self._overview.refresh()
-        self._on_section_changed(self._state.section_index)
-        self._update_ap_plot()
-        self._update_reverse_order_enabled()
+        self._after_batch_clear()
         self.statusBar().showMessage(
             f"Cleared all alignments and restored {changed} default proposals",
             5000,
         )
+
+    def _clear_all_slice_masks(self) -> None:
+        project = self._state.project
+        if project is None or not project.sections:
+            return
+        reply = QMessageBox.question(
+            self,
+            "Clear all slice masks",
+            f"Delete the slice mask for all {len(project.sections)} sections? "
+            "This removes the PNG files from disk.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        if not self._confirm_discard_active_draft():
+            return
+        removed = 0
+        for section in project.sections:
+            old = section.preprocessing.slice_mask_path
+            if old:
+                try:
+                    Path(old).unlink(missing_ok=True)
+                except OSError:
+                    pass
+                removed += 1
+            section.preprocessing.slice_mask_path = None
+        self._after_batch_clear()
+        self.statusBar().showMessage(
+            f"Cleared {removed} slice masks", 5000
+        )
+
+    def _clear_all_lr_masks(self) -> None:
+        project = self._state.project
+        if project is None or not project.sections:
+            return
+        reply = QMessageBox.question(
+            self,
+            "Clear all L/R masks",
+            f"Delete the L/R hemisphere mask for all {len(project.sections)} sections? "
+            "This removes the PNG files from disk.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        if not self._confirm_discard_active_draft():
+            return
+        removed = 0
+        for section in project.sections:
+            old = section.preprocessing.lr_mask_path
+            if old:
+                try:
+                    Path(old).unlink(missing_ok=True)
+                except OSError:
+                    pass
+                removed += 1
+            section.preprocessing.lr_mask_path = None
+            section.preprocessing.lr_line = None
+        self._after_batch_clear()
+        self.statusBar().showMessage(
+            f"Cleared {removed} L/R masks", 5000
+        )
+
+    def _clear_all_warps(self) -> None:
+        project = self._state.project
+        if project is None or not project.sections:
+            return
+        reply = QMessageBox.question(
+            self,
+            "Clear all warps",
+            f"Remove every warp control point from all {len(project.sections)} sections?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        if not self._confirm_discard_active_draft():
+            return
+        cleared = 0
+        for section in project.sections:
+            if section.warp.control_points:
+                cleared += 1
+            section.warp.control_points.clear()
+            section.warp.status = AlignmentStatus.NOT_STARTED
+        self._after_batch_clear()
+        self.statusBar().showMessage(
+            f"Cleared warps on {cleared} sections", 5000
+        )
+
+    def _after_batch_clear(self) -> None:
+        """Refresh dependent UI + write project after a batch wipe."""
+        section = self._state.current_section
+        if self._current_mode == "prep" and section is not None:
+            self._prep.load_section(section)
+        elif self._current_mode in ("align", "warp"):
+            self._panel.load_section(section)
+        self._overview.refresh()
+        self._refresh_properties()
+        self._refresh_clear_enabled()
+        self._update_ap_plot()
+        self._update_reverse_order_enabled()
+        self._update_deepslice_enabled()
+        if self._state.project is not None and self._state.project_path is not None:
+            self._write_project(self._state.project_path)
 
     def _update_ap_plot(self) -> None:
         project = self._state.project
@@ -1407,7 +1608,8 @@ class MainWindow(QMainWindow):
             write_section_pngs(project, out_dir)
 
     def _export_quicknii_xml(self) -> None:
-        self._save_prep_mask_before_transition()
+        if not self._confirm_discard_active_draft():
+            return
         if self._state.project is None:
             return
         name = self._state.project.name
@@ -1421,7 +1623,8 @@ class MainWindow(QMainWindow):
             self._maybe_create_pngs(path)
 
     def _export_quicknii(self) -> None:
-        self._save_prep_mask_before_transition()
+        if not self._confirm_discard_active_draft():
+            return
         if self._state.project is None:
             return
         from PyQt6.QtWidgets import QFileDialog
@@ -1436,7 +1639,8 @@ class MainWindow(QMainWindow):
             self._maybe_create_pngs(path)
 
     def _export_visualign(self) -> None:
-        self._save_prep_mask_before_transition()
+        if not self._confirm_discard_active_draft():
+            return
         if self._state.project is None:
             return
         from PyQt6.QtWidgets import QFileDialog
@@ -1545,7 +1749,8 @@ class MainWindow(QMainWindow):
         from verso.engine.io.export_images import export_section
         from verso.gui.dialogs.export_images import ExportImagesDialog
 
-        self._save_prep_mask_before_transition()
+        if not self._confirm_discard_active_draft():
+            return
 
         project = self._state.project
         if project is None or not project.sections:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from pathlib import Path
 
 import numpy as np
@@ -14,7 +15,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from verso.engine.model.project import ChannelSpec, Section
+from verso.engine.model.alignment import AlignmentStatus
+from verso.engine.model.project import ChannelSpec, Preprocessing, Section
 from verso.engine.preprocessing import (
     apply_brush_stroke,
     apply_freehand_stroke,
@@ -32,15 +34,17 @@ from verso.engine.preprocessing import (
 )
 from verso.gui.widgets.canvas import ImageCanvas
 from verso.gui.widgets.lr_line_editor import LRLineEditor
+from verso.gui.widgets.view_chrome import make_view_status_bar
 
 
 class PrepView(QWidget):
     """Canvas view for the Prep (mask drawing / flip) step."""
 
-    section_modified = pyqtSignal()
+    dirty_changed = pyqtSignal(bool)
     mask_negative_changed = pyqtSignal(bool)
     mask_visibility_changed = pyqtSignal(bool)
     brush_size_changed = pyqtSignal(int)
+    lr_status_changed = pyqtSignal()
 
     _UNDO_LIMIT = 20
     _DRAW_COLOR = (80, 160, 255)
@@ -83,8 +87,11 @@ class PrepView(QWidget):
         # Draw-mode state — created/destroyed by enter/exit_lr_draw_mode().
         self._lr_editor: LRLineEditor | None = None
         self._lr_draw_mode = False
-        self._saved_lr_line: list[list[float]] | None = None
-        self._saved_lr_mask_path: str | None = None
+        # Snapshot of section.preprocessing taken at load_section time; restored
+        # by discard() so unsaved edits roll back when the user switches view
+        # or slice.
+        self._baseline_preprocessing: Preprocessing | None = None
+        self._dirty = False
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -98,13 +105,7 @@ class PrepView(QWidget):
         canvas_col.setSpacing(0)
 
         self._status_label = QLabel("No section loaded")
-        self._status_label.setFixedHeight(36)
-        self._status_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        self._status_label.setStyleSheet(
-            "background: #252525; color: #aaa; font-size: 11px; padding-left: 8px;"
-            " border-bottom: 1px solid #333;"
-        )
-        canvas_col.addWidget(self._status_label)
+        canvas_col.addWidget(make_view_status_bar(self._status_label))
 
         self._canvas = ImageCanvas()
         self._canvas.set_interaction_mode("prep")
@@ -154,7 +155,6 @@ class PrepView(QWidget):
         # If the user was mid-edit on an L/R line, drop the editor before
         # the section changes.  Cancelling discards the in-flight line.
         self.cancel_lr_draw_if_active()
-        self.save_current_mask_if_dirty()
         self._section = section
         self._raw_image = None
         self._current_mask = None
@@ -166,8 +166,13 @@ class PrepView(QWidget):
         self._stroke_active = False
         self._canvas.clear()
         if section is None:
+            self._baseline_preprocessing = None
+            self._set_dirty(False)
             self._status_label.setText("No section loaded")
             return
+
+        self._baseline_preprocessing = copy.deepcopy(section.preprocessing)
+        self._set_dirty(False)
 
         import os
 
@@ -274,6 +279,7 @@ class PrepView(QWidget):
         img = self._raw_image[:, :, visible] if visible else self._raw_image
         self._current_mask = detect_foreground(img)
         self._mask_dirty = True
+        self._set_dirty(True)
         self._update_mask_overlay()
 
     def clear_mask(self) -> None:
@@ -283,6 +289,7 @@ class PrepView(QWidget):
         self._push_undo()
         self._current_mask = np.zeros(self._raw_image.shape[:2], dtype=bool)
         self._mask_dirty = True
+        self._set_dirty(True)
         self._update_mask_overlay()
 
     def apply_morph(self, pixels: int, operation: str) -> None:
@@ -292,6 +299,7 @@ class PrepView(QWidget):
         self._push_undo()
         self._current_mask = morph_mask(self._current_mask, pixels, operation)
         self._mask_dirty = True
+        self._set_dirty(True)
         self._update_mask_overlay()
 
     def undo_mask_edit(self) -> None:
@@ -299,10 +307,8 @@ class PrepView(QWidget):
             return
         self._current_mask = self._undo_stack.pop()
         self._mask_dirty = True
+        self._set_dirty(True)
         self._update_mask_overlay()
-
-    def save_current_mask_if_dirty(self) -> bool:
-        return self._save_current_mask(force=False)
 
     # ------------------------------------------------------------------
     # L/R hemisphere — public actions
@@ -311,8 +317,7 @@ class PrepView(QWidget):
     def set_lr_all(self, side: int) -> None:
         """Label the entire section as left (side=1) or right (side=2).
 
-        Clears any previously-drawn line and writes the mask to disk
-        immediately so the change is persisted in the next project save.
+        Buffers the change in memory only — :meth:`save` writes the PNG.
         """
         if side not in (1, 2):
             raise ValueError(f"side must be 1 (left) or 2 (right), got {side}")
@@ -320,29 +325,21 @@ class PrepView(QWidget):
             return
         self._lr_mask = np.full(self._raw_image.shape[:2], np.uint8(side), dtype=np.uint8)
         self._section.preprocessing.lr_line = None
-        path = self._lr_mask_path_for_section(self._section)
-        save_lr_mask(self._lr_mask, path)
-        self._section.preprocessing.lr_mask_path = str(path)
-        self._lr_dirty = False
+        self._lr_dirty = True
+        self._set_dirty(True)
         self._update_lr_overlay()
-        self.section_modified.emit()
+        self.lr_status_changed.emit()
 
     def clear_lr_mask(self) -> None:
-        """Remove the L/R label for the current section (no longer 'edited')."""
+        """Remove the L/R label for the current section (draft only)."""
         if self._section is None:
             return
-        old_path = self._section.preprocessing.lr_mask_path
-        if old_path:
-            try:
-                Path(old_path).unlink(missing_ok=True)
-            except OSError:
-                pass
         self._lr_mask = None
-        self._section.preprocessing.lr_mask_path = None
         self._section.preprocessing.lr_line = None
-        self._lr_dirty = False
+        self._lr_dirty = True
+        self._set_dirty(True)
         self._update_lr_overlay()
-        self.section_modified.emit()
+        self.lr_status_changed.emit()
 
     def is_lr_draw_active(self) -> bool:
         return self._lr_draw_mode
@@ -364,19 +361,11 @@ class PrepView(QWidget):
 
         Seeds the editor from ``section.preprocessing.lr_line`` if present,
         otherwise from a default vertical line through the image centre.
-        Snapshots the previous L/R state for :meth:`exit_lr_draw_mode`'s
-        Cancel path.
         """
         if self._section is None or self._raw_image is None:
             return
         if self._lr_draw_mode:
             return
-        self._saved_lr_line = (
-            [list(p) for p in self._section.preprocessing.lr_line]
-            if self._section.preprocessing.lr_line is not None
-            else None
-        )
-        self._saved_lr_mask_path = self._section.preprocessing.lr_mask_path
 
         h, w = self._raw_image.shape[:2]
         if self._section.preprocessing.lr_line is not None:
@@ -384,7 +373,6 @@ class PrepView(QWidget):
             p0 = self._line_endpoint_to_display((stored[0][0], stored[0][1]))
             p1 = self._line_endpoint_to_display((stored[1][0], stored[1][1]))
         else:
-            # Default: vertical line down the centre, 80 % of image height.
             p0 = (w / 2.0, 0.1 * h)
             p1 = (w / 2.0, 0.9 * h)
 
@@ -403,10 +391,9 @@ class PrepView(QWidget):
     def exit_lr_draw_mode(self, *, apply: bool) -> None:
         """Tear down the line editor.
 
-        If *apply* is True, rasterize the current line into a fresh L/R
-        mask, save it to disk, and persist the endpoints to the section.
-        If False (cancel), restore the previous mask path / line endpoints
-        and reload the on-disk mask without writing.
+        If *apply* is True, rasterize the current line into the in-memory
+        L/R mask and mark the view dirty (the PNG is only written on save).
+        If False, drop the editor without altering state.
         """
         if not self._lr_draw_mode:
             return
@@ -425,29 +412,18 @@ class PrepView(QWidget):
                 p1 = self._line_endpoint_to_display(p1_disp)
                 h, w = self._raw_image.shape[:2]
                 self._lr_mask = rasterize_lr_line(p0, p1, shape=(h, w))
-                path = self._lr_mask_path_for_section(self._section)
-                save_lr_mask(self._lr_mask, path)
-                self._section.preprocessing.lr_mask_path = str(path)
                 self._section.preprocessing.lr_line = [
                     [float(p0[0]), float(p0[1])],
                     [float(p1[0]), float(p1[1])],
                 ]
-                self._lr_dirty = False
-                self.section_modified.emit()
-        elif not apply and self._section is not None:
-            # Cancel: restore the snapshot (path may or may not exist on disk).
-            self._section.preprocessing.lr_line = (
-                [list(p) for p in self._saved_lr_line] if self._saved_lr_line is not None else None
-            )
-            self._section.preprocessing.lr_mask_path = self._saved_lr_mask_path
-            self._load_or_init_lr_mask()
+                self._lr_dirty = True
+                self._set_dirty(True)
+                self.lr_status_changed.emit()
 
         if self._lr_editor is not None:
             self._lr_editor.end()
             self._lr_editor = None
         self._lr_draw_mode = False
-        self._saved_lr_line = None
-        self._saved_lr_mask_path = None
         self._update_lr_overlay()
 
     def _line_endpoint_to_display(
@@ -489,6 +465,176 @@ class PrepView(QWidget):
             if unique[0] == 2:
                 return "All right"
         return "Line drawn"
+
+    # ------------------------------------------------------------------
+    # Draft / save / clear / discard
+    # ------------------------------------------------------------------
+
+    def mark_flip_changed(self) -> None:
+        """Called by MainWindow after toggling a flip flag on the section."""
+        if self._section is None:
+            return
+        self._set_dirty(True)
+
+    def is_dirty(self) -> bool:
+        return self._dirty
+
+    def has_persisted_state(self) -> bool:
+        """Whether Clear has anything to wipe in the project for this slice."""
+        baseline = self._baseline_preprocessing
+        if baseline is None:
+            return False
+        return bool(
+            baseline.slice_mask_path
+            or baseline.lr_mask_path
+            or baseline.flip_horizontal
+            or baseline.flip_vertical
+            or baseline.lr_line is not None
+        )
+
+    def save(self) -> bool:
+        """Persist the current draft to disk + section.
+
+        Writes the slice mask / L/R mask PNGs, updates the section's
+        preprocessing paths, and (if a flip toggled during the draft)
+        invalidates the alignment + warp for this slice so the user is
+        forced to re-align in the new orientation.
+
+        Returns True iff anything actually changed.
+        """
+        if self._section is None:
+            return False
+
+        baseline = self._baseline_preprocessing
+        flip_changed = baseline is not None and (
+            baseline.flip_horizontal != self._section.preprocessing.flip_horizontal
+            or baseline.flip_vertical != self._section.preprocessing.flip_vertical
+        )
+
+        changed = False
+
+        if self._mask_dirty and self._current_mask is not None:
+            mask_path = self._mask_path_for_section(self._section)
+            save_mask(self._current_mask, mask_path)
+            self._section.preprocessing.slice_mask_path = str(mask_path)
+            self._mask_dirty = False
+            changed = True
+
+        if self._lr_dirty:
+            if self._lr_mask is None:
+                old = self._section.preprocessing.lr_mask_path
+                if old:
+                    try:
+                        Path(old).unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                self._section.preprocessing.lr_mask_path = None
+                self._section.preprocessing.lr_line = None
+            else:
+                path = self._lr_mask_path_for_section(self._section)
+                save_lr_mask(self._lr_mask, path)
+                self._section.preprocessing.lr_mask_path = str(path)
+            self._lr_dirty = False
+            changed = True
+
+        if flip_changed:
+            self._wipe_alignment_for_flip()
+            changed = True
+
+        self._baseline_preprocessing = copy.deepcopy(self._section.preprocessing)
+        self._set_dirty(False)
+        return changed
+
+    def clear(self) -> bool:
+        """Wipe this slice's prep state: masks, LR labels, flips.
+
+        Deletes on-disk PNGs and resets the section's preprocessing to
+        defaults.  If a flip toggles to False as a result, the slice's
+        alignment + warp are also invalidated (same rule as :meth:`save`).
+        """
+        if self._section is None:
+            return False
+
+        baseline = self._baseline_preprocessing
+        flip_changed = baseline is not None and (
+            baseline.flip_horizontal or baseline.flip_vertical
+        )
+
+        for path_str in (
+            self._section.preprocessing.slice_mask_path,
+            self._section.preprocessing.lr_mask_path,
+        ):
+            if path_str:
+                try:
+                    Path(path_str).unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+        self._section.preprocessing = Preprocessing()
+        self._current_mask = None
+        self._lr_mask = None
+        self._mask_dirty = False
+        self._lr_dirty = False
+        self._undo_stack.clear()
+
+        if flip_changed:
+            self._wipe_alignment_for_flip()
+
+        self._baseline_preprocessing = copy.deepcopy(self._section.preprocessing)
+        self._set_dirty(False)
+
+        # Reload from the now-empty state so the canvas matches.
+        if self._raw_image is not None:
+            self._load_or_init_mask()
+            self._load_or_init_lr_mask()
+            self._display_image()
+            self._update_mask_overlay()
+            self._update_lr_overlay()
+        self.lr_status_changed.emit()
+        return True
+
+    def discard(self) -> None:
+        """Roll the section back to the baseline snapshot (no disk writes)."""
+        self.cancel_lr_draw_if_active()
+        if self._section is None or self._baseline_preprocessing is None:
+            self._set_dirty(False)
+            return
+        self._section.preprocessing = copy.deepcopy(self._baseline_preprocessing)
+        self._current_mask = None
+        self._lr_mask = None
+        self._mask_dirty = False
+        self._lr_dirty = False
+        self._undo_stack.clear()
+        self._stroke_points.clear()
+        self._stroke_active = False
+        self._set_dirty(False)
+        if self._raw_image is not None:
+            self._load_or_init_mask()
+            self._load_or_init_lr_mask()
+            self._display_image()
+            self._update_mask_overlay()
+            self._update_lr_overlay()
+        self.lr_status_changed.emit()
+
+    def _wipe_alignment_for_flip(self) -> None:
+        if self._section is None:
+            return
+        self._section.alignment.anchoring = [0.0] * 9
+        self._section.alignment.ap_position_mm = None
+        self._section.alignment.status = AlignmentStatus.NOT_STARTED
+        self._section.alignment.source = None
+        self._section.alignment.stored_anchoring = None
+        self._section.alignment.proposal_anchoring = None
+        self._section.alignment.proposal_confidence = None
+        self._section.alignment.proposal_run_id = None
+        self._section.warp.control_points.clear()
+        self._section.warp.status = AlignmentStatus.NOT_STARTED
+
+    def _set_dirty(self, dirty: bool) -> None:
+        if self._dirty == dirty:
+            return
+        self._dirty = dirty
+        self.dirty_changed.emit(dirty)
 
     # ------------------------------------------------------------------
     # Display / mask state
@@ -583,19 +729,6 @@ class PrepView(QWidget):
         self._undo_stack.append(self._current_mask.copy())
         if len(self._undo_stack) > self._UNDO_LIMIT:
             self._undo_stack.pop(0)
-
-    def _save_current_mask(self, *, force: bool) -> bool:
-        if self._section is None or self._current_mask is None:
-            return False
-        if not force and not self._mask_dirty:
-            return False
-
-        mask_path = self._mask_path_for_section(self._section)
-        save_mask(self._current_mask, mask_path)
-        self._section.preprocessing.slice_mask_path = str(mask_path)
-        self._mask_dirty = False
-        self.section_modified.emit()
-        return True
 
     def _mask_path_for_section(self, section: Section) -> Path:
         masks_dir = Path(section.thumbnail_path).parent.parent / "masks"
@@ -727,6 +860,7 @@ class PrepView(QWidget):
         )
         self._stroke_points.clear()
         self._mask_dirty = True
+        self._set_dirty(True)
         self._update_mask_overlay()
 
     def _paint_brush_segment(self, display_points: list[tuple[float, float]]) -> None:
@@ -739,6 +873,7 @@ class PrepView(QWidget):
             add=not self._stroke_erase,
         )
         self._mask_dirty = True
+        self._set_dirty(True)
         self._update_mask_overlay()
 
     def _clamped_display_point(self, x: float, y: float) -> tuple[float, float]:

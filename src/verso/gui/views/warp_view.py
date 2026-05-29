@@ -3,27 +3,34 @@
 Composes the shared :class:`SectionCanvasPanel` (created once by
 ``MainWindow`` and reparented into whichever view is active) and contributes
 only the warp-specific toolbar and control-point interaction.
+
+Edits made to control points are drafts: they live in memory only and are
+discarded on slice / view change.  The shared Save / Clear bar in the
+Warp properties page commits or wipes them.
 """
 
 from __future__ import annotations
+
+import copy
 
 import numpy as np
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QHBoxLayout,
-    QPushButton,
     QVBoxLayout,
     QWidget,
 )
 
+from verso.engine.model.alignment import AlignmentStatus, WarpState
 from verso.gui.widgets.section_canvas_panel import SectionCanvasPanel
+from verso.gui.widgets.view_chrome import make_view_status_bar
 
 
 class WarpView(QWidget):
     """Canvas view for nonlinear warp via per-section control points."""
 
-    section_modified = pyqtSignal()
+    dirty_changed = pyqtSignal(bool)
 
     # Pixel distance threshold for picking an existing control point.
     _CP_PICK_RADIUS = 16  # px
@@ -48,6 +55,12 @@ class WarpView(QWidget):
         self._warp_timer.setInterval(33)
         self._warp_timer.timeout.connect(self._panel.update_overlay)
 
+        # Snapshot of section.warp taken at section-load time; restored by
+        # discard() so unsaved CP edits roll back when the user switches
+        # slice or view.
+        self._baseline_warp: WarpState | None = None
+        self._dirty = False
+
         self._build_ui()
         self._wire_panel()
 
@@ -60,7 +73,7 @@ class WarpView(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        root.addWidget(self._make_toolbar())
+        root.addWidget(make_view_status_bar(self._panel.make_status_label()))
 
         self._panel_slot = QWidget()
         slot_layout = QHBoxLayout(self._panel_slot)
@@ -73,32 +86,6 @@ class WarpView(QWidget):
             sc = QShortcut(QKeySequence(key), self)
             sc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
             sc.activated.connect(self._delete_hovered_cp)
-
-    def _make_toolbar(self) -> QWidget:
-        bar = QWidget()
-        bar.setFixedHeight(36)
-        bar.setStyleSheet("background: #252525;")
-        h = QHBoxLayout(bar)
-        h.setContentsMargins(8, 2, 8, 2)
-        h.setSpacing(4)
-
-        h.addWidget(self._panel.make_status_label())
-
-        h.addStretch()
-
-        self._clear_cps_btn = QPushButton("Clear CPs")
-        self._clear_cps_btn.setFixedHeight(28)
-        self._clear_cps_btn.setToolTip("Remove all warp control points from this section")
-        self._clear_cps_btn.setStyleSheet(
-            "QPushButton { border-radius: 4px; padding: 2px 10px; color: #ccc;"
-            " background: #5a2a2a; }"
-            "QPushButton:hover { background: #6a3a3a; }"
-            "QPushButton:disabled { color: #666; background: #333; }"
-        )
-        self._clear_cps_btn.setEnabled(False)
-        self._clear_cps_btn.clicked.connect(self._clear_all_cps)
-        h.addWidget(self._clear_cps_btn)
-        return bar
 
     def _wire_panel(self) -> None:
         self._panel.canvas_clicked.connect(self._on_canvas_clicked)
@@ -122,8 +109,12 @@ class WarpView(QWidget):
         self._panel.cursor_to_atlas_mapper = self._cursor_to_src
         self._cp_hovered = -1
         self._cp_dragging = -1
-        self._update_clear_cps_enabled()
         self._panel.update_overlay()
+        # Re-snapshot in case the section was loaded before activate.
+        section = self._panel.section
+        if section is not None:
+            self._baseline_warp = copy.deepcopy(section.warp)
+            self._set_dirty(False)
 
     def deactivate(self) -> None:
         """Release warp hooks so other views see a clean panel."""
@@ -180,18 +171,21 @@ class WarpView(QWidget):
     # Panel events
     # ------------------------------------------------------------------
 
-    def _on_section_loaded(self, _section) -> None:
+    def _on_section_loaded(self, section) -> None:
         self._cp_hovered = -1
         self._cp_dragging = -1
         self._cp_drag_start_norm = None
         self._cp_drag_start_dst = None
-        self._update_clear_cps_enabled()
+        if section is None:
+            self._baseline_warp = None
+        else:
+            self._baseline_warp = copy.deepcopy(section.warp)
+        self._set_dirty(False)
 
     def _on_overlay_updated(self, _anchoring, _display_w, _display_h) -> None:
         if not self._active:
             return
         self._draw_control_points()
-        self._update_clear_cps_enabled()
 
     def _on_canvas_mouse_moved(self, x: float, y: float) -> None:
         if not self._active:
@@ -303,7 +297,7 @@ class WarpView(QWidget):
         section.warp.control_points.append(ControlPoint(u, v, s, t))
         self._cp_hovered = len(section.warp.control_points) - 1
         self._panel.update_overlay()
-        self.section_modified.emit()
+        self._set_dirty(True)
 
     def _on_canvas_drag_started(self, x: float, y: float) -> None:
         self._cp_dragging = self._pick_cp(x, y)
@@ -333,7 +327,7 @@ class WarpView(QWidget):
         self._cp_drag_start_norm = None
         self._cp_drag_start_dst = None
         self._panel.update_overlay()
-        self.section_modified.emit()
+        self._set_dirty(True)
 
     def _delete_hovered_cp(self) -> None:
         section = self._panel.section
@@ -346,22 +340,64 @@ class WarpView(QWidget):
             cps.pop(self._cp_hovered)
             self._cp_hovered = -1
             self._panel.update_overlay()
-            self.section_modified.emit()
+            self._set_dirty(True)
 
-    def _clear_all_cps(self) -> None:
+    # ------------------------------------------------------------------
+    # Draft / save / clear / discard
+    # ------------------------------------------------------------------
+
+    def is_dirty(self) -> bool:
+        return self._dirty
+
+    def has_persisted_state(self) -> bool:
+        baseline = self._baseline_warp
+        if baseline is None:
+            return False
+        return bool(baseline.control_points)
+
+    def save(self) -> bool:
+        """Commit the current control-point list as this slice's warp."""
         section = self._panel.section
         if section is None:
-            return
+            return False
+        self._baseline_warp = copy.deepcopy(section.warp)
+        self._set_dirty(False)
+        return True
+
+    def clear(self) -> bool:
+        """Wipe this slice's warp control points."""
+        section = self._panel.section
+        if section is None:
+            return False
         section.warp.control_points.clear()
+        section.warp.status = AlignmentStatus.NOT_STARTED
         self._cp_hovered = -1
         self._cp_dragging = -1
         self._cp_drag_start_norm = None
         self._cp_drag_start_dst = None
-        self._update_clear_cps_enabled()
-        self._panel.update_overlay()
-        self.section_modified.emit()
+        self._baseline_warp = copy.deepcopy(section.warp)
+        self._set_dirty(False)
+        if self._active:
+            self._panel.update_overlay()
+        return True
 
-    def _update_clear_cps_enabled(self) -> None:
+    def discard(self) -> None:
+        """Restore the section's warp from the baseline snapshot."""
         section = self._panel.section
-        has_cps = section is not None and bool(section.warp.control_points)
-        self._clear_cps_btn.setEnabled(has_cps)
+        if section is None or self._baseline_warp is None:
+            self._set_dirty(False)
+            return
+        section.warp = copy.deepcopy(self._baseline_warp)
+        self._cp_hovered = -1
+        self._cp_dragging = -1
+        self._cp_drag_start_norm = None
+        self._cp_drag_start_dst = None
+        self._set_dirty(False)
+        if self._active:
+            self._panel.update_overlay()
+
+    def _set_dirty(self, dirty: bool) -> None:
+        if self._dirty == dirty:
+            return
+        self._dirty = dirty
+        self.dirty_changed.emit(dirty)

@@ -303,13 +303,16 @@ class SectionCanvasPanel(QWidget):
         )
 
     def make_status_label(self) -> QLabel:
-        """Create a status label that tracks the loaded section's filename."""
+        """Create a status label that tracks the loaded section's filename.
+
+        Style is applied by ``view_chrome.make_view_status_bar`` so the bar
+        looks identical across Prep / Align / Warp.
+        """
         if self._section is None:
             text = "No section loaded"
         else:
             text = os.path.basename(self._section.original_path)
         lbl = QLabel(text)
-        lbl.setStyleSheet("color: #888; font-size: 11px; padding-left: 8px;")
         self._status_labels.append(lbl)
         return lbl
 
