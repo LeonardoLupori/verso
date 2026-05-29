@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QHBoxLayout, QScrollArea, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QScrollArea, QVBoxLayout, QWidget
 
 from verso.engine.model.project import Section
 from verso.gui.widgets.properties.sections import (
@@ -28,7 +28,6 @@ class WarpPage(QWidget):
 
         content = QWidget()
         layout = QVBoxLayout(content)
-        layout.setContentsMargins(0, 0, 0, 0)
         layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         layout.setSpacing(8)
         scroll.setWidget(content)
@@ -40,14 +39,8 @@ class WarpPage(QWidget):
         layout.addWidget(self.cp)
         layout.addStretch()
 
-        # Wrap the save bar so it gets the same horizontal inset as the
-        # group boxes inside the scroll area (without shrinking the scroll
-        # viewport, which would clip the inner content).
         self.save_bar = SaveBarBox()
-        save_bar_wrap = QHBoxLayout()
-        save_bar_wrap.setContentsMargins(0, 0, 0, 0)
-        save_bar_wrap.addWidget(self.save_bar)
-        outer.addLayout(save_bar_wrap)
+        layout.addWidget(self.save_bar)
 
     def update_section(self, _section: Section | None) -> None:
         pass
