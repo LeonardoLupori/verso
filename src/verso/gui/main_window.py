@@ -424,40 +424,45 @@ class MainWindow(QMainWindow):
         self._filmstrip.section_selected.connect(self._state.set_section)
 
         # Properties
-        self._props.flip_h_changed.connect(self._on_flip_h_changed)
-        self._props.flip_v_changed.connect(self._on_flip_v_changed)
-        self._props.mask_visibility_changed.connect(self._prep.set_mask_visible)
-        self._props.mask_opacity_changed.connect(self._prep.set_mask_opacity)
-        self._props.mask_color_changed.connect(self._prep.set_mask_color)
-        self._props.mask_negative_changed.connect(self._prep.set_mask_negative)
-        self._props.mask_draw_mode_changed.connect(self._prep.set_draw_mode)
-        self._props.brush_size_changed.connect(self._prep.set_brush_size)
-        self._prep.brush_size_changed.connect(self._props.set_brush_size)
-        self._props.autodetect_requested.connect(self._on_prep_autodetect_requested)
-        self._props.clear_mask_requested.connect(self._on_prep_clear_mask_requested)
-        self._props.erode_mask_requested.connect(lambda px: self._prep.apply_morph(px, "erode"))
-        self._props.expand_mask_requested.connect(lambda px: self._prep.apply_morph(px, "expand"))
+        flip = self._props.prep.flip
+        flip.flip_h_changed.connect(self._on_flip_h_changed)
+        flip.flip_v_changed.connect(self._on_flip_v_changed)
+        mask = self._props.prep.mask
+        mask.visibility_changed.connect(self._prep.set_mask_visible)
+        mask.opacity_changed.connect(self._prep.set_mask_opacity)
+        mask.color_changed.connect(self._prep.set_mask_color)
+        mask.negative_changed.connect(self._prep.set_mask_negative)
+        mask.draw_mode_changed.connect(self._prep.set_draw_mode)
+        mask.brush_size_changed.connect(self._prep.set_brush_size)
+        self._prep.brush_size_changed.connect(mask.set_brush_size)
+        mask.autodetect_requested.connect(self._on_prep_autodetect_requested)
+        mask.clear_requested.connect(self._on_prep_clear_mask_requested)
+        mask.erode_requested.connect(lambda px: self._prep.apply_morph(px, "erode"))
+        mask.expand_requested.connect(lambda px: self._prep.apply_morph(px, "expand"))
         # Hemisphere subpanel — non-draw actions.
-        self._props.lr_visibility_changed.connect(self._prep.set_lr_visible)
-        self._props.lr_set_all_left_requested.connect(self._on_lr_set_all_left)
-        self._props.lr_set_all_right_requested.connect(self._on_lr_set_all_right)
-        self._props.lr_clear_requested.connect(self._on_lr_clear_requested)
+        hemi = self._props.prep.hemisphere
+        hemi.visibility_changed.connect(self._prep.set_lr_visible)
+        hemi.set_all_left_requested.connect(self._on_lr_set_all_left)
+        hemi.set_all_right_requested.connect(self._on_lr_set_all_right)
+        hemi.clear_requested.connect(self._on_lr_clear_requested)
         # Hemisphere — draw-mode lifecycle.
-        self._props.lr_draw_mode_toggled.connect(self._on_lr_draw_mode_toggled)
-        self._props.lr_apply_requested.connect(self._on_lr_draw_apply)
-        self._props.lr_cancel_requested.connect(self._on_lr_draw_cancel)
+        hemi.draw_mode_toggled.connect(self._on_lr_draw_mode_toggled)
+        hemi.apply_requested.connect(self._on_lr_draw_apply)
+        hemi.cancel_requested.connect(self._on_lr_draw_cancel)
         # Hemisphere — appearance.
-        self._props.lr_opacity_changed.connect(self._prep.set_lr_opacity)
-        self._props.lr_left_color_changed.connect(self._prep.set_lr_left_color)
-        self._props.lr_right_color_changed.connect(self._prep.set_lr_right_color)
-        self._props.opacity_changed.connect(self._on_opacity_changed)
-        self._props.overlay_color_changed.connect(self._panel.set_outline_color)
-        self._props.overlay_mode_changed.connect(self._panel.set_overlay_mode)
+        hemi.opacity_changed.connect(self._prep.set_lr_opacity)
+        hemi.left_color_changed.connect(self._prep.set_lr_left_color)
+        hemi.right_color_changed.connect(self._prep.set_lr_right_color)
+        # Overlay lives in both Align and Warp pages with independent state.
+        for overlay in (self._props.align.overlay, self._props.warp.overlay):
+            overlay.opacity_changed.connect(self._on_opacity_changed)
+            overlay.color_changed.connect(self._panel.set_outline_color)
+            overlay.mode_changed.connect(self._panel.set_overlay_mode)
 
         # PrepView edits
         self._prep.section_modified.connect(self._on_prep_modified)
-        self._prep.mask_negative_changed.connect(self._props.set_mask_negative)
-        self._prep.mask_visibility_changed.connect(self._props.set_mask_visible)
+        self._prep.mask_negative_changed.connect(mask.set_negative)
+        self._prep.mask_visibility_changed.connect(mask.set_visible_state)
 
         # AlignView navigator + store/clear; WarpView edits.  Both views share
         # the same SectionCanvasPanel, so section-modified signals from either
@@ -467,7 +472,7 @@ class MainWindow(QMainWindow):
         self._align.alignments_updated.connect(self._on_alignments_updated)
         self._align.clear_all_alignments_requested.connect(self._clear_all_alignments)
         self._warp.section_modified.connect(self._on_align_modified)
-        self._props.cp_style_changed.connect(self._on_cp_style_changed)
+        self._props.warp.cp.style_changed.connect(self._on_cp_style_changed)
 
     # ------------------------------------------------------------------
     # View switching
@@ -610,7 +615,7 @@ class MainWindow(QMainWindow):
         if self._brightness_dialog is not None:
             self._brightness_dialog.set_channels(project.channels)
         self._filmstrip.populate(project.sections, project.channels)
-        self._props.apply_cp_style(project.cp_size, project.cp_shape, project.cp_color)
+        self._props.warp.cp.apply_style(project.cp_size, project.cp_shape, project.cp_color)
         self._warp.set_cp_style(project.cp_size, project.cp_shape, project.cp_color)
 
         if self._state.project_path is not None:
@@ -710,7 +715,7 @@ class MainWindow(QMainWindow):
         self._panel.set_channels(project.channels)
         if self._brightness_dialog is not None:
             self._brightness_dialog.set_channels(project.channels)
-        self._props.apply_cp_style(project.cp_size, project.cp_shape, project.cp_color)
+        self._props.warp.cp.apply_style(project.cp_size, project.cp_shape, project.cp_color)
         self._warp.set_cp_style(project.cp_size, project.cp_shape, project.cp_color)
         self._update_reverse_order_enabled()
         self._update_deepslice_enabled()
@@ -809,7 +814,7 @@ class MainWindow(QMainWindow):
             # Sync the draw button with PrepView's actual state — covers section
             # navigation, view switches, or anything else that may have torn the
             # editor down behind our back.
-            self._props.set_lr_draw_active(self._prep.is_lr_draw_active())
+            self._props.prep.hemisphere.set_draw_active(self._prep.is_lr_draw_active())
             self._refresh_lr_status()
 
     # ------------------------------------------------------------------
@@ -835,7 +840,7 @@ class MainWindow(QMainWindow):
         if value == section.preprocessing.flip_horizontal:
             return
         if self._prep.cancel_lr_draw_if_active():
-            self._props.set_lr_draw_active(False)
+            self._props.prep.hemisphere.set_draw_active(False)
         section.preprocessing.flip_horizontal = value
         self._clear_alignment_for_flip(section)
         self._after_flip_refresh()
@@ -847,7 +852,7 @@ class MainWindow(QMainWindow):
         if value == section.preprocessing.flip_vertical:
             return
         if self._prep.cancel_lr_draw_if_active():
-            self._props.set_lr_draw_active(False)
+            self._props.prep.hemisphere.set_draw_active(False)
         section.preprocessing.flip_vertical = value
         self._clear_alignment_for_flip(section)
         self._after_flip_refresh()
@@ -925,24 +930,24 @@ class MainWindow(QMainWindow):
         else:
             # User untoggled the button without using Apply/Cancel → treat as Cancel.
             self._prep.exit_lr_draw_mode(apply=False)
-        self._props.set_lr_draw_active(active)
+        self._props.prep.hemisphere.set_draw_active(active)
         self._refresh_lr_status()
 
     def _on_lr_draw_apply(self) -> None:
         self._prep.exit_lr_draw_mode(apply=True)
-        self._props.set_lr_draw_active(False)
+        self._props.prep.hemisphere.set_draw_active(False)
         # section_modified emits inside exit_lr_draw_mode → status + project save
         # are handled by _on_prep_modified.  Refresh overview row eagerly.
         self._overview.refresh_row(self._state.section_index)
 
     def _on_lr_draw_cancel(self) -> None:
         self._prep.exit_lr_draw_mode(apply=False)
-        self._props.set_lr_draw_active(False)
+        self._props.prep.hemisphere.set_draw_active(False)
         self._refresh_lr_status()
 
     def _refresh_lr_status(self) -> None:
         """Push the current PrepView L/R state into the properties panel label."""
-        self._props.set_lr_status(self._prep.lr_status_text())
+        self._props.prep.hemisphere.set_status(self._prep.lr_status_text())
 
     def _on_prep_modified(self) -> None:
         self._overview.refresh_row(self._state.section_index)
@@ -1368,7 +1373,7 @@ class MainWindow(QMainWindow):
         project = self._state.project
         if project is None:
             return
-        self._props.update_ap_plot(project.sections, self._state.section_index)
+        self._props.align.ap_plot.update_plot(project.sections, self._state.section_index)
 
     def _maybe_create_pngs(self, export_path: str) -> None:
         """Offer to create PNG copies if any are missing next to the export."""
