@@ -519,7 +519,6 @@ class MainWindow(QMainWindow):
                 self._panel.load_section(section)
             if project is not None:
                 self._panel.set_channels(project.channels)
-            self._props.set_align_warp_mode(self._current_mode)
 
         # Refresh properties with current section
         self._props.set_mode(self._current_mode)
@@ -1032,7 +1031,6 @@ class MainWindow(QMainWindow):
         atlas = self._state.atlas
         if atlas is not None:
             ap_mm = self._anchoring_ap_mm(anchoring)
-            self._props.update_ap_from_anchoring(ap_mm)
             section = self._state.current_section
             if section is not None:
                 section.alignment.ap_position_mm = ap_mm
