@@ -98,7 +98,7 @@ class PrepView(QWidget):
         canvas_col.setSpacing(0)
 
         self._status_label = QLabel("No section loaded")
-        self._status_label.setFixedHeight(28)
+        self._status_label.setFixedHeight(36)
         self._status_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self._status_label.setStyleSheet(
             "background: #252525; color: #aaa; font-size: 11px; padding-left: 8px;"
