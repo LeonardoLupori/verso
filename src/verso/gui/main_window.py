@@ -250,27 +250,31 @@ class MainWindow(QMainWindow):
         act_adjust = QAction("Adjust &channels/brightness…", self)
         act_adjust.triggered.connect(self._open_brightness_dialog)
         images_menu.addAction(act_adjust)
-        batch_menu = images_menu.addMenu("&Batch processing")
+
+        batch_menu = mb.addMenu("&Batch")
+
+        preprocess_menu = batch_menu.addMenu("&Preprocess")
         act_batch_mask = QAction("Autodetect slice mask for &all slices", self)
         act_batch_mask.triggered.connect(self._batch_autodetect_masks)
-        batch_menu.addAction(act_batch_mask)
+        preprocess_menu.addAction(act_batch_mask)
 
-        batch_menu.addSeparator()
-
-        self._act_deepslice = QAction("Align: Run &DeepSlice", self)
+        align_menu = batch_menu.addMenu("&Align")
+        self._act_deepslice = QAction("Run &DeepSlice", self)
         self._act_deepslice.setEnabled(False)
         self._act_deepslice.triggered.connect(self._run_deepslice)
-        batch_menu.addAction(self._act_deepslice)
+        align_menu.addAction(self._act_deepslice)
 
-        self._act_default_proposal = QAction("Align: &Default proposal", self)
+        self._act_default_proposal = QAction("&Default proposal", self)
         self._act_default_proposal.setEnabled(False)
         self._act_default_proposal.triggered.connect(self._revert_to_default_proposal)
-        batch_menu.addAction(self._act_default_proposal)
+        align_menu.addAction(self._act_default_proposal)
 
-        self._act_reverse_proposal = QAction("Align: &Reverse proposal", self)
+        self._act_reverse_proposal = QAction("&Reverse proposal", self)
         self._act_reverse_proposal.setEnabled(False)
         self._act_reverse_proposal.triggered.connect(self._reverse_section_order)
-        batch_menu.addAction(self._act_reverse_proposal)
+        align_menu.addAction(self._act_reverse_proposal)
+
+        batch_menu.addMenu("&Warp")
 
         export_menu = mb.addMenu("&Export")
         act_export_images = QAction("Images with atlas &overlay…", self)
