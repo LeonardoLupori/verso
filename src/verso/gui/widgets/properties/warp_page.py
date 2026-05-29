@@ -40,7 +40,7 @@ class WarpPage(QWidget):
         layout.addStretch()
 
         self.save_bar = SaveBarBox()
-        outer.addWidget(self.save_bar)
+        layout.addWidget(self.save_bar)
 
     def update_section(self, _section: Section | None) -> None:
         pass

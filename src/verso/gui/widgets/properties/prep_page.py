@@ -42,7 +42,7 @@ class PrepPage(QWidget):
         layout.addStretch()
 
         self.save_bar = SaveBarBox()
-        outer.addWidget(self.save_bar)
+        layout.addWidget(self.save_bar)
 
     def update_section(self, section: Section | None) -> None:
         if section is None:
