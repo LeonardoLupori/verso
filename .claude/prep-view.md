@@ -1,13 +1,9 @@
 # Prep View — Specification
 
 Canvas view for section preprocessing: flipping, slice-mask editing, and
-left/right hemisphere labelling. Implementation source of truth is
-`src/verso/gui/views/prep_view.py` and the `_PrepProperties` page in
-`src/verso/gui/widgets/properties.py`.
-
-Originally derived from `maskEditor.m` (MATLAB predecessor) and adapted to
-VERSO's architecture (PyQt6 / pyqtgraph, engine/GUI separation,
-non-destructive workflow).
+left/right hemisphere labelling. Implementation source of truth:
+`src/verso/gui/views/prep_view.py` and the page / sub-panels under
+`src/verso/gui/widgets/properties/`.
 
 ---
 
@@ -19,27 +15,25 @@ Persisted on `section.preprocessing` (see [data-model.md](data-model.md)):
 - `slice_mask_path` — PNG, bool H×W in working-resolution
 - `lr_mask_path` — PNG, uint8 H×W with values {0, 1=left, 2=right}
 - `lr_line` — optional `[[x0, y0], [x1, y1]]` storage-frame endpoints used to
-  re-seed the line editor next time
+  re-seed the line editor
 
-Display-only state, held in `PrepView` (never persisted):
+Display / draft state, held in `PrepView` (never persisted directly):
 
 ```python
-_current_mask: np.ndarray | None      # H×W bool, working-res, storage frame
-_lr_mask: np.ndarray | None           # H×W uint8 {0,1,2}, storage frame
-_mask_dirty: bool                     # unsaved slice-mask changes
-_lr_dirty: bool
-_mask_visible: bool                   # M shortcut + eye button
-_lr_visible: bool                     # eye button
-_negative_mask: bool                  # N shortcut + checkbox
-_mask_opacity: float = 0.4
-_lr_mask_opacity: float = 0.5
-_mask_color: (r,g,b) = (255,255,255)
-_lr_left_color: (r,g,b)  = (220, 60, 60)
-_lr_right_color: (r,g,b) = (60, 130, 220)
-_draw_mode: "freehand" | "brush"      # default "freehand"
-_brush_radius: int = 20               # mask pixels
-_undo_stack: list[np.ndarray]         # max depth 20
-_lr_draw_mode: bool                   # line editor active?
+_current_mask: np.ndarray | None       # H×W bool, working-res, storage frame
+_lr_mask: np.ndarray | None            # H×W uint8 {0,1,2}, storage frame
+_mask_dirty: bool                      # in-memory mask differs from saved PNG
+_lr_dirty: bool                        # in-memory L/R differs from saved PNG
+_baseline_preprocessing: Preprocessing # deep-copy snapshot at load time
+_dirty: bool                           # any draft change since baseline
+_mask_visible / _lr_visible: bool      # eye toggles + M shortcut
+_negative_mask: bool                   # N shortcut + checkbox
+_mask_opacity / _lr_mask_opacity: float
+_mask_color, _lr_left_color, _lr_right_color: (r, g, b)
+_draw_mode: "freehand" | "brush"       # default "freehand"
+_brush_radius: int                     # mask pixels (Alt+wheel to adjust)
+_undo_stack: list[np.ndarray]          # slice mask only, depth 20
+_lr_draw_mode: bool                    # line editor active?
 ```
 
 Masks are stored in the **unflipped** (storage) frame; flips are applied at
@@ -66,7 +60,7 @@ Pure / headless-safe. Public API used by `PrepView`:
 | `load_lr_mask(path, shape)` / `save_lr_mask(mask, path)` | L/R mask I/O (uint8) |
 | `lr_mask_to_rgba(mask, opacity, left_color, right_color)` | L/R → RGBA overlay |
 | `rasterize_lr_line(p0, p1, shape)` | Rasterize a line into an L/R uint8 mask |
-| `flip_lr_mask(mask, horizontal, vertical)` | Mirror L/R mask + swap left/right labels under H flips |
+| `flip_lr_mask(mask, horizontal, vertical)` | Mirror L/R mask + swap labels under H flips |
 
 ---
 
@@ -74,80 +68,43 @@ Pure / headless-safe. Public API used by `PrepView`:
 
 ### 3.1 Canvas (central widget)
 
-- A single `ImageCanvas` in `interaction_mode="prep"`
-- Status strip above the canvas shows the current section filename
-- Three overlay layers (managed by `ImageCanvas`):
-  1. Background — per-channel uint8 planes with per-channel LUT + visibility
-  2. Slice-mask overlay — RGBA, controlled by `_mask_color`/`_mask_opacity`/`_negative_mask`
-  3. L/R overlay — RGBA, controlled by `_lr_left_color`/`_lr_right_color`/`_lr_mask_opacity`
-- Drag emits `canvas_drag_started` / `canvas_dragged` / `canvas_drag_ended`
-- Alt + wheel emits `alt_wheel_scrolled` (brush-size adjust in brush mode)
-- The canvas swaps cursors (draw vs erase vs line-edit) based on Shift state
-  and current mode
+- A single `ImageCanvas` in `interaction_mode="prep"`.
+- A 36 px status bar (built via `widgets/view_chrome.make_view_status_bar`)
+  shows the current section filename, matching Align / Warp exactly.
+- Three overlay layers managed by `ImageCanvas`:
+  1. Background — per-channel uint8 planes with per-channel LUT + visibility.
+  2. Slice-mask overlay — RGBA, controlled by `_mask_color` /
+     `_mask_opacity` / `_negative_mask`.
+  3. L/R overlay — RGBA, controlled by `_lr_left_color` /
+     `_lr_right_color` / `_lr_mask_opacity`.
+- Drag emits `canvas_drag_started` / `canvas_dragged` / `canvas_drag_ended`.
+- Alt + wheel emits `alt_wheel_scrolled` (brush-size adjust in brush mode).
+- The canvas swaps cursors (draw vs erase vs line-edit) based on Shift
+  state and current mode.
 
-### 3.2 Right panel — `_PrepProperties`
+### 3.2 Right panel — `PrepPage`
 
-Single scrollable column inside the shared `PropertiesPanel` dock (the dock is
-a fixed-width `QWidget`, not a `QDockWidget`). The panel contains three
-`QGroupBox`es, in this order:
+Lives in `widgets/properties/prep_page.py`. Sub-panels (each its own
+`QGroupBox` file under `widgets/properties/sections/`):
 
-**Flip image** — `flip_box`
-```
-[ ⇄ Horizontal ]   [ ⇅ Vertical ]
-```
-- Two icon-only checkable buttons
-- Emit `flip_h_changed(bool)` / `flip_v_changed(bool)`
+1. **`FlipBox`** (`flip.py`) — horizontal + vertical flip toggles.
+2. **`MaskBox`** (`mask.py`) — slice-mask visibility, opacity, color,
+   negative, draw-mode selector, brush size, erode / expand, autodetect,
+   clear.
+3. **`HemisphereBox`** (`hemisphere.py`) — L/R visibility, opacity, left /
+   right colors, status label, set-all-left / set-all-right, draw line,
+   clear, plus apply / cancel while the line editor is active.
+4. **`SaveBarBox`** (`save_bar.py`) — *Clear* / *Save* buttons, pinned to
+   the bottom of the page (outside the scroll area).
 
-**Slice mask** — `mask_box`
-```
-[👁] [■]                          [ ] Show negative
-Opacity   [━━━●━━━━━━] 0.40
+Each sub-panel is a public attribute (`page.flip`, `page.mask`,
+`page.hemisphere`, `page.save_bar`) so `MainWindow` wires signals to them
+directly — there is no signal re-export on `PropertiesPanel`.
 
-[ Freehand ] [ Brush ]
-Brush     [━━●━━━━━━━] 20
-
-[ Erode ] [ Expand ]  [ 5 ⇕ ]
-[ Auto-detect ]      [ Clear ]
-```
-- Eye button toggles `_mask_visible` → `mask_visibility_changed(bool)`
-- Color swatch opens `QColorDialog` → `mask_color_changed(tuple)`
-- "Show negative" checkbox → `mask_negative_changed(bool)`
-- Opacity slider 0–100 → `mask_opacity_changed(float)`
-- Freehand / Brush segmented buttons (exclusive) → `mask_draw_mode_changed(str)`
-- Brush size slider 5–200 → `brush_size_changed(int)`
-- Erode / Expand buttons read the spinbox (1–20 px) and emit
-  `erode_mask_requested(int)` / `expand_mask_requested(int)`
-- Auto-detect → `autodetect_requested`, Clear → `clear_mask_requested`
-
-**Hemisphere** — `hemi_box`
-```
-[👁]  <status: 'Not set' | 'All left' | 'All right' | 'Line drawn'>  [■L] [■R]
-Opacity   [━━━━━●━━━━] 0.50
-
-[ All left ]  [ All right ]
-[ Draw line ] [ Clear ]
-
-(while drawing only:)
-[ ✓ Apply ] [ ✕ Cancel ]
-```
-- Eye button → `lr_visibility_changed(bool)`
-- Two color swatches → `lr_left_color_changed(tuple)` / `lr_right_color_changed(tuple)`
-- Opacity slider 0–100 → `lr_opacity_changed(float)`
-- All left / All right → `lr_set_all_left_requested` / `lr_set_all_right_requested`
-- Draw line (checkable) → `lr_draw_mode_toggled(bool)`; label changes to
-  "Drawing..." while active; Apply/Cancel toolbar appears below
-- Clear → `lr_clear_requested`
-- Apply/Cancel → `lr_apply_requested` / `lr_cancel_requested`
-- While draw mode is active, "All left" / "All right" / "Clear" are disabled
-
-All signals are re-exposed on the outer `PropertiesPanel` for `MainWindow` to
-connect to. `PropertiesPanel.setMinimumWidth(130)` — the dock splitter allows
-the user to widen it freely.
-
-> **Not in the panel**: per-channel R/G brightness sliders. Brightness is
-> handled globally for the whole project via the brightness dialog
-> (`dialogs/brightness.py`), not per-view. The earlier plan for in-panel R/G
-> sliders was dropped.
+> **Not in the panel**: per-channel brightness sliders. Channel
+> brightness is project-wide and edited through the floating
+> `dialogs/brightness.py` dialog (opened from Image → Adjust
+> channels/brightness).
 
 ---
 
@@ -159,83 +116,112 @@ Two draw modes, toggled from the right panel:
 
 **Freehand** (default):
 - On drag, points accumulate and a `PlotCurveItem` previews the stroke in
-  `_DRAW_COLOR` (blue) or `_ERASE_COLOR` (red) based on Shift state at
-  drag-start
-- On release, the polygon is baked into the mask via `apply_freehand_stroke`
-- Strokes with < 3 points are dropped
-- One undo snapshot per stroke
+  blue (draw) or red (erase) based on Shift state at drag-start.
+- On release, the polygon is baked into the mask via `apply_freehand_stroke`.
+- Strokes with < 3 points are dropped.
+- One undo snapshot per stroke.
 
 **Brush**:
 - Single click or drag stamps disks along the cursor path via
-  `apply_brush_stroke` (live, no preview-then-bake)
-- Brush size: slider in panel, or **Alt + mouse wheel** while hovering the
-  canvas (step 5, clamped 5–200)
-- Cursor is replaced with a circle-outline pixmap sized to the brush radius
-- One undo snapshot per stroke (snapshot taken on drag-start / click)
+  `apply_brush_stroke` (live, no preview-then-bake).
+- Brush size: slider in `MaskBox`, or **Alt + mouse wheel** while hovering
+  the canvas (step 5, clamped 5–200).
+- Cursor is replaced with a circle-outline pixmap sized to the brush
+  radius.
+- One undo snapshot per stroke (snapshot taken on drag-start / click).
 
-**Add vs erase**: hold **Shift** to erase. The mode is latched at the start
-of a stroke — releasing Shift mid-stroke does not flip add/erase.
+**Add vs erase**: hold **Shift** to erase. The mode is latched at the
+start of a stroke — releasing Shift mid-stroke does not flip add/erase.
 
 ### 4.2 L/R line editor
 
-Activated by toggling "Draw line" in the Hemisphere group.
+Activated by toggling "Draw line" in `HemisphereBox`.
 
-- A `LRLineEditor` overlay (separate widget, `widgets/lr_line_editor.py`) is
-  created on the canvas with two draggable endpoint handles
-- Initial endpoints: re-seed from `section.preprocessing.lr_line` if present,
-  else a vertical line down the centre at 10 %–90 % of image height
-- Line color uses the configured L/R left/right colors
-- **Apply** rasterises the line via `rasterize_lr_line`, saves the L/R mask
-  to disk, and persists `lr_line` endpoints to the section
-- **Cancel** restores the previous `lr_mask_path` / `lr_line` and reloads
-- Switching sections, toggling a flip, or any other "would orphan the edit"
-  event calls `cancel_lr_draw_if_active()` first
-- Endpoints are converted between display and storage frames (involutive
-  H/V flip) by `_line_endpoint_to_display`
+- A `LRLineEditor` overlay (`widgets/lr_line_editor.py`) is created on
+  the canvas with two draggable endpoint handles.
+- Initial endpoints: re-seed from `section.preprocessing.lr_line` if
+  present, else a vertical line down the centre at 10 %–90 % of image
+  height.
+- Line colour uses the configured L/R left/right colours.
+- **Apply** rasterises the line via `rasterize_lr_line` into `_lr_mask`,
+  records the endpoints on `section.preprocessing.lr_line`, and marks
+  the view dirty. The PNG is **not** written until Save.
+- **Cancel** drops the editor without altering state.
+- Switching sections, toggling a flip, or any other "would orphan the
+  edit" event calls `cancel_lr_draw_if_active()` first.
+- Endpoints convert between display and storage frames (involutive H/V
+  flip) via `_line_endpoint_to_display`.
 
 ### 4.3 "All left" / "All right"
 
-Sets `_lr_mask` to a constant uint8 array, clears `lr_line`, and saves the
-mask to disk immediately (the section is "edited").
+Sets `_lr_mask` to a constant uint8 array, clears `lr_line`, marks the
+view dirty. PNG is written on Save.
 
-### 4.4 Clear (L/R)
+### 4.4 Clear (L/R) from `HemisphereBox`
 
-Deletes the on-disk L/R mask file, clears `lr_mask_path`, `lr_line`, and
-`_lr_mask` — the section returns to "Not set".
-
----
-
-## 5. Undo stack
-
-- Single Python list `_undo_stack: list[np.ndarray]` for the slice mask only
-- Snapshot pushed before every stroke (freehand or brush), auto-detect,
-  clear, or erode/expand
-- Max depth 20; oldest is popped on overflow
-- `undo_mask_edit()` (bound to **U** and `Ctrl+Z`) pops and restores
-- L/R changes are **not** undoable — Apply/Cancel in the line editor serves
-  that purpose, and All-Left/All-Right/Clear write through immediately
+Drops the in-memory `_lr_mask`, clears `lr_line`, and marks the view
+dirty. The on-disk PNG is only deleted when the user hits Save (or the
+view-level **Clear** in `SaveBarBox`, which wipes everything).
 
 ---
 
-## 6. Persistence
+## 5. Draft / save / clear / discard
 
-- On `load_section`: read PNG from `slice_mask_path` and `lr_mask_path` if
-  set; otherwise start with an empty slice mask and no L/R overlay
-- On section change: `save_current_mask_if_dirty()` is called before loading
-  the next section — no confirmation dialog (non-destructive workflow)
-- L/R mask is saved immediately by All-left / All-right / Apply, so there is
-  no L/R dirty path on section change
-- Slice masks live at `<project>/masks/<stem>-slice-mask.png`
-- L/R masks live at `<project>/lr_masks/<stem>_lr.png`
-- Every save emits `section_modified` so the main window can persist
-  `project.json` and refresh the overview
+PrepView never writes to disk implicitly. The four shared draft methods
+are:
+
+| Method | Effect |
+|---|---|
+| `save()` | Write dirty slice-mask + L/R PNGs, sync `section.preprocessing.*_path`. If a flip changed during the draft, also wipe the slice's alignment + warp (the old alignment was anchored in the un-flipped frame). Re-snapshot `_baseline_preprocessing`. |
+| `clear()` | Delete the slice-mask + L/R PNGs from disk, reset `section.preprocessing` to defaults, drop in-memory buffers, re-snapshot baseline. If a flip toggled to False as part of clearing, also wipe alignment + warp. |
+| `discard()` | Deep-copy `_baseline_preprocessing` back onto the section, drop in-memory buffers, reload mask / L/R from disk. Used on slice change, view switch, and when the user picks Discard in a Save/Discard/Cancel dialog. |
+| `is_dirty()` | True iff any draft change is pending. Drives `SaveBarBox.set_dirty`. |
+| `has_persisted_state()` | True iff there's anything saved on disk to clear. Drives `SaveBarBox.set_clear_enabled`. |
+
+`mark_flip_changed()` is called by `MainWindow._on_flip_*_changed` after
+toggling a flip flag on the section, so the view marks itself dirty and
+the alignment-wipe side-effect is deferred to `save()`.
+
+A `dirty_changed(bool)` signal is emitted whenever `_dirty` transitions.
+`MainWindow` wires it to `props.prep.save_bar.set_dirty`.
 
 ---
 
-## 7. Keyboard shortcuts
+## 6. Undo stack
 
-All registered as `WindowShortcut` on `PrepView` and gated so they no-op when
-the view is not visible.
+- Single Python list `_undo_stack: list[np.ndarray]` for the slice mask
+  only.
+- Snapshot pushed before every stroke (freehand or brush), autodetect,
+  clear, or erode/expand.
+- Max depth 20; oldest popped on overflow.
+- `undo_mask_edit()` (bound to **U** and `Ctrl+Z`) pops and restores.
+- L/R changes are **not** undoable — Apply/Cancel in the line editor
+  serves that purpose, and the SaveBar Clear lets the user start over.
+- The undo stack is cleared on `load_section`, `discard`, and `clear`.
+
+---
+
+## 7. Persistence
+
+- On `load_section`: read PNGs from `slice_mask_path` and `lr_mask_path`
+  if set; otherwise start with an empty slice mask and no L/R overlay.
+  Deep-copy `section.preprocessing` into `_baseline_preprocessing`.
+- On slice change or view switch: `discard()` reverts the section's
+  preprocessing to baseline and reloads PNGs.
+- On **Save** (via `SaveBarBox` or `Ctrl+S` while Prep is active): write
+  any dirty PNGs, persist preprocessing field changes, then `MainWindow`
+  writes `project.json`.
+- On **Clear**: delete PNGs, reset preprocessing, then `project.json` is
+  written.
+- Slice masks live at `<project>/masks/<stem>-slice-mask.png`.
+- L/R masks live at `<project>/lr_masks/<stem>_lr.png`.
+
+---
+
+## 8. Keyboard shortcuts
+
+All registered as `WindowShortcut` on `PrepView` and gated so they no-op
+when the view is not visible.
 
 | Key | Action |
 |---|---|
@@ -244,18 +230,15 @@ the view is not visible.
 | **U** or **Ctrl+Z** | Undo last slice-mask edit |
 | **Shift** (held during drag/click) | Erase instead of draw |
 | **Alt + wheel** (over canvas, brush mode) | Adjust brush size |
+| **Ctrl+S** | Save the active view's draft + write `project.json` |
 | **← / →** (from main window) | Previous / next section |
-
-Note: the originally-planned A/D (draw/erase tool switch) and R/G (channel
-toggle) shortcuts were not implemented. Draw vs erase is a Shift modifier on
-a single tool; channel visibility is handled outside the prep panel.
 
 ---
 
-## 8. Deferred / out of scope
+## 9. Deferred / out of scope
 
-- Polygon and bucket-fill drawing tools
-- Mask import from external PNG (no menu action yet)
-- L/R mask undo
+- Polygon and bucket-fill drawing tools.
+- Mask import from external PNG (no menu action yet).
+- L/R mask undo.
 - Per-channel brightness controls inside the prep panel (handled by the
-  global brightness dialog)
+  global brightness dialog).

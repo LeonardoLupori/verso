@@ -63,10 +63,10 @@ Original images are never modified. All preprocessing (flip, masks, contrast) is
 | Tier | Resolution | Purpose |
 |---|---|---|
 | Full resolution | Original (e.g., 20000×15000) | On disk, used only for final export |
-| Working resolution | 1000px on long side | Interactive registration, masks, warping |
-| Filmstrip thumbnail | ~100–150px on long side | Overview table, filmstrip nav |
+| Working resolution | `WORKING_SCALE × original` (default 0.2; see `engine/io/image_io.py`) | Interactive registration, masks, warping |
+| Filmstrip thumbnail | ≤ `FILMSTRIP_MAX_SIDE` = 150 px on long side | Overview table, filmstrip nav |
 
-Control points and masks are defined in working resolution space. Scaling factor stored per section.
+Control points and masks are defined in working-resolution space. The per-section ratio `section.scale = working_long_side / original_long_side` is stored so full-resolution export can scale back up.
 
 ### Warping algorithm
 
@@ -115,14 +115,18 @@ User projects are folders, not single files:
 
 ```
 my_experiment/
-    project.json      # all state, settings, metadata
-    thumbnails/       # max 2000px working copies
-    masks/            # slice masks, L/R masks (PNG)
-    alignments/       # QuickNII/VisuAlign-compatible JSON
-    exports/          # warped images, CSVs, point clouds
+    project-verso.json   # all state, settings, metadata (DEFAULT_PROJECT_FILENAME)
+    thumbnails/          # working-resolution OME-TIFFs + filmstrip PNGs
+    masks/               # slice masks (1-bit PNG)
+    lr_masks/            # L/R hemisphere masks (uint8 PNG: 0/1/2)
+    exports/             # export outputs (warped images, etc.)
 ```
 
-Original images are referenced by path in `project.json`, not copied. See [.claude/data-model.md](.claude/data-model.md) for the JSON schema.
+Original images are referenced by path in `section.original_path`, not copied. See [.claude/data-model.md](.claude/data-model.md) for the JSON schema.
+
+## Save policy
+
+Edits in Prep / Align / Warp are **drafts** — they live in memory only until the user clicks **Save** (or Clear) on the per-view SaveBar, or hits `Ctrl+S`. Switching slice or view silently discards the draft; close, open-other-project, import, batch, and export operations prompt **Save / Discard / Cancel** if the active view is dirty. See [.claude/ui-design.md](.claude/ui-design.md#properties-panel-right-dock) for the full SaveBar / Clear / discard semantics.
 
 ## GUI structure
 

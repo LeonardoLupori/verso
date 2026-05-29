@@ -2,154 +2,195 @@
 
 ## Framework
 
-- **PyQt6** with **QDockWidget** panels
-- Central widget: pyqtgraph canvas (always fixed in center)
-- Surrounding panels: QDockWidget instances, locked in place (not undockable):
-  ```python
-  panel.setFeatures(QDockWidget.DockWidgetFeature.NoDockWidgetFeatures)
-  ```
-- Panels are resizable via draggable splitters
+- **PyQt6** with **QDockWidget** panels (locked, no undocking):
+  `panel.setFeatures(QDockWidget.DockWidgetFeature.NoDockWidgetFeatures)`
+- Central widget: `QStackedWidget` with one entry per view.
+- **pyqtgraph** for image display, with the OpenGL viewport for fast composition.
+- Surrounding panels are resizable via splitters.
 
 ## Application views
 
-Three main views, switchable via tabs in a toolbar.
+Four views are wired into the central stack and switched via the top toolbar:
 
-### 1. Overview (table view)
+1. **Overview** (`OverviewView`) — table of all sections with progress badges.
+2. **Prep** (`PrepView`) — canvas for flips, slice mask, and L/R hemisphere editing.
+3. **Align** (`AlignView`) — canvas for affine atlas registration.
+4. **Warp** (`WarpView`) — canvas for nonlinear control-point refinement.
 
-The hub for organizing sections and tracking progress.
+`AlignView` and `WarpView` share one `SectionCanvasPanel` instance that is
+re-parented into whichever view is active. The shared panel preserves zoom,
+pan, and the channel GPU texture across mode switches.
 
-**Table columns**: serial number, thumbnail, filename, AP position, status checkmarks per pipeline step (Flip, L/R mask, Slice mask, Align, Warp)
+The Prep view has its own `ImageCanvas` (independent of the shared panel).
 
-**Status states per step**:
-- Empty — not done
-- Amber/tilde — in progress
-- Green checkmark — complete
+### Status bar (top of each canvas view)
 
-**Right side panel**: preview pane showing selected section's thumbnail with overlay indicators, metadata, action buttons, batch operation controls
+`Prep`, `Align`, and `Warp` all share the same chrome via
+`widgets/view_chrome.make_view_status_bar(label)`: a 36 px-high dark
+(`#252525`) bar with a left-aligned filename label (color `#aaa`, 11 px,
+vertically centered) and a 1 px bottom border. No buttons live in this bar.
 
-**Interactions**:
-- Drag-to-reorder rows
-- Right-click to rename
-- Double-click a section to open in Prep or Align/Warp view
+### 1. Overview
 
-**Summary bar** (bottom): total section count, fully prepped count, in-progress count
+Hub for organizing sections and tracking progress. Implemented in
+`src/verso/gui/views/overview_view.py`.
 
-**Batch actions**: "Auto-number AP" (interpolate AP positions from first/last), "Flip all selected"
+- Table columns: serial number, thumbnail, filename, AP position (mm),
+  status badges for Prep / Align / Warp.
+- Double-click a row → switch to Prep on that section.
+- Single-click sets the current section in the shared `AppState`.
 
-### 2. Prep (canvas view)
+### 2. Prep
 
-Full canvas for preprocessing a single section.
+Implemented in `src/verso/gui/views/prep_view.py`. See [prep-view.md](prep-view.md)
+for the full specification.
 
-**Canvas**: pyqtgraph image viewer showing the section at working resolution (1200px)
+- Single canvas with the section, slice-mask overlay, and L/R-mask overlay.
+- All Prep interactions (flip, mask paint, L/R draw mode) are draft mutations
+  that only persist on **Save**.
 
-**Left toolbar** (vertical tool palette):
-- Pen tool
-- Eraser tool
-- Polygon tool
-- Flood fill
-- Undo
+### 3. Align
 
-**Right panel**:
-- Brush size slider
-- Mask visibility toggles (show/hide slice mask, L/R mask)
-- Section metadata (filename, dimensions, channels)
-- Flip horizontal toggle
-- Channel selector (for multichannel data)
+Implemented in `src/verso/gui/views/align_view.py`.
 
-**Bottom**: filmstrip for navigating between sections without returning to Overview
+- Shared canvas with the atlas overlay (outline or fill, picked from the
+  Overlay properties group).
+- Left rail: `NavigatorPanel` with translate / rotate / tilt buttons next to
+  each axis label, driven by the atlas dimensions.
+- Space + mouse drag pans the overlay; navigator scale buttons stretch.
+- Anchoring edits are drafts; **Save** commits `anchoring → stored_anchoring`
+  and sets the slice's alignment status to `COMPLETE`. **Clear** wipes the
+  alignment + the slice's warp control points (since they were anchored to
+  the old plane).
 
-**Drawing targets**:
-- Slice mask: segment the tissue slice from the background
-- L/R boundary: mark the left/right hemisphere division
+### 4. Warp
 
-### 3. Align / Warp (canvas view)
+Implemented in `src/verso/gui/views/warp_view.py`.
 
-Full canvas for atlas registration and nonlinear refinement.
+- Same shared canvas, but in `warp` interaction mode.
+- Click empty canvas to place a control point; drag an existing point to
+  move it; **Delete** / **Backspace** removes the hovered point.
+- A `_warp_timer` throttles overlay re-warps to ~30 fps during drag.
+- Control-point edits are drafts; **Save** persists, **Clear** wipes the
+  slice's control points.
 
-**Canvas**: pyqtgraph image viewer showing histological section with semi-transparent atlas overlay on top
+## Properties panel (right dock)
 
-**Two sub-modes** (switchable within this view):
-- **Align mode**: adjust the atlas cut plane — AP position, rotation, scaling. This is the QuickNII equivalent.
-- **Warp mode**: place and drag control points for nonlinear refinement. This is the VisuAlign equivalent.
+`PropertiesPanel` (in `widgets/properties/panel.py`) is a `QStackedWidget`
+with one page per mode:
 
-**Right panel**:
-- Atlas selector (dropdown)
-- Overlay opacity slider
-- Channel selector
-- AP position (numeric input + slider)
-- Control point count display
-- Registration parameters
+| Page | File | Sections (`QGroupBox`) |
+|---|---|---|
+| OverviewPage | `properties/overview_page.py` | overview-specific summary |
+| PrepPage     | `properties/prep_page.py`     | `FlipBox`, `MaskBox`, `HemisphereBox`, `SaveBarBox` |
+| AlignPage    | `properties/align_page.py`    | `OverlayBox`, `APPlotBox`, `SaveBarBox` |
+| WarpPage     | `properties/warp_page.py`     | `OverlayBox`, `ControlPointsBox`, `SaveBarBox` |
 
-**Bottom**: filmstrip with border colors reflecting registration status:
-- Green = complete
-- Amber = in progress
-- Gray = not started
+Each `*Box` lives in its own file under `widgets/properties/sections/`. The
+sub-panels are exposed as plain public attributes (`panel.prep.mask`, etc.)
+so MainWindow wires signals to them directly — `PropertiesPanel` itself
+does not re-export them.
 
-## Filmstrip (shared widget)
+On Prep / Align / Warp pages the section list scrolls inside a
+`QScrollArea`, but `SaveBarBox` is pinned **outside** the scroll area so
+the Save / Clear buttons are always visible.
 
-Horizontal strip of section thumbnails at the bottom of canvas views (Prep and Align/Warp).
+### SaveBarBox
 
-- Click a thumbnail to load that section in the current canvas
-- Border color reflects status (green/amber/gray)
-- Current section is highlighted
-- Not shown in Overview (Overview has its own table)
-- Thumbnail size: ~100–150px on long side
+`widgets/properties/sections/save_bar.py`. Two buttons:
+
+- **Save** — enabled when the view has unsaved draft edits; commits them
+  to the in-memory `Section` and triggers a `project.json` write.
+- **Clear** — enabled when the slice has any persisted state to wipe;
+  resets the slice's view-specific state and writes `project.json`.
+
+Each view exposes `save()`, `clear()`, `discard()`, `is_dirty()`,
+`has_persisted_state()`, and a `dirty_changed(bool)` signal. MainWindow
+mirrors `dirty_changed` to `SaveBarBox.set_dirty`.
+
+**Draft semantics.** All in-canvas edits mutate `Section` in memory but
+take a deep-copy *baseline* snapshot at section-load time. `save()`
+commits the draft to disk; `clear()` wipes the slice's view-specific
+state to disk; `discard()` rolls the in-memory `Section` back to the
+baseline. Switching slice or view fires `discard()` silently; close,
+open-other-project, import, batch, and export all route through
+`MainWindow._confirm_discard_active_draft()` which offers
+**Save / Discard / Cancel**.
+
+`Ctrl+S` (File → Save project) calls the active view's `save()` first,
+then writes `project.json`.
+
+## Filmstrip
+
+`widgets/filmstrip.py`, bottom dock. Visible in Prep / Align / Warp;
+hidden in Overview.
+
+- Horizontal strip of section thumbnails (`FILMSTRIP_MAX_SIDE = 150 px`,
+  see `engine/io/image_io.py`).
+- Click a thumbnail to set the current section.
+- Border colour reflects alignment status.
+
+## Top toolbar
+
+Four view-switch buttons (Overview, Preprocess, Align, Warp), styled as
+checkable pill buttons. Right-aligned: the current project name.
+
+## Menu bar
+
+- **File** — New / Open / Import (QuickNII, VisuAlign) / Import settings /
+  Save / Save As / Export (XML, QuickNII JSON, VisuAlign JSON) / Quit.
+- **Image** — Adjust channels / brightness (opens the global brightness
+  dialog; brightness is project-wide, not per-section).
+- **Batch**
+  - **Preprocess**: Autodetect slice masks; *Clear all slice masks*;
+    *Clear all L/R masks*.
+  - **Align**: Run DeepSlice; Default proposal; Reverse proposal;
+    *Clear all alignments*.
+  - **Warp**: *Clear all warps*.
+- **Export** — Images with atlas overlay.
+- **Help** — Atlas info; Project info.
+
+All "Clear all …" entries prompt for confirmation and route through
+`MainWindow._after_batch_clear` (resyncs the current view, refreshes the
+overview, writes `project.json`).
 
 ## Navigation flow
 
 ```
-Overview (hub) ←→ Prep (per-section canvas)
-Overview (hub) ←→ Align/Warp (per-section canvas)
-
-Within Prep: filmstrip allows sequential section navigation
-Within Align/Warp: filmstrip allows sequential section navigation
-
-Align/Warp → Quantify (batch operation, triggered when all sections aligned)
+Overview (hub) ──→ Prep / Align / Warp (canvas views)
+        ▲                │
+        └──── toolbar ───┘
 ```
 
-The user can always return to Overview from any view. The filmstrip allows working through sections sequentially without returning to Overview each time.
+The filmstrip (or **← / →** keys at the main window) walks through
+sections without leaving the canvas. Switching slice or view discards the
+active view's unsaved draft; destructive transitions (close, open another
+project, import, batch, export) prompt **Save / Discard / Cancel**.
 
 ## pyqtgraph canvas setup
 
 ```python
 import pyqtgraph as pg
-from PyQt6.QtOpenGLWidgets import QOpenGLWidget
-
 pg.setConfigOption('imageAxisOrder', 'row-major')  # match NumPy
-
-# Create graphics view with OpenGL acceleration
-view = pg.GraphicsLayoutWidget()
-view.viewport().setParent(None)
-view.setViewport(QOpenGLWidget())
-
-# Add image items
-plot = view.addPlot()
-plot.setAspectLocked(True)
-
-bg_item = pg.ImageItem()     # histological section (static)
-overlay_item = pg.ImageItem()  # atlas overlay (updated on warp)
-
-plot.addItem(bg_item)
-plot.addItem(overlay_item)
-
-# Set overlay transparency
-overlay_item.setOpacity(0.5)
 ```
+
+The shared `SectionCanvasPanel.canvas` stacks one `ImageItem` per channel
+plus overlay `ImageItem`s (mask, L/R mask, atlas outline / fill). The
+OpenGL viewport is opt-in inside `widgets/canvas.py`.
 
 ## Panel layout sketch
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  [Overview]  [Prep]  [Align/Warp]           toolbar     │
-├──────┬──────────────────────────────────┬───────────────┤
-│      │                                  │               │
-│ tool │                                  │  properties   │
-│ bar  │        pyqtgraph canvas          │  panel        │
-│      │                                  │  (right)      │
-│      │                                  │               │
-├──────┴──────────────────────────────────┴───────────────┤
-│  [ thumb ] [ thumb ] [ thumb ] [ thumb ]   filmstrip    │
-└─────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│  [Overview] [Preprocess] [Align] [Warp]      menubar      │
+├──────────────────────────────────────────┬────────────────┤
+│                                          │                │
+│  central QStackedWidget                  │  properties    │
+│  (Overview / Prep / Align / Warp)        │  panel         │
+│                                          │  (right dock)  │
+│                                          │                │
+│                                          │  [Save] [Clear]│  ← pinned bottom
+├──────────────────────────────────────────┴────────────────┤
+│  filmstrip (bottom dock; hidden in Overview)              │
+└──────────────────────────────────────────────────────────┘
 ```
-
-The left toolbar only appears in Prep view. The filmstrip appears in Prep and Align/Warp views. The properties panel content changes based on the active view.

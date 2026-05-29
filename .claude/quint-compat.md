@@ -143,20 +143,23 @@ Known differences from QuickNII output:
 
 The compatibility layer lives in `engine/io/quint_io.py`.
 
-### Key functions
+### Public functions
 
-```python
-def load_quint_json(path: Path) -> list[Section]:
-    """Load QuickNII or VisuAlign JSON → list of Section objects."""
+| Function | Purpose |
+|---|---|
+| `load_quicknii(path, atlas_name=...)` | Load a QuickNII JSON (no markers) → `Project`. |
+| `load_visualign(path, ...)` | Load a VisuAlign JSON (with markers) → `Project`. |
+| `save_quicknii(project, path, atlas_shape=...)` | Write QuickNII JSON (no markers). |
+| `save_quicknii_xml(project, path, atlas_shape=...)` | Write the QuickNII XML variant. |
+| `save_visualign(project, path, atlas_shape=...)` | Write VisuAlign JSON (sections with control points emit a `markers` array). |
 
-def save_quint_json(sections: list[Section], path: Path) -> None:
-    """Save sections as VisuAlign-compatible JSON (includes markers if any CPs present)."""
-```
+These are exposed in the File menu (Import QuickNII, Open VisuAlign,
+Export QuickNII XML / JSON, Export VisuAlign JSON).
 
 Internal helpers:
-- `_markers_to_control_points(markers)` — `[{x, y, dx, dy}]` → `[ControlPoint]`
-- `_control_points_to_markers(cps)` — `[ControlPoint]` → `[{x, y, dx, dy}]`
+- `_markers_to_control_points(markers)` — `[{x, y, dx, dy}]` → `[ControlPoint]`.
+- `_control_points_to_markers(cps)` — `[ControlPoint]` → `[{x, y, dx, dy}]`.
 
 ### Round-trip guarantee
 
-Loading a QuickNII/VisuAlign JSON and immediately saving it must produce a file that is semantically identical (same anchoring values, same marker values) to within floating-point precision. Write unit tests to verify this.
+Loading a QuickNII/VisuAlign JSON and immediately saving it must produce a file that is semantically identical (same anchoring values, same marker values) to within floating-point precision. The `tests/engine/test_quint_io.py` suite enforces this.

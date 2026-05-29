@@ -1,141 +1,108 @@
 # Warping Algorithm Reference
 
-## Algorithm: Delaunay triangulation (piecewise affine)
+Implementation: `src/verso/engine/warping.py`. Public API:
 
-This matches VisuAlign's approach. Not TPS or RBF.
+```python
+from verso.engine.warping import warp_overlay, find_atlas_position
+```
+
+## Algorithm: Delaunay piecewise affine, backward warp
+
+This matches VisuAlign's `sample(x, y)` approach. Not TPS or RBF.
 
 ### Warping scenario
 
-- Background: large histological section (~1000×1000 working resolution) — **static**, never recomputed during interaction
-- Overlay: smaller atlas image (~300×200) with transparency — **warped in real time** on every control point drag
-- Control points: 20–30 user-placed markers
+- Background: histological section at working resolution (~1000–4000 px) — **static**, never recomputed during interaction.
+- Overlay: smaller atlas image (typically a few hundred px on the long side) with transparency — **warped in real time** on every control-point drag.
+- Control points: 20–30 user-placed markers.
 
 ### How it works
 
-1. Each control point has two coordinate pairs: `(src_x, src_y)` in atlas space and `(dst_x, dst_y)` in warped space
-2. Build a Delaunay triangulation on the `src` positions using `scipy.spatial.Delaunay`
-3. For each pixel in the overlay, find its containing triangle and compute barycentric coordinates
-4. Interpolate the `dst` position using those barycentric coords → produces the dense warp map
-5. Apply the warp map with `cv2.remap`
+Each control point holds two normalised positions:
+- `src_x, src_y` ∈ [0, 1] — position in the **atlas overlay** (where the feature lives in the atlas plane).
+- `dst_x, dst_y` ∈ [0, 1] — position in the **section image** (where the user dragged the feature to).
 
-### Why Delaunay over TPS/RBF
+The warp uses a **backward remap** (needed by `cv2.remap`):
 
-- Each triangle is a local affine transform — trivially cheap to evaluate
-- Dragging one point only affects neighboring triangles
-- 20–30 points → ~40–60 triangles, trivial to rebuild on every drag
-- TPS requires re-solving an (N+3)×(N+3) linear system on every drag, then evaluating N kernel terms per pixel (~1.8M kernel calls at 60K pixels with 30 points)
-- Delaunay: one triangle lookup + one 2×2 matrix multiply per pixel
+1. Add four invisible corner anchors at `(0,0), (1,0), (0,1), (1,1)` with `src = dst` so the convex hull covers the full overlay.
+2. Build a Delaunay triangulation on the **destination** (section-space) points.
+3. For every pixel in the output (overlay-sized image):
+   1. Normalise its pixel coords to `[0, 1]` (section-space fractions).
+   2. Find the enclosing Delaunay triangle in **dst** space.
+   3. Compute barycentric coordinates inside that triangle.
+   4. Interpolate the matching **src** (atlas-space) coords from the triangle's vertices.
+   5. Convert back to pixel coords and record in the remap arrays.
+4. Apply the remap with `cv2.remap`. RGBA atlas overlays use
+   `cv2.INTER_NEAREST` so outline / fill opacity stays constant; opaque
+   overlays use `cv2.INTER_LINEAR`.
+
+### Why backward (and Delaunay) and not TPS/RBF
+
+- `cv2.remap` requires "where did this output pixel come from?" maps, so
+  the natural direction is dst → src.
+- Each triangle is a local affine map — trivially cheap to evaluate.
+- Dragging one point only affects neighbouring triangles, so the
+  triangulation can be rebuilt every frame.
+- TPS requires re-solving an `(N+3)×(N+3)` linear system on every drag
+  *and* evaluating `N` kernel terms per pixel.
+- Delaunay: one triangle lookup + a 3-coefficient barycentric blend per
+  pixel.
 
 ### Convex hull constraint
 
-Delaunay triangulation only interpolates — `find_simplex` returns -1 for pixels outside the convex hull of control points. To ensure the entire overlay is warped:
+`scipy.spatial.Delaunay.find_simplex` returns `-1` for pixels outside
+the convex hull of the input points. The four `(0,0) / (1,0) / (0,1) /
+(1,1)` corner anchors (`_CORNERS` in `warping.py`, prepended via
+`_with_corners`) guarantee the hull covers the whole `[0,1]²` overlay
+square. These anchors are invisible and not draggable.
 
-**Add four invisible corner anchor points** at the overlay image corners with `src = dst` (identity mapping). These are managed internally, not visible to or draggable by the user. This matches VisuAlign's behavior.
+### Public functions
 
-### Reference implementation
+| Function | Purpose |
+|---|---|
+| `warp_overlay(overlay, src_norm, dst_norm)` | Compute the backward remap and apply `cv2.remap`; returns the warped overlay (same shape/dtype). Do **not** pass corner anchors — they are added internally. |
+| `find_atlas_position(s, t, src_norm, dst_norm)` | Given a section-space cursor `(s, t) ∈ [0, 1]`, return the matching atlas-space `(u, v)`. Used by the Warp view to display atlas region labels under the cursor. |
 
-```python
-from scipy.spatial import Delaunay
-import numpy as np
-import cv2
-
-def compute_warp(overlay, src_pts, dst_pts):
-    """
-    Warp an overlay image using piecewise affine Delaunay triangulation.
-
-    Args:
-        overlay: (H, W, C) or (H, W) numpy array, uint8 or float32
-        src_pts: (N, 2) array — control point positions in overlay/atlas space
-        dst_pts: (N, 2) array — target positions in warped space
-            Both arrays must include corner anchors.
-
-    Returns:
-        warped: same shape/dtype as overlay
-    """
-    tri = Delaunay(src_pts)
-
-    h, w = overlay.shape[:2]
-    grid_x, grid_y = np.meshgrid(np.arange(w), np.arange(h))
-    pixels = np.column_stack([grid_x.ravel(), grid_y.ravel()])
-
-    # Find which triangle each pixel belongs to
-    simplices = tri.find_simplex(pixels)
-
-    # Initialize identity warp maps
-    map_x = grid_x.astype(np.float32).copy()
-    map_y = grid_y.astype(np.float32).copy()
-
-    # Mask: only process pixels inside the triangulation
-    valid = simplices >= 0
-    valid_pixels = pixels[valid]
-    valid_simplices = simplices[valid]
-
-    # Vectorized barycentric coordinate computation
-    # transform[s, :2] is a 2x2 matrix, transform[s, 2] is the origin
-    T = tri.transform[valid_simplices, :2]       # (M, 2, 2)
-    r = valid_pixels - tri.transform[valid_simplices, 2]  # (M, 2)
-    b = np.einsum('ijk,ij->ik', T, r)            # (M, 2)
-    bary = np.column_stack([b, 1 - b.sum(axis=1)])  # (M, 3)
-
-    # Look up destination coordinates via barycentric interpolation
-    idx = tri.simplices[valid_simplices]          # (M, 3) vertex indices
-    dx = (bary * dst_pts[idx, 0]).sum(axis=1)
-    dy = (bary * dst_pts[idx, 1]).sum(axis=1)
-
-    map_x.ravel()[valid] = dx.astype(np.float32)
-    map_y.ravel()[valid] = dy.astype(np.float32)
-
-    warped = cv2.remap(overlay, map_x, map_y, cv2.INTER_LINEAR)
-    return warped
-```
-
-**Important**: This is the vectorized version. Never use a Python for-loop over pixels.
-
-### Corner anchor helper
-
-```python
-def add_corner_anchors(src_pts, dst_pts, overlay_shape):
-    """
-    Add four corner anchors to ensure full overlay coverage.
-    Corners map to themselves (identity).
-    """
-    h, w = overlay_shape[:2]
-    corners = np.array([
-        [0, 0], [w - 1, 0],
-        [0, h - 1], [w - 1, h - 1]
-    ], dtype=np.float64)
-    src_all = np.vstack([corners, src_pts])
-    dst_all = np.vstack([corners, dst_pts])
-    return src_all, dst_all
-```
+Internally, `build_backward_remap(h, w, src_norm, dst_norm)` produces
+the `(map_x, map_y)` arrays consumed by `warp_overlay`.
 
 ### Performance budget
 
-| Step | Time (300×200 overlay) |
+| Step | Time (300 × 200 overlay) |
 |---|---|
-| Rebuild Delaunay (30 pts) | <1ms |
-| Build dense warp map (vectorized) | ~5ms |
-| `cv2.remap` | ~1ms |
-| **Total per drag event** | **~6ms** |
+| Rebuild Delaunay (30 pts) | < 1 ms |
+| Build dense remap (vectorised) | ~ 5 ms |
+| `cv2.remap` | ~ 1 ms |
+| **Total per drag event** | **~ 6 ms** |
+
+`WarpView._warp_timer` (33 ms interval, ~30 fps) throttles the
+`update_overlay` calls during a CP drag so we don't saturate the
+sampler.
 
 ### cv2.remap notes
 
-- Works natively on RGB `(H, W, 3)` — no per-channel loop
-- Accepts `float32` or `uint8`. Cast from `float64` if needed: `img.astype(np.float32)`
-- Channel-order agnostic (BGR vs RGB doesn't matter for remap)
-- Ensure contiguous arrays: `np.ascontiguousarray(img)` if needed
+- Works natively on RGB `(H, W, 3)` and RGBA `(H, W, 4)` — no
+  per-channel loop.
+- `map_x` and `map_y` must be `float32`.
+- Channel-order agnostic (BGR vs RGB doesn't matter for `cv2.remap`).
+- Pass `np.ascontiguousarray(img)` to avoid an internal copy.
 
 ### Full-resolution export
 
-For warping at full resolution during export (not interactive):
+For exporting the warped overlay at full resolution (non-interactive,
+`engine/io/export_images.py`):
 
-- Evaluate warp map on a coarse grid (e.g., 50×50), upsample with `cv2.resize`
-- Or use `scipy.ndimage.map_coordinates` for higher-order interpolation
-- `cv2.remap` on a full 1000×1000 image: ~10ms
+- Sample the atlas at a capped working size (~1000 px on the long side)
+  via `_ATLAS_SAMPLING_LONG_SIDE`, then upscale.
+- `cv2.remap` on a full ~1000 × 1000 image: ~ 10 ms.
 
 ### GUI integration
 
-- Background section: one pyqtgraph `ImageItem`, set once
-- Atlas overlay: second `ImageItem`, updated via `setImage(warped)` on every drag event
-- `pg.setConfigOption('imageAxisOrder', 'row-major')` to match NumPy
-- Drag signal → call `compute_warp()` → update overlay ImageItem
+- Background section: one (or more, per channel) pyqtgraph `ImageItem`s,
+  set once per section load.
+- Atlas overlay: a separate `ImageItem` updated via
+  `SectionCanvasPanel.update_overlay()` — which calls
+  `warp_overlay` if the active view set a `overlay_post_processor` (Warp
+  does; Align does not).
+- `pg.setConfigOption('imageAxisOrder', 'row-major')` for NumPy
+  conventions.
