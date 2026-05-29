@@ -4,8 +4,6 @@ This file provides guidance to Claude Code when working on the VERSO codebase.
 
 **VERSO** — Easy Registration of Sections, Obviously. A desktop application for registering serial histological brain sections to 3D reference atlases, replacing the QuickNII → VisuAlign → PyNutil pipeline with a single tool.
 
-For full project context, see [PROJECT_SPEC.md](PROJECT_SPEC.md).
-
 ## Quick reference
 
 ```bash
@@ -38,39 +36,8 @@ If you are writing a function that does computation, image processing, file I/O,
 
 ```
 src/verso/
-├── __init__.py              # version
-├── __main__.py              # python -m verso → launches gui
-│
-├── engine/
-│   ├── __init__.py          # PUBLIC API — re-exports from submodules
-│   ├── model/
-│   │   ├── project.py       # Project, Section dataclasses
-│   │   ├── alignment.py     # Alignment, anchoring matrix
-│   │   ├── mask.py          # Mask metadata (slice, L/R)
-│   │   └── coordinates.py   # coordinate space definitions, transform chain
-│   ├── io/
-│   │   ├── image_io.py      # load TIFF/PNG/JPEG, thumbnails, multi-channel
-│   │   ├── project_io.py    # save/load project.json
-│   │   ├── quint_io.py      # QuickNII/VisuAlign/DeepSlice JSON read/write
-│   │   └── export.py        # warped images, CSVs, point clouds
-│   ├── atlas.py             # atlas volume loading (brainglobe), slicing
-│   ├── registration.py      # affine registration logic
-│   ├── warping.py           # Delaunay triangulation warp, cv2.remap
-│   ├── preprocessing.py     # flip, masking (non-destructive)
-│   └── quantification.py    # region quantification
-│
-└── gui/
-    ├── app.py               # QApplication setup
-    ├── main_window.py       # QMainWindow, mode switching
-    ├── views/
-    │   ├── overview_view.py # table view, progress tracking
-    │   ├── prep_view.py     # canvas for masks, flipping
-    │   └── align_view.py    # canvas for affine + warp
-    └── widgets/
-        ├── canvas.py        # pyqtgraph image viewer + overlay
-        ├── filmstrip.py     # horizontal thumbnail strip
-        ├── properties.py    # context-sensitive right panel
-        └── roi_tools.py     # drawing tools for masks and control points
+├── engine/   # pure-Python computation, I/O, data model — public API in engine/__init__.py
+└── gui/      # PyQt6 views, widgets, dialogs — depends on engine, never the reverse
 ```
 
 ### Non-destructive workflow
@@ -149,7 +116,7 @@ User projects are folders, not single files:
 ```
 my_experiment/
     project.json      # all state, settings, metadata
-    thumbnails/       # 1200px working copies
+    thumbnails/       # max 2000px working copies
     masks/            # slice masks, L/R masks (PNG)
     alignments/       # QuickNII/VisuAlign-compatible JSON
     exports/          # warped images, CSVs, point clouds
@@ -159,30 +126,23 @@ Original images are referenced by path in `project.json`, not copied. See [.clau
 
 ## GUI structure
 
-Three application views (modes), switchable via toolbar:
+Four application views (modes), switchable via toolbar:
 
 1. **Overview** — table of all sections with progress tracking, batch operations
 2. **Prep** — canvas for preprocessing (masks, flipping) with drawing tools
-3. **Align/Warp** — canvas for atlas registration (affine) and nonlinear control points
+3. **Align** — canvas for atlas affine registration
+4. **Warp** — canvas for nonlinear control-point warping
 
-Filmstrip (horizontal thumbnail strip) appears at the bottom of Prep and Align/Warp views. Panels use locked `QDockWidget` (no undocking, resize only).
+Filmstrip (horizontal thumbnail strip) appears at the bottom of Prep, Align, and Warp views. Panels use locked `QDockWidget` (no undocking, resize only).
 
 See [.claude/ui-design.md](.claude/ui-design.md) for detailed view specifications.
-
-## Implementation status
-
-See [PROJECT_SPEC.md](PROJECT_SPEC.md) § 9 for the full roadmap.
-
-**Done**: Project scaffolding (repo, pyproject.toml, src layout, uv environment)
-
-**Next**: Complete dependency setup, create full folder structure, then implement data model (Step 2).
 
 ## Reference docs
 
 Detailed specifications that are too long for this file:
 
-- [PROJECT_SPEC.md](PROJECT_SPEC.md) — full project specification
 - [.claude/warping.md](.claude/warping.md) — Delaunay triangulation warping algorithm, reference code, performance budget
 - [.claude/data-model.md](.claude/data-model.md) — project.json schema, Section fields, coordinate conventions
 - [.claude/ui-design.md](.claude/ui-design.md) — detailed view layouts, navigation flow, widget specs
+- [.claude/prep-view.md](.claude/prep-view.md) — Prep view specification
 - [.claude/quint-compat.md](.claude/quint-compat.md) — QuickNII/VisuAlign JSON format, compatibility requirements
