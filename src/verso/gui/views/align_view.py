@@ -1,10 +1,11 @@
 """Align view — atlas registration canvas.
 
 Composes the shared :class:`SectionCanvasPanel` (created by ``MainWindow``
-and reparented into whichever view is active) and contributes the affine
-toolbar (scale / store / revert / clear / proposals) plus the
-orthogonal :class:`NavigatorPanel` on the left, which carries the per-view
-translate / rotate buttons next to each slice.
+and reparented into whichever view is active) and contributes a thin
+status bar plus the orthogonal :class:`NavigatorPanel` on the left, which
+carries the per-view translate / rotate buttons next to each slice. The
+store / revert / clear / clear-all buttons live in the properties panel
+(:class:`AlignActionsBox`) and are wired in via :meth:`bind_actions`.
 
 Warp-mode interaction lives in a sibling view, ``WarpView``.
 """
@@ -16,15 +17,13 @@ from typing import TYPE_CHECKING
 import numpy as np
 from PyQt6.QtWidgets import (
     QHBoxLayout,
-    QPushButton,
-    QSizePolicy,
-    QToolBar,
     QVBoxLayout,
     QWidget,
 )
 
 from verso.engine.model.alignment import AlignmentStatus
 from verso.gui.widgets.navigator import NavigatorPanel
+from verso.gui.widgets.properties.sections import AlignActionsBox
 from verso.gui.widgets.section_canvas_panel import SectionCanvasPanel
 
 if TYPE_CHECKING:
@@ -45,6 +44,7 @@ class AlignView(QWidget):
         super().__init__(parent)
         self._panel = panel
         self._reverse_ap = False
+        self._actions: AlignActionsBox | None = None
 
         self._build_ui()
         self._wire_panel()
@@ -58,7 +58,7 @@ class AlignView(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        root.addWidget(self._make_toolbar())
+        root.addWidget(self._make_status_bar())
 
         body = QHBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
@@ -77,95 +77,16 @@ class AlignView(QWidget):
 
         root.addLayout(body, stretch=1)
 
-    def _make_toolbar(self) -> QWidget:
-        """Build the align toolbar.
-
-        Uses a real :class:`QToolBar` so Qt's built-in overflow extension
-        (the ``>>`` button) kicks in when the window is too narrow to fit
-        every button — without this, the sum of ``setFixedWidth`` buttons
-        pins the window's minimum width at ~1400 px.
-
-        The status label is placed *outside* the toolbar so the section
-        filename remains visible even when buttons spill into the extension
-        popup.
-        """
-        red_btn_qss = (
-            "QPushButton { border-radius: 4px; padding: 2px 10px; color: #ccc;"
-            " background: #5a2a2a; }"
-            "QPushButton:hover { background: #6a3a3a; }"
-            "QPushButton:disabled { color: #666; background: #333; }"
-        )
-        green_btn_qss = (
-            "QPushButton { border-radius: 4px; padding: 2px 10px; color: #ccc;"
-            " background: #2a5a2a; }"
-            "QPushButton:hover { background: #3a6a3a; }"
-            "QPushButton:disabled { color: #666; background: #333; }"
-        )
-        yellow_btn_qss = (
-            "QPushButton { border-radius: 4px; padding: 2px 10px; color: #ccc;"
-            " background: #3a3a1a; border: 1px solid #666; }"
-            "QPushButton:hover { background: #4a4a2a; }"
-            "QPushButton:disabled { color: #555; background: #2a2a2a; border-color: #333; }"
-        )
-
-        tb = QToolBar()
-        tb.setMovable(False)
-        tb.setFloatable(False)
-        tb.setIconSize(tb.iconSize())  # no-op, but ensures size-hint is computed
-        tb.setStyleSheet(
-            "QToolBar { background: #252525; spacing: 4px; padding: 2px 6px;"
-            " border: none; }"
-            "QToolBar::separator { background: #444; width: 1px;"
-            " margin: 6px 4px; }"
-        )
-        # Let the toolbar shrink horizontally; Qt will surface a `>>` extension
-        # button for any items that don't fit.
-        tb.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-
-        self._store_btn = QPushButton("Store")
-        self._store_btn.setFixedHeight(28)
-        self._store_btn.setToolTip("Lock current atlas plane to this section")
-        self._store_btn.setStyleSheet(green_btn_qss)
-        self._store_btn.setEnabled(False)
-        self._store_btn.clicked.connect(self._store_anchoring)
-        tb.addWidget(self._store_btn)
-
-        self._revert_btn = QPushButton("Revert")
-        self._revert_btn.setFixedHeight(28)
-        self._revert_btn.setToolTip("Restore the last stored plane, discarding unsaved edits")
-        self._revert_btn.setStyleSheet(yellow_btn_qss)
-        self._revert_btn.setEnabled(False)
-        self._revert_btn.clicked.connect(self._revert_to_stored)
-        tb.addWidget(self._revert_btn)
-
-        self._clear_btn = QPushButton("Clear")
-        self._clear_btn.setFixedHeight(28)
-        self._clear_btn.setToolTip("Remove stored plane and revert to interpolated")
-        self._clear_btn.setStyleSheet(red_btn_qss)
-        self._clear_btn.setEnabled(False)
-        self._clear_btn.clicked.connect(self._clear_anchoring)
-        tb.addWidget(self._clear_btn)
-
-        # Wrap the toolbar + a status label so the filename stays visible even
-        # when buttons overflow into the extension popup.
+    def _make_status_bar(self) -> QWidget:
+        """Thin bar that just shows the current section filename."""
         container = QWidget()
         container.setFixedHeight(36)
         container.setStyleSheet("background: #252525;")
         layout = QHBoxLayout(container)
-        self._clear_all_btn = QPushButton("Clear all")
-        self._clear_all_btn.setFixedHeight(28)
-        self._clear_all_btn.setToolTip(
-            "Clear every stored alignment and restore the default AP proposal"
-        )
-        self._clear_all_btn.setStyleSheet(red_btn_qss)
-        self._clear_all_btn.setEnabled(False)
-        self._clear_all_btn.clicked.connect(self.clear_all_alignments_requested)
-
         layout.setContentsMargins(8, 0, 8, 0)
         layout.setSpacing(0)
         layout.addWidget(self._panel.make_status_label())
-        layout.addWidget(tb, stretch=1)
-        layout.addWidget(self._clear_all_btn)
+        layout.addStretch(1)
         return container
 
     def _wire_panel(self) -> None:
@@ -202,8 +123,17 @@ class AlignView(QWidget):
         self._reverse_ap = reverse
         self._navigator.set_reverse_ap(reverse)
 
+    def bind_actions(self, actions: AlignActionsBox) -> None:
+        """Wire the properties-panel action buttons to this view's handlers."""
+        self._actions = actions
+        actions.store_requested.connect(self._store_anchoring)
+        actions.revert_requested.connect(self._revert_to_stored)
+        actions.clear_requested.connect(self._clear_anchoring)
+        actions.clear_all_requested.connect(self.clear_all_alignments_requested)
+
     def set_clear_all_enabled(self, enabled: bool) -> None:
-        self._clear_all_btn.setEnabled(enabled)
+        if self._actions is not None:
+            self._actions.set_clear_all_enabled(enabled)
 
     # ------------------------------------------------------------------
     # Panel events
@@ -211,16 +141,19 @@ class AlignView(QWidget):
 
     def _on_section_loaded(self, section) -> None:
         self._navigator.set_stretch_enabled(section is not None)
-        self._store_btn.setEnabled(section is not None)
+        if self._actions is not None:
+            self._actions.set_store_enabled(section is not None)
         if section is None:
-            self._clear_btn.setEnabled(False)
-            self._revert_btn.setEnabled(False)
+            if self._actions is not None:
+                self._actions.set_clear_enabled(False)
+                self._actions.set_revert_enabled(False)
             self._navigator.set_anchoring(None)
             return
         has_anchoring = bool(section.alignment.anchoring) and any(
             v != 0.0 for v in section.alignment.anchoring
         )
-        self._clear_btn.setEnabled(has_anchoring)
+        if self._actions is not None:
+            self._actions.set_clear_enabled(has_anchoring)
         self._update_revert_enabled()
 
     def _on_overlay_updated(self, anchoring, _display_w, _display_h) -> None:
@@ -299,7 +232,8 @@ class AlignView(QWidget):
             and section.alignment.stored_anchoring is not None
             and any(v != 0.0 for v in section.alignment.stored_anchoring)
         )
-        self._revert_btn.setEnabled(has_stored)
+        if self._actions is not None:
+            self._actions.set_revert_enabled(has_stored)
 
     def _revert_to_stored(self) -> None:
         section = self._panel.section
@@ -329,7 +263,8 @@ class AlignView(QWidget):
             section.alignment.anchoring = atlas.default_anchoring(w / h)
         section.alignment.stored_anchoring = list(section.alignment.anchoring)
         section.alignment.status = AlignmentStatus.COMPLETE
-        self._clear_btn.setEnabled(True)
+        if self._actions is not None:
+            self._actions.set_clear_enabled(True)
         self._update_revert_enabled()
         self.section_modified.emit()
         self.alignments_updated.emit()
@@ -348,5 +283,6 @@ class AlignView(QWidget):
         section.alignment.proposal_run_id = None
         section.warp.control_points.clear()
         self.alignments_updated.emit()
-        self._clear_btn.setEnabled(True)
+        if self._actions is not None:
+            self._actions.set_clear_enabled(True)
         self._update_revert_enabled()

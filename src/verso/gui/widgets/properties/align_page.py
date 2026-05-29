@@ -6,7 +6,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QScrollArea, QVBoxLayout, QWidget
 
 from verso.engine.model.project import Section
-from verso.gui.widgets.properties.sections import APPlotBox, OverlayBox, ProposalBox
+from verso.gui.widgets.properties.sections import AlignActionsBox, APPlotBox, OverlayBox
 
 
 class AlignPage(QWidget):
@@ -29,13 +29,13 @@ class AlignPage(QWidget):
         scroll.setWidget(content)
 
         self.overlay = OverlayBox()
-        self.proposal = ProposalBox()
+        self.actions = AlignActionsBox()
         self.ap_plot = APPlotBox()
 
         layout.addWidget(self.overlay)
-        layout.addWidget(self.proposal)
+        layout.addWidget(self.actions)
         layout.addWidget(self.ap_plot)
         layout.addStretch()
 
-    def update_section(self, section: Section | None) -> None:
-        self.proposal.update_section(section)
+    def update_section(self, _section: Section | None) -> None:
+        pass

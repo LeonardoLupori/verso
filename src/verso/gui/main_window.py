@@ -467,6 +467,7 @@ class MainWindow(QMainWindow):
         # AlignView navigator + store/clear; WarpView edits.  Both views share
         # the same SectionCanvasPanel, so section-modified signals from either
         # collapse to the same handler.
+        self._align.bind_actions(self._props.align.actions)
         self._align.section_modified.connect(self._on_align_modified)
         self._align.anchoring_changed.connect(self._on_anchoring_changed)
         self._align.alignments_updated.connect(self._on_alignments_updated)
