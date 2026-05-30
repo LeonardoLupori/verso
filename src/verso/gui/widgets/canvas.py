@@ -138,8 +138,6 @@ class _OverlayViewBox(pg.ViewBox):
     canvas_drag_started = pyqtSignal(float, float)  # drag begin
     canvas_dragged = pyqtSignal(float, float)  # drag update
     canvas_drag_ended = pyqtSignal(float, float)  # drag finish
-    # Emitted when Alt+scroll is detected (raw Qt delta, ±120 per tick)
-    alt_wheel_scrolled = pyqtSignal(int)
 
     _InteractionMode = Literal["align", "warp", "prep", "view"]
 
@@ -197,13 +195,6 @@ class _OverlayViewBox(pg.ViewBox):
         else:
             super().mouseDragEvent(ev, axis)
 
-    def wheelEvent(self, ev) -> None:
-        if ev.modifiers() & Qt.KeyboardModifier.AltModifier:
-            self.alt_wheel_scrolled.emit(ev.delta())
-            ev.accept()
-        else:
-            super().wheelEvent(ev)
-
 
 # ---------------------------------------------------------------------------
 # Public widget
@@ -222,7 +213,7 @@ class ImageCanvas(QWidget):
     canvas_drag_started = pyqtSignal(float, float)
     canvas_dragged = pyqtSignal(float, float)
     canvas_drag_ended = pyqtSignal(float, float)
-    # Alt+scroll forwarded from the viewbox (raw Qt delta, ±120 per tick)
+    # Alt+wheel over the canvas (raw Qt delta, ±120 per tick) for brush resize
     alt_wheel_scrolled = pyqtSignal(int)
 
     _InteractionMode = Literal["align", "warp", "prep", "view"]
@@ -254,7 +245,6 @@ class ImageCanvas(QWidget):
         self._vb = _OverlayViewBox()
         self._vb.setBackgroundColor((0, 0, 0))  # black so Lighten(channel, black)=channel
         self._vb.overlay_panned.connect(self.overlay_panned)
-        self._vb.alt_wheel_scrolled.connect(self.alt_wheel_scrolled)
 
         self.plot = self.view.addPlot(viewBox=self._vb)
         self.plot.setAspectLocked(True)
@@ -346,12 +336,28 @@ class ImageCanvas(QWidget):
 
     def _install_prep_cursor_filter(self) -> None:
         self.view.installEventFilter(self)
+        # Wheel events go to the scroll-area viewport, not the view itself.
+        self.view.viewport().installEventFilter(self)
         _ShiftState.listeners.add(self)
         self.destroyed.connect(lambda _=None, s=self: _ShiftState.listeners.discard(s))
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:
+        t = event.type()
+        # Alt+wheel adjusts the brush size. We intercept the raw QWheelEvent
+        # here rather than in the ViewBox because Qt collapses Shift+wheel into
+        # a horizontal scroll, and the scene-level QGraphicsSceneWheelEvent then
+        # reports delta()==0 — which silently broke brush resizing while erasing
+        # (Shift held). angleDelta() exposes both axes, so fall back to the
+        # horizontal delta when the vertical one is zero.
+        if t == QEvent.Type.Wheel and (
+            event.modifiers() & Qt.KeyboardModifier.AltModifier
+        ):
+            ad = event.angleDelta()
+            delta = ad.y() or ad.x()
+            if delta:
+                self.alt_wheel_scrolled.emit(int(delta))
+            return True
         if obj is self.view:
-            t = event.type()
             if t == QEvent.Type.Enter:
                 if self._interaction_mode == "prep":
                     self._refresh_prep_cursor()
