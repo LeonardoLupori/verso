@@ -1340,9 +1340,6 @@ class MainWindow(QMainWindow):
             ):
                 continue
             section.alignment.anchoring = anchoring
-            # Record the interpolation result as the proposal so Ctrl+Z can
-            # revert an unsaved draft back to it (mirrors DeepSlice / import).
-            section.alignment.proposal_anchoring = list(anchoring)
             if section.alignment.status == AlignmentStatus.NOT_STARTED:
                 section.alignment.status = AlignmentStatus.IN_PROGRESS
             section.alignment.source = "quicknii_default"
