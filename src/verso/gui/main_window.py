@@ -413,7 +413,7 @@ class MainWindow(QMainWindow):
         # PropertiesPanel no longer pins its width, so its sizeHint inflates
         # the dock past what we want at launch.  Force the initial width here;
         # the user can still drag the splitter to resize.
-        self.resizeDocks([right_dock], [260], Qt.Orientation.Horizontal)
+        self.resizeDocks([right_dock], [270], Qt.Orientation.Horizontal)
 
     def _on_cp_style_changed(self, size: int, shape: str, color: str) -> None:
         self._warp.set_cp_style(size, shape, color)
