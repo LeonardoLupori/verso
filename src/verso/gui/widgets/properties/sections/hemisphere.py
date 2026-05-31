@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QColorDialog,
@@ -15,7 +15,11 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from verso.gui.widgets.properties._common import color_swatch_style, make_eye_btn
+from verso.gui.widgets.properties._common import (
+    color_swatch_style,
+    colored_icon,
+    make_eye_btn,
+)
 
 
 class HemisphereBox(QGroupBox):
@@ -92,6 +96,8 @@ class HemisphereBox(QGroupBox):
         self._btn_draw_line.toggled.connect(self.draw_mode_toggled)
         draw_row.addWidget(self._btn_draw_line)
         self._btn_clear = QPushButton("Clear")
+        self._btn_clear.setIcon(colored_icon("circle-x.svg", "#ffffff"))
+        self._btn_clear.setIconSize(QSize(14, 14))
         self._btn_clear.setToolTip("Remove the L/R label for this section")
         self._btn_clear.clicked.connect(self.clear_requested)
         draw_row.addWidget(self._btn_clear)
