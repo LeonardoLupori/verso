@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -18,9 +18,11 @@ from PyQt6.QtWidgets import (
 
 from verso.gui.widgets.properties._common import (
     color_swatch_style,
+    colored_icon,
     eye_icon,
     make_eye_btn,
     make_segmented_buttons,
+    white_icon,
 )
 
 
@@ -85,6 +87,10 @@ class MaskBox(QGroupBox):
             initial_key="freehand",
         )
         self._draw_mode_group.buttonClicked.connect(self._on_draw_mode_btn_clicked)
+        self._draw_mode_btns["freehand"].setIcon(white_icon("lasso-select.svg"))
+        self._draw_mode_btns["brush"].setIcon(white_icon("brush.svg"))
+        for _btn in self._draw_mode_btns.values():
+            _btn.setIconSize(QSize(14, 14))
         layout.addLayout(mode_row)
 
         # Row 4: brush size slider
@@ -125,10 +131,12 @@ class MaskBox(QGroupBox):
         # Row 6: auto-detect + clear
         action_row = QHBoxLayout()
         self._autodetect_btn = QPushButton("Auto-detect")
-        self._autodetect_btn.setToolTip("Set slice mask based on adaptive threshold")
+        self._autodetect_btn.setToolTip("Apply adaptive threshold")
         self._autodetect_btn.clicked.connect(self.autodetect_requested)
         self._clear_btn = QPushButton("Clear")
-        self._autodetect_btn.setToolTip("Delete the current slice mask")
+        self._clear_btn.setIcon(colored_icon("circle-x.svg", "#ffffff"))
+        self._clear_btn.setIconSize(QSize(14, 14))
+        self._clear_btn.setToolTip("Delete the current slice mask")
         self._clear_btn.clicked.connect(self.clear_requested)
         action_row.addWidget(self._autodetect_btn)
         action_row.addWidget(self._clear_btn)

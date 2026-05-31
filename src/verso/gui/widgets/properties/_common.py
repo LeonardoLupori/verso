@@ -11,11 +11,15 @@ from PyQt6.QtWidgets import QButtonGroup, QHBoxLayout, QPushButton, QWidget
 _ICONS_DIR = Path(__file__).parent.parent.parent / "icons"
 
 
-def white_icon(name: str) -> QIcon:
-    svg = (_ICONS_DIR / name).read_text(encoding="utf-8").replace("currentColor", "#ffffff")
+def colored_icon(name: str, color: str) -> QIcon:
+    svg = (_ICONS_DIR / name).read_text(encoding="utf-8").replace("currentColor", color)
     pixmap = QPixmap()
     pixmap.loadFromData(svg.encode())
     return QIcon(pixmap)
+
+
+def white_icon(name: str) -> QIcon:
+    return colored_icon(name, "#ffffff")
 
 
 def eye_icon(visible: bool) -> QIcon:

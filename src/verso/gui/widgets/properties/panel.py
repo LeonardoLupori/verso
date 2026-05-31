@@ -25,7 +25,7 @@ class PropertiesPanel(QWidget):
         self.setMinimumWidth(130)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(2, 2, 2, 2)
+        layout.setContentsMargins(0, 0, 0, 0)
 
         self._stack = QStackedWidget()
         self.overview = OverviewPage()

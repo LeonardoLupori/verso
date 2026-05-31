@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QColorDialog,
@@ -15,7 +15,11 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from verso.gui.widgets.properties._common import color_swatch_style, make_eye_btn
+from verso.gui.widgets.properties._common import (
+    color_swatch_style,
+    colored_icon,
+    make_eye_btn,
+)
 
 
 class HemisphereBox(QGroupBox):
@@ -41,13 +45,13 @@ class HemisphereBox(QGroupBox):
         self._status = QLabel("Not set")
         self._status.setStyleSheet("color: #aaa; font-style: italic;")
         self._left_color_rgb: tuple[int, int, int] = (220, 60, 60)
-        self._left_color_btn = QPushButton()
+        self._left_color_btn = QPushButton("L")
         self._left_color_btn.setFixedSize(20, 20)
         self._left_color_btn.setToolTip("Pick left hemisphere color")
         self._left_color_btn.clicked.connect(self._on_left_color)
         self._refresh_left_color_btn()
         self._right_color_rgb: tuple[int, int, int] = (60, 130, 220)
-        self._right_color_btn = QPushButton()
+        self._right_color_btn = QPushButton("R")
         self._right_color_btn.setFixedSize(20, 20)
         self._right_color_btn.setToolTip("Pick right hemisphere color")
         self._right_color_btn.clicked.connect(self._on_right_color)
@@ -60,10 +64,10 @@ class HemisphereBox(QGroupBox):
         layout.addLayout(vis_row)
 
         # Row 2: opacity slider
-        self._opacity_value = QLabel("0.50")
+        self._opacity_value = QLabel("0.25")
         self._opacity_slider = QSlider(Qt.Orientation.Horizontal)
         self._opacity_slider.setRange(0, 100)
-        self._opacity_slider.setValue(50)
+        self._opacity_slider.setValue(25)
         self._opacity_slider.setMinimumWidth(20)
         self._opacity_slider.valueChanged.connect(self._emit_opacity)
         opacity_row = QHBoxLayout()
@@ -92,6 +96,8 @@ class HemisphereBox(QGroupBox):
         self._btn_draw_line.toggled.connect(self.draw_mode_toggled)
         draw_row.addWidget(self._btn_draw_line)
         self._btn_clear = QPushButton("Clear")
+        self._btn_clear.setIcon(colored_icon("circle-x.svg", "#ffffff"))
+        self._btn_clear.setIconSize(QSize(14, 14))
         self._btn_clear.setToolTip("Remove the L/R label for this section")
         self._btn_clear.clicked.connect(self.clear_requested)
         draw_row.addWidget(self._btn_clear)
