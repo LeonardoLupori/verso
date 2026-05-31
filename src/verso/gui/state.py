@@ -9,6 +9,7 @@ from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
 if TYPE_CHECKING:
     from verso.engine.atlas import AtlasVolume
+    from verso.engine.drafts import PrepDraft
     from verso.engine.model.project import Project, Section
 
 
@@ -35,6 +36,7 @@ class AppState(QObject):
     section_changed = pyqtSignal(int)
     atlas_changed = pyqtSignal()        # emitted when atlas finishes loading
     atlas_error = pyqtSignal(str)
+    dirty_changed = pyqtSignal(str, str)  # (section_id, step) — edit registry change
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -43,6 +45,11 @@ class AppState(QObject):
         self._section_index: int = 0
         self._atlas: AtlasVolume | None = None
         self._atlas_thread: QThread | None = None
+        # Persistent unsaved-edit bookkeeping, surviving slice/view navigation.
+        # _dirty: which (section.id, step) pairs have unsaved edits.
+        # _prep_drafts: resident slice/L-R mask edits, keyed by section.id.
+        self._dirty: dict[tuple[str, str], bool] = {}
+        self._prep_drafts: dict[str, PrepDraft] = {}
 
     # ------------------------------------------------------------------
     # Project
@@ -60,11 +67,68 @@ class AppState(QObject):
         self._project = project
         self._project_path = path
         self._section_index = 0
+        self._dirty.clear()
+        self._prep_drafts.clear()
         self.project_changed.emit()
         self.section_changed.emit(0)
 
     def set_project_path(self, path: Path | None) -> None:
         self._project_path = path
+
+    # ------------------------------------------------------------------
+    # Edit registry (persistent unsaved-edit tracking)
+    # ------------------------------------------------------------------
+
+    def mark_dirty(self, section_id: str, step: str) -> None:
+        """Flag a section/step as having unsaved edits."""
+        if self._dirty.get((section_id, step)):
+            return
+        self._dirty[(section_id, step)] = True
+        self.dirty_changed.emit(section_id, step)
+
+    def clear_dirty(self, section_id: str, step: str) -> None:
+        """Clear the unsaved-edit flag for a section/step (e.g. after save)."""
+        if self._dirty.pop((section_id, step), None) is None:
+            return
+        self.dirty_changed.emit(section_id, step)
+
+    def is_dirty(self, section_id: str, step: str) -> bool:
+        return bool(self._dirty.get((section_id, step)))
+
+    def any_dirty(self) -> bool:
+        return bool(self._dirty)
+
+    def clear_all_edits(self) -> None:
+        """Forget every unsaved edit (registry + resident drafts) without saving."""
+        self._dirty.clear()
+        self._prep_drafts.clear()
+
+    def dirty_sections(self) -> list[tuple[Section, set[str]]]:
+        """Return (section, {dirty steps}) for every section with unsaved edits."""
+        if self._project is None:
+            return []
+        by_id = {s.id: s for s in self._project.sections}
+        grouped: dict[str, set[str]] = {}
+        for (section_id, step), flag in self._dirty.items():
+            if flag and section_id in by_id:
+                grouped.setdefault(section_id, set()).add(step)
+        return [(by_id[sid], steps) for sid, steps in grouped.items()]
+
+    # ------------------------------------------------------------------
+    # Prep mask drafts (resident in RAM until saved)
+    # ------------------------------------------------------------------
+
+    def get_prep_draft(self, section_id: str) -> PrepDraft | None:
+        return self._prep_drafts.get(section_id)
+
+    def set_prep_draft(self, section_id: str, draft: PrepDraft) -> None:
+        self._prep_drafts[section_id] = draft
+
+    def pop_prep_draft(self, section_id: str) -> PrepDraft | None:
+        return self._prep_drafts.pop(section_id, None)
+
+    def has_prep_draft(self, section_id: str) -> bool:
+        return section_id in self._prep_drafts
 
     # ------------------------------------------------------------------
     # Section selection

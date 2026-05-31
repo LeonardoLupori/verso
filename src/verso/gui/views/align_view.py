@@ -31,6 +31,8 @@ from verso.gui.widgets.view_chrome import make_view_status_bar
 if TYPE_CHECKING:
     from PyQt6.QtCore import pyqtBoundSignal  # noqa: F401
 
+    from verso.gui.state import AppState
+
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 
 
@@ -41,14 +43,21 @@ class AlignView(QWidget):
     anchoring_changed = pyqtSignal(list)
     alignments_updated = pyqtSignal()
 
-    def __init__(self, panel: SectionCanvasPanel, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        panel: SectionCanvasPanel,
+        state: AppState,
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
         self._panel = panel
+        self._state = state
         self._reverse_axis = False
         self._interpolation_axis = 1
-        # Snapshot of section.alignment taken at section-load time; restored
-        # by discard() so unsaved navigator edits roll back when the user
-        # switches slice or view.
+        # Snapshot of section.alignment taken at section-load time; used as the
+        # undo floor and to report the last-saved plane.  Navigator edits are no
+        # longer discarded on navigation — they persist on the Section and the
+        # section's dirty state is tracked in the edit registry.
         self._baseline_alignment: Alignment | None = None
         self._dirty = False
 
@@ -134,7 +143,7 @@ class AlignView(QWidget):
         section = self._panel.section
         if section is not None:
             self._baseline_alignment = copy.deepcopy(section.alignment)
-            self._set_dirty(False)
+            self._set_dirty(self._state.is_dirty(section.id, "align"))
 
     def deactivate(self) -> None:
         """Release any state set on the panel."""
@@ -168,7 +177,9 @@ class AlignView(QWidget):
             self._set_dirty(False)
             return
         self._baseline_alignment = copy.deepcopy(section.alignment)
-        self._set_dirty(False)
+        # Persisted edits are not discarded on navigation; reflect the section's
+        # registry dirty state instead of forcing clean.
+        self._set_dirty(self._state.is_dirty(section.id, "align"))
 
     def _on_overlay_updated(self, anchoring, _display_w, _display_h) -> None:
         self._navigator.set_anchoring(anchoring)
@@ -311,18 +322,6 @@ class AlignView(QWidget):
         self._set_dirty(False)
         self.alignments_updated.emit()
         return True
-
-    def discard(self) -> None:
-        """Restore the section's alignment from the baseline snapshot."""
-        self._reset_undo()
-        section = self._panel.section
-        if section is None or self._baseline_alignment is None:
-            self._set_dirty(False)
-            return
-        section.alignment = copy.deepcopy(self._baseline_alignment)
-        self._set_dirty(False)
-        self._panel.update_overlay()
-        self.anchoring_changed.emit(section.alignment.anchoring)
 
     # ------------------------------------------------------------------
     # Undo

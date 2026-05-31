@@ -12,6 +12,7 @@ Warp properties page commits or wipes them.
 from __future__ import annotations
 
 import copy
+from typing import TYPE_CHECKING
 
 import numpy as np
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
@@ -26,6 +27,9 @@ from verso.engine.model.alignment import AlignmentStatus, WarpState
 from verso.gui.widgets.section_canvas_panel import SectionCanvasPanel
 from verso.gui.widgets.view_chrome import make_view_status_bar
 
+if TYPE_CHECKING:
+    from verso.gui.state import AppState
+
 
 class WarpView(QWidget):
     """Canvas view for nonlinear warp via per-section control points."""
@@ -35,9 +39,15 @@ class WarpView(QWidget):
     # Pixel distance threshold for picking an existing control point.
     _CP_PICK_RADIUS = 16  # px
 
-    def __init__(self, panel: SectionCanvasPanel, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        panel: SectionCanvasPanel,
+        state: AppState,
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
         self._panel = panel
+        self._state = state
 
         self._active = False
 
@@ -55,9 +65,10 @@ class WarpView(QWidget):
         self._warp_timer.setInterval(33)
         self._warp_timer.timeout.connect(self._panel.update_overlay)
 
-        # Snapshot of section.warp taken at section-load time; restored by
-        # discard() so unsaved CP edits roll back when the user switches
-        # slice or view.
+        # Snapshot of section.warp at section-load time, used to report whether
+        # there's persisted state to Clear.  CP edits are no longer discarded on
+        # navigation — they persist on the Section and dirtiness lives in the
+        # edit registry.
         self._baseline_warp: WarpState | None = None
         self._dirty = False
 
@@ -114,7 +125,7 @@ class WarpView(QWidget):
         section = self._panel.section
         if section is not None:
             self._baseline_warp = copy.deepcopy(section.warp)
-            self._set_dirty(False)
+            self._set_dirty(self._state.is_dirty(section.id, "warp"))
 
     def deactivate(self) -> None:
         """Release warp hooks so other views see a clean panel."""
@@ -178,9 +189,11 @@ class WarpView(QWidget):
         self._cp_drag_start_dst = None
         if section is None:
             self._baseline_warp = None
-        else:
-            self._baseline_warp = copy.deepcopy(section.warp)
-        self._set_dirty(False)
+            self._set_dirty(False)
+            return
+        self._baseline_warp = copy.deepcopy(section.warp)
+        # Persisted CP edits survive navigation; mirror the registry dirty state.
+        self._set_dirty(self._state.is_dirty(section.id, "warp"))
 
     def _on_overlay_updated(self, _anchoring, _display_w, _display_h) -> None:
         if not self._active:
@@ -380,21 +393,6 @@ class WarpView(QWidget):
         if self._active:
             self._panel.update_overlay()
         return True
-
-    def discard(self) -> None:
-        """Restore the section's warp from the baseline snapshot."""
-        section = self._panel.section
-        if section is None or self._baseline_warp is None:
-            self._set_dirty(False)
-            return
-        section.warp = copy.deepcopy(self._baseline_warp)
-        self._cp_hovered = -1
-        self._cp_dragging = -1
-        self._cp_drag_start_norm = None
-        self._cp_drag_start_dst = None
-        self._set_dirty(False)
-        if self._active:
-            self._panel.update_overlay()
 
     def _set_dirty(self, dirty: bool) -> None:
         if self._dirty == dirty:

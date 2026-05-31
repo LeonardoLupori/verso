@@ -95,6 +95,10 @@ class _BatchMaskWorker(QObject):
     def __init__(self, sections: list) -> None:
         super().__init__()
         self._sections = sections
+        # Detected masks held in RAM (section.id -> bool array), drained by the
+        # main thread into the resident prep-draft store on completion.  Nothing
+        # is written to disk until the user saves.
+        self.results: dict[str, object] = {}
 
     def run(self) -> None:
         errors: list[str] = []
@@ -102,7 +106,7 @@ class _BatchMaskWorker(QObject):
         from pathlib import Path
 
         from verso.engine.io.image_io import ensure_working_copy
-        from verso.engine.preprocessing import detect_foreground, save_mask
+        from verso.engine.preprocessing import detect_foreground
 
         for section in self._sections:
             try:
@@ -110,11 +114,7 @@ class _BatchMaskWorker(QObject):
                 if image is None:
                     errors.append(f"{Path(section.original_path).name}: no readable image")
                     continue
-                mask = detect_foreground(image)
-                masks_dir = Path(section.thumbnail_path).parent.parent / "masks"
-                mask_path = masks_dir / f"{Path(section.original_path).stem}-slice-mask.png"
-                save_mask(mask, mask_path)
-                section.preprocessing.slice_mask_path = str(mask_path)
+                self.results[section.id] = detect_foreground(image)
                 completed += 1
             except Exception as exc:
                 errors.append(f"{Path(section.original_path).name}: {exc}")
@@ -217,9 +217,10 @@ class MainWindow(QMainWindow):
 
         file_menu.addSeparator()
 
-        act_save = QAction("&Save project", self)
+        act_save = QAction("&Save all", self)
         act_save.setShortcut(QKeySequence.StandardKey.Save)
-        act_save.triggered.connect(self._save_project)
+        act_save.setToolTip("Save all unsaved edits across every slice (Ctrl+S)")
+        act_save.triggered.connect(self._save_all)
         file_menu.addAction(act_save)
 
         act_save_as = QAction("Save project &as…", self)
@@ -371,14 +372,14 @@ class MainWindow(QMainWindow):
         self._stack = QStackedWidget()
         self.setCentralWidget(self._stack)
 
-        self._overview = OverviewView()
-        self._prep = PrepView()
+        self._overview = OverviewView(self._state)
+        self._prep = PrepView(self._state)
         # Shared canvas + region bar + section/atlas/channels state.  Reparented
         # into whichever of AlignView / WarpView is currently active so zoom,
         # pan, and the channel-layer cache survive mode switches.
         self._panel = SectionCanvasPanel()
-        self._align = AlignView(self._panel)
-        self._warp = WarpView(self._panel)
+        self._align = AlignView(self._panel, self._state)
+        self._warp = WarpView(self._panel, self._state)
 
         self._stack.addWidget(self._overview)   # 0
         self._stack.addWidget(self._prep)       # 1
@@ -440,6 +441,7 @@ class MainWindow(QMainWindow):
         self._state.section_changed.connect(self._on_section_changed)
         self._state.atlas_changed.connect(self._on_atlas_loaded)
         self._state.atlas_error.connect(self._on_atlas_error)
+        self._state.dirty_changed.connect(self._on_dirty_changed)
 
         # Overview interactions
         self._overview.section_activated.connect(self._on_section_activated)
@@ -497,17 +499,25 @@ class MainWindow(QMainWindow):
 
         # Save / Clear bars and per-view dirty signals.
         view_bindings = (
-            (self._prep, self._props.prep,
+            ("prep", self._prep, self._props.prep,
              self._on_prep_save_clicked, self._on_prep_clear_clicked),
-            (self._align, self._props.align,
+            ("align", self._align, self._props.align,
              self._on_align_save_clicked, self._on_align_clear_clicked),
-            (self._warp, self._props.warp,
+            ("warp", self._warp, self._props.warp,
              self._on_warp_save_clicked, self._on_warp_clear_clicked),
         )
-        for view, page, on_save, on_clear in view_bindings:
+        for step, view, page, on_save, on_clear in view_bindings:
             view.dirty_changed.connect(page.save_bar.set_dirty)
+            # Mirror the view's dirty state into the persistent edit registry for
+            # the section currently loaded in that view.
+            view.dirty_changed.connect(
+                lambda dirty, s=step: self._on_view_dirty_changed(s, dirty)
+            )
             page.save_bar.save_requested.connect(on_save)
             page.save_bar.clear_requested.connect(on_clear)
+
+        # A prep save/clear that flips the section invalidates its alignment+warp.
+        self._prep.alignment_invalidated.connect(self._on_prep_invalidated_alignment)
 
     # ------------------------------------------------------------------
     # View switching
@@ -518,7 +528,7 @@ class MainWindow(QMainWindow):
         leaving_mode = self._current_mode
         entering_mode = modes[index]
         if leaving_mode != entering_mode:
-            self._discard_view_draft(leaving_mode)
+            self._flush_view_draft(leaving_mode)
 
         # Release panel hooks from whichever Align/Warp view currently owns it.
         if self._current_mode == "align":
@@ -567,6 +577,7 @@ class MainWindow(QMainWindow):
         self._refresh_clear_enabled()
         self._update_reverse_order_enabled()
         self._update_deepslice_enabled()
+        self._refresh_filmstrip_dots()
 
     # ------------------------------------------------------------------
     # Project loading
@@ -666,15 +677,66 @@ class MainWindow(QMainWindow):
             f"Imported settings from {Path(path).name}", 3000
         )
 
-    def _save_project(self) -> None:
-        self._save_active_view()
-        if self._state.project is None:
-            return
+    def _save_all(self) -> bool:
+        """Persist every unsaved edit across all slices/steps (Ctrl+S / menu).
+
+        Returns True if the project was saved, False if there's no project or the
+        user cancelled a Save-As prompt.
+        """
+        from verso.engine.drafts import (
+            commit_alignment,
+            commit_warp,
+            persist_prep_draft,
+        )
+
+        project = self._state.project
+        if project is None:
+            return False
+
+        # 1. Persist the active view's in-RAM edits first — this materializes
+        #    prep masks held only in the view and seeds a default align plane on
+        #    an explicit save — then it clears that section/step from the registry.
+        active = self._active_view()
+        if active is not None and active.is_dirty():
+            active.save()
+
+        # 2. Persist every remaining dirty (section, step).  Snapshot the list up
+        #    front since we mutate the registry inside the loop.
+        for section, steps in self._state.dirty_sections():
+            if "prep" in steps:
+                draft = self._state.pop_prep_draft(section.id)
+                if draft is not None and persist_prep_draft(section, draft):
+                    # Flip invalidated the alignment + warp.
+                    self._state.clear_dirty(section.id, "align")
+                    self._state.clear_dirty(section.id, "warp")
+                self._state.clear_dirty(section.id, "prep")
+            # Commit align before warp so warp can reach COMPLETE.
+            if "align" in steps and self._state.is_dirty(section.id, "align"):
+                commit_alignment(section)
+                self._state.clear_dirty(section.id, "align")
+            if "warp" in steps and self._state.is_dirty(section.id, "warp"):
+                commit_warp(section)
+                self._state.clear_dirty(section.id, "warp")
+
+        # 3. Re-interpolate non-stored sections now that all saves are COMPLETE,
+        #    and keep position_mm in sync for the AP plot.
+        self._initialize_quicknii_anchorings(project.sections)
+        self._sync_position_mm(project.sections)
+
+        # 4. Single project.json write + dependent-UI refresh.
         if self._state.project_path is None:
             self._save_project_as()
-            return
-        self._write_project(self._state.project_path)
+            if self._state.project_path is None:
+                return False  # user cancelled the Save-As dialog
+        else:
+            self._write_project(self._state.project_path)
+        if self._current_mode in ("align", "warp"):
+            self._panel.update_overlay()
+        self._overview.refresh()
+        self._update_ap_plot()
         self._refresh_clear_enabled()
+        self._refresh_filmstrip_dots()
+        return True
 
     def _save_project_as(self) -> None:
         self._save_active_view()
@@ -725,27 +787,48 @@ class MainWindow(QMainWindow):
             return False
         return view.save()
 
-    def _discard_view_draft(self, mode: str) -> None:
+    def _flush_view_draft(self, mode: str) -> None:
+        """Persist the leaving view's in-RAM edits before a slice/view swap.
+
+        Edits are no longer discarded on navigation.  Prep flushes its mask
+        arrays into the resident draft store (keyed by section id); Align/Warp
+        keep their edits directly on the Section, so nothing to do.
+        """
         if mode == "prep":
-            self._prep.discard()
-        elif mode == "align":
-            self._align.discard()
-        elif mode == "warp":
-            self._warp.discard()
+            self._prep.flush_draft()
+
+    def _on_view_dirty_changed(self, step: str, dirty: bool) -> None:
+        """Mirror a view's dirty state into the registry for the current section."""
+        section = self._state.current_section
+        if section is None:
+            return
+        if dirty:
+            self._state.mark_dirty(section.id, step)
+        else:
+            self._state.clear_dirty(section.id, step)
+
+    def _on_prep_invalidated_alignment(self) -> None:
+        """A prep flip wiped the current section's alignment + warp."""
+        section = self._state.current_section
+        if section is None:
+            return
+        self._state.clear_dirty(section.id, "align")
+        self._state.clear_dirty(section.id, "warp")
 
     def _confirm_discard_active_draft(self) -> bool:
-        """Prompt the user when leaving a context with unsaved draft edits.
+        """Prompt when unsaved edits exist anywhere before a disruptive operation.
 
-        Returns True if the caller may proceed (no draft, or user picked
-        Save / Discard); False on Cancel.
+        Offers Save all / Discard all / Cancel across every dirty section.
+        Returns True if the caller may proceed (nothing dirty, or the user chose
+        Save all / Discard all); False on Cancel (or a cancelled Save-As).
         """
-        view = self._active_view()
-        if view is None or not view.is_dirty():
+        if not self._state.any_dirty():
             return True
+        n = len(self._state.dirty_sections())
         reply = QMessageBox.question(
             self,
             "Unsaved changes",
-            "You have unsaved changes in the current view. "
+            f"You have unsaved edits in {n} section(s). "
             "Save them before continuing?",
             QMessageBox.StandardButton.Save
             | QMessageBox.StandardButton.Discard
@@ -753,14 +836,23 @@ class MainWindow(QMainWindow):
             QMessageBox.StandardButton.Save,
         )
         if reply == QMessageBox.StandardButton.Save:
-            view.save()
-            if self._state.project is not None and self._state.project_path is not None:
-                self._write_project(self._state.project_path)
-            return True
+            return self._save_all()
         if reply == QMessageBox.StandardButton.Discard:
-            view.discard()
+            self._discard_all()
             return True
         return False
+
+    def _discard_all(self) -> None:
+        """Drop every unsaved edit by reloading the last-saved project from disk."""
+        path = self._state.project_path
+        self._state.clear_all_edits()
+        if path is None or not path.exists():
+            return
+        try:
+            project = Project.load(path)
+        except Exception:
+            return
+        self._state.load_project(project, path)
 
     def _after_view_save(self) -> None:
         """Refresh dependent UI after a per-view save/clear and write project."""
@@ -769,12 +861,44 @@ class MainWindow(QMainWindow):
         self._overview.refresh()
         self._update_ap_plot()
         self._refresh_clear_enabled()
+        self._refresh_filmstrip_dots()
 
     def _refresh_clear_enabled(self) -> None:
         """Sync each save bar's Clear button to whether the slice has state to wipe."""
         self._props.prep.save_bar.set_clear_enabled(self._prep.has_persisted_state())
         self._props.align.save_bar.set_clear_enabled(self._align.has_persisted_state())
         self._props.warp.save_bar.set_clear_enabled(self._warp.has_persisted_state())
+
+    # ------------------------------------------------------------------
+    # Filmstrip status dots
+    # ------------------------------------------------------------------
+
+    def _refresh_filmstrip_dots(self) -> None:
+        """Recompute all filmstrip status dots for the active view's step."""
+        project = self._state.project
+        step = self._current_mode
+        if project is None or step not in ("prep", "align", "warp"):
+            return
+        from verso.engine.model.status import section_step_color
+        colors = [
+            section_step_color(s, step, dirty=self._state.is_dirty(s.id, step))
+            for s in project.sections
+        ]
+        self._filmstrip.set_statuses(colors)
+
+    def _on_dirty_changed(self, section_id: str, step: str) -> None:
+        """Incrementally update one filmstrip dot when a section's dirty flips."""
+        project = self._state.project
+        if project is None or step != self._current_mode:
+            return
+        from verso.engine.model.status import section_step_color
+        for i, section in enumerate(project.sections):
+            if section.id == section_id:
+                color = section_step_color(
+                    section, step, dirty=self._state.is_dirty(section_id, step)
+                )
+                self._filmstrip.set_status_color(i, color)
+                return
 
     def _on_prep_save_clicked(self) -> None:
         if self._prep.save():
@@ -903,9 +1027,9 @@ class MainWindow(QMainWindow):
         QMessageBox.warning(self, "Atlas load failed", message)
 
     def _on_section_changed(self, index: int) -> None:
-        # Drop any draft on the section we're leaving so the swap doesn't
-        # carry stale in-memory edits into the new slice's state.
-        self._discard_view_draft(self._current_mode)
+        # Flush (not discard) the leaving section's in-RAM edits so they persist
+        # across the swap; prep masks move into the resident draft store.
+        self._flush_view_draft(self._current_mode)
 
         section = self._state.current_section
         self._filmstrip.set_current(index)
@@ -915,8 +1039,11 @@ class MainWindow(QMainWindow):
         elif self._current_mode in ("align", "warp"):
             self._panel.load_section(section)
 
-        # The discard may have rolled back the previously-loaded section's
-        # in-memory state, so the overview row + AP plot can now be stale.
+        # Keep position_mm in lockstep with the (possibly interpolated) anchoring
+        # so the AP-plot white dot is correct without requiring a save first.
+        if section is not None:
+            self._sync_position_mm([section])
+
         self._overview.refresh()
         self._refresh_properties()
         self._refresh_clear_enabled()
@@ -1121,10 +1248,33 @@ class MainWindow(QMainWindow):
         self._batch_mask_progress = None
 
     def _on_batch_masks_done(self, completed: int, errors: list[str]) -> None:
+        # Drain the detected masks into the resident prep-draft store as unsaved
+        # edits (kept in RAM, shown yellow until the user saves).
+        worker = self._batch_mask_worker
+        project = self._state.project
+        if worker is not None and project is not None:
+            from verso.engine.drafts import PrepDraft
+            by_id = {s.id: s for s in project.sections}
+            for sid, mask in worker.results.items():
+                section = by_id.get(sid)
+                if section is None:
+                    continue
+                self._state.set_prep_draft(
+                    sid,
+                    PrepDraft(
+                        slice_mask=mask,
+                        mask_dirty=True,
+                        base_flip_h=section.preprocessing.flip_horizontal,
+                        base_flip_v=section.preprocessing.flip_vertical,
+                    ),
+                )
+                self._state.mark_dirty(sid, "prep")
+
         self._overview.refresh()
         if self._current_mode == "prep":
             self._prep.load_section(self._state.current_section)
         self._refresh_properties()
+        self._refresh_filmstrip_dots()
         self.statusBar().showMessage(f"Auto-detected {completed} slice masks", 5000)
         if errors:
             preview = "\n".join(errors[:8])
@@ -1166,6 +1316,7 @@ class MainWindow(QMainWindow):
         self._update_ap_plot()
         self._update_reverse_order_enabled()
         self._update_deepslice_enabled()
+        self._refresh_filmstrip_dots()
 
     def _reverse_section_order(self) -> None:
         """Reverse the startup proposal direction before any alignment is stored."""

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import QObject, Qt, QThread, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor, QPixmap
+from PyQt6.QtGui import QColor, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -14,6 +14,8 @@ from PyQt6.QtWidgets import (
 
 _THUMB_SIZE = 100  # px long side
 _BORDER_W = 3
+_DOT_DIAMETER = 14  # status dot in the top-right corner
+_DOT_MARGIN = 4
 
 
 class _ThumbnailLoader(QObject):
@@ -62,10 +64,18 @@ class _ThumbButton(QLabel):
         super().__init__(parent)
         self._index = index
         self._selected = False
+        self._status_color: str | None = None
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFixedSize(_THUMB_SIZE + 2 * _BORDER_W, _THUMB_SIZE + 2 * _BORDER_W)
         self._set_placeholder()
+
+    def set_status_color(self, color: str | None) -> None:
+        """Set the top-right status-dot colour (None hides the dot)."""
+        if color == self._status_color:
+            return
+        self._status_color = color
+        self.update()
 
     def set_thumbnail(self, pixmap: QPixmap) -> None:
         scaled = pixmap.scaled(
@@ -92,6 +102,19 @@ class _ThumbButton(QLabel):
         self.setStyleSheet(
             f"border: {_BORDER_W}px solid {colour}; background: transparent;"
         )
+
+    def paintEvent(self, event) -> None:  # noqa: ANN001
+        super().paintEvent(event)
+        if self._status_color is None:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(QColor("#111111"), 1))
+        painter.setBrush(QColor(self._status_color))
+        x = self.width() - _BORDER_W - _DOT_MARGIN - _DOT_DIAMETER
+        y = _BORDER_W + _DOT_MARGIN
+        painter.drawEllipse(x, y, _DOT_DIAMETER, _DOT_DIAMETER)
+        painter.end()
 
     def mousePressEvent(self, event) -> None:  # noqa: ANN001
         if event.button() == Qt.MouseButton.LeftButton:
@@ -218,6 +241,16 @@ class Filmstrip(QWidget):
         button_center = btn.x() + btn.width() // 2
         target = button_center - viewport_w // 2
         bar.setValue(max(bar.minimum(), min(bar.maximum(), target)))
+
+    def set_statuses(self, colors: list[str | None]) -> None:
+        """Set every thumbnail's status-dot colour from a per-section list."""
+        for i, btn in enumerate(self._buttons):
+            btn.set_status_color(colors[i] if i < len(colors) else None)
+
+    def set_status_color(self, index: int, color: str | None) -> None:
+        """Set a single thumbnail's status-dot colour."""
+        if 0 <= index < len(self._buttons):
+            self._buttons[index].set_status_color(color)
 
     def _highlight(self, index: int) -> None:
         for i, btn in enumerate(self._buttons):

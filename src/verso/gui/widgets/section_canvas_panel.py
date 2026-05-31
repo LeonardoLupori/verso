@@ -237,9 +237,13 @@ class SectionCanvasPanel(QWidget):
 
         anchoring = self._section.alignment.anchoring
         if not anchoring or all(v == 0.0 for v in anchoring):
+            # Render-only fallback for a section with no interpolated/edited
+            # plane yet.  Do NOT write this centered plane back to the section —
+            # leaving the anchoring unset lets project-wide interpolation fill in
+            # the correct guess (otherwise the section gets stuck mid-brain and
+            # the AP-plot dot reads a stale position_mm).
             h, w = self._raw_image.shape[:2]
             anchoring = self._atlas.default_anchoring(aspect_ratio=w / h)
-            self._section.alignment.anchoring = anchoring
 
         h_bg, w_bg = self._raw_image.shape[:2]
         # Sample atlas at a capped resolution for speed; canvas stretches it to

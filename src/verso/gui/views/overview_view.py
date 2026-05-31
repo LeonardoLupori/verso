@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
@@ -16,6 +18,11 @@ from PyQt6.QtWidgets import (
 
 from verso.engine.model.alignment import AlignmentStatus
 from verso.engine.model.project import Project, Section
+from verso.engine.model.status import STATUS_COLOR as _STATUS_COLOR
+from verso.engine.model.status import section_step_status
+
+if TYPE_CHECKING:
+    from verso.gui.state import AppState
 
 _STEPS = ("Flip", "Slice mask", "L/R mask", "Align", "Warp")
 
@@ -23,11 +30,6 @@ _STATUS_SYMBOL = {
     AlignmentStatus.NOT_STARTED: "",
     AlignmentStatus.IN_PROGRESS: "",
     AlignmentStatus.COMPLETE: "●",
-}
-_STATUS_COLOR = {
-    AlignmentStatus.NOT_STARTED: "#888888",
-    AlignmentStatus.IN_PROGRESS: "#E6A817",
-    AlignmentStatus.COMPLETE: "#4CAF50",
 }
 
 _COL_SERIAL = 0
@@ -75,8 +77,9 @@ class OverviewView(QWidget):
     section_activated = pyqtSignal(int)   # double-click → open in Prep
     section_selected = pyqtSignal(int)    # single click → update properties
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, state: AppState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self._state = state
         self._project: Project | None = None
         self._dim_loader: _DimensionLoader | None = None
         self._dim_thread: QThread | None = None
@@ -237,15 +240,30 @@ class OverviewView(QWidget):
         pos = section.alignment.position_mm
         t.setItem(row, _COL_AP, self._make_cell(f"{pos:.2f}" if pos is not None else "—"))
 
-        # Status columns
+        # Status columns.  Prep sub-columns (flip / slice / L-R) share a single
+        # "prep" dirty flag, so an unsaved-but-not-yet-done sub-step shows yellow.
+        # Align / Warp map 1:1 to their step status (agreeing with the filmstrip
+        # dots).
         done = AlignmentStatus.COMPLETE
         not_started = AlignmentStatus.NOT_STARTED
+        in_progress = AlignmentStatus.IN_PROGRESS
+        prep_dirty = self._state.is_dirty(section.id, "prep")
+
+        def prep_status(is_done: bool) -> AlignmentStatus:
+            if is_done:
+                return done
+            return in_progress if prep_dirty else not_started
+
         statuses = [
-            done if section.preprocessing.flip_horizontal else not_started,
-            done if section.preprocessing.slice_mask_path else not_started,
-            done if section.preprocessing.lr_mask_path else not_started,
-            section.alignment.status,
-            section.warp.status,
+            prep_status(bool(section.preprocessing.flip_horizontal)),
+            prep_status(bool(section.preprocessing.slice_mask_path)),
+            prep_status(bool(section.preprocessing.lr_mask_path)),
+            section_step_status(
+                section, "align", dirty=self._state.is_dirty(section.id, "align")
+            ),
+            section_step_status(
+                section, "warp", dirty=self._state.is_dirty(section.id, "warp")
+            ),
         ]
         for i, status in enumerate(statuses):
             col = _COL_STEPS_START + i
