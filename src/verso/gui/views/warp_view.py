@@ -35,6 +35,9 @@ class WarpView(QWidget):
     """Canvas view for nonlinear warp via per-section control points."""
 
     dirty_changed = pyqtSignal(bool)
+    # Emitted whenever the control-point set changes (add / delete) so the
+    # filmstrip status dot can refresh even when the dirty flag doesn't flip.
+    cp_changed = pyqtSignal()
 
     # Pixel distance threshold for picking an existing control point.
     _CP_PICK_RADIUS = 16  # px
@@ -311,6 +314,7 @@ class WarpView(QWidget):
         self._cp_hovered = len(section.warp.control_points) - 1
         self._panel.update_overlay()
         self._set_dirty(True)
+        self.cp_changed.emit()
 
     def _on_canvas_drag_started(self, x: float, y: float) -> None:
         self._cp_dragging = self._pick_cp(x, y)
@@ -354,6 +358,7 @@ class WarpView(QWidget):
             self._cp_hovered = -1
             self._panel.update_overlay()
             self._set_dirty(True)
+            self.cp_changed.emit()
 
     # ------------------------------------------------------------------
     # Draft / save / clear / discard

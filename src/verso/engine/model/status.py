@@ -47,6 +47,16 @@ def section_step_status(
         ``AlignmentStatus`` — IN_PROGRESS when dirty, otherwise COMPLETE when a
         saved state exists for the step, else NOT_STARTED.
     """
+    if step == "warp":
+        # Warp is special: with no control points the step is empty (gray) even
+        # mid-edit — e.g. right after the last CP was removed — so this check
+        # takes precedence over the dirty flag.
+        if not section.warp.control_points:
+            return AlignmentStatus.NOT_STARTED
+        if dirty:
+            return AlignmentStatus.IN_PROGRESS
+        return AlignmentStatus.COMPLETE
+
     if dirty:
         return AlignmentStatus.IN_PROGRESS
 
@@ -66,14 +76,6 @@ def section_step_status(
             if section.alignment.status == AlignmentStatus.COMPLETE
             else AlignmentStatus.NOT_STARTED
         )
-
-    if step == "warp":
-        if (
-            section.warp.status == AlignmentStatus.COMPLETE
-            or section.warp.control_points
-        ):
-            return AlignmentStatus.COMPLETE
-        return AlignmentStatus.NOT_STARTED
 
     return AlignmentStatus.NOT_STARTED
 

@@ -34,10 +34,19 @@ def _section(**kw) -> Section:
 # section_step_status
 # ---------------------------------------------------------------------------
 
-def test_dirty_is_always_in_progress():
+def test_dirty_is_in_progress_for_prep_and_align():
     section = _section()
-    for step in ("prep", "align", "warp"):
+    for step in ("prep", "align"):
         assert section_step_status(section, step, dirty=True) == AlignmentStatus.IN_PROGRESS
+
+
+def test_warp_empty_is_gray_even_when_dirty():
+    # Removing the last control point keeps the step dirty but it must read gray.
+    empty = _section()
+    assert section_step_status(empty, "warp", dirty=True) == AlignmentStatus.NOT_STARTED
+
+    with_cps = _section(warp=WarpState(control_points=[ControlPoint(0, 0, 0, 0)]))
+    assert section_step_status(with_cps, "warp", dirty=True) == AlignmentStatus.IN_PROGRESS
 
 
 def test_prep_status_from_saved_state():

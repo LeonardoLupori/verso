@@ -518,6 +518,9 @@ class MainWindow(QMainWindow):
 
         # A prep save/clear that flips the section invalidates its alignment+warp.
         self._prep.alignment_invalidated.connect(self._on_prep_invalidated_alignment)
+        # CP add/delete changes the warp dot even when the dirty flag is unchanged
+        # (e.g. removing the last CP → gray).
+        self._warp.cp_changed.connect(self._refresh_current_step_dot)
 
     # ------------------------------------------------------------------
     # View switching
@@ -885,6 +888,26 @@ class MainWindow(QMainWindow):
             for s in project.sections
         ]
         self._filmstrip.set_statuses(colors)
+
+    def _refresh_current_step_dot(self) -> None:
+        """Refresh the current section's filmstrip dot for the active step.
+
+        Used when a section's status changes without the dirty flag flipping
+        (e.g. removing the last warp control point keeps it dirty but the dot
+        must go gray).
+        """
+        project = self._state.project
+        step = self._current_mode
+        if project is None or step not in ("prep", "align", "warp"):
+            return
+        section = self._state.current_section
+        if section is None:
+            return
+        from verso.engine.model.status import section_step_color
+        color = section_step_color(
+            section, step, dirty=self._state.is_dirty(section.id, step)
+        )
+        self._filmstrip.set_status_color(self._state.section_index, color)
 
     def _on_dirty_changed(self, section_id: str, step: str) -> None:
         """Incrementally update one filmstrip dot when a section's dirty flips."""

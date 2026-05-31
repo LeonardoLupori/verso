@@ -280,12 +280,7 @@ class OverviewView(QWidget):
         ]
         for i, status in enumerate(statuses):
             col = _COL_STEPS_START + i
-            if _STEPS[i] == "Warp":
-                cp_count = len(section.warp.control_points)
-                sym = str(cp_count) if cp_count else ""
-            else:
-                sym = _STATUS_SYMBOL[status]
-            item = self._make_cell(sym)
+            item = self._make_cell(_STATUS_SYMBOL[status])
             item.setForeground(QColor(_STATUS_COLOR[status]))
             t.setItem(row, col, item)
 
