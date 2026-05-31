@@ -240,24 +240,37 @@ class OverviewView(QWidget):
         pos = section.alignment.position_mm
         t.setItem(row, _COL_AP, self._make_cell(f"{pos:.2f}" if pos is not None else "—"))
 
-        # Status columns.  Prep sub-columns (flip / slice / L-R) share a single
-        # "prep" dirty flag, so an unsaved-but-not-yet-done sub-step shows yellow.
-        # Align / Warp map 1:1 to their step status (agreeing with the filmstrip
-        # dots).
+        # Status columns.  Prep splits into flip / slice / L-R sub-columns; the
+        # registry tracks a single "prep" dirty flag, but a flushed draft tells
+        # us which sub-step actually changed so an unsaved edit to an already-
+        # saved mask still shows yellow (matching the filmstrip dot).  Align /
+        # Warp map 1:1 to their step status.
         done = AlignmentStatus.COMPLETE
         not_started = AlignmentStatus.NOT_STARTED
         in_progress = AlignmentStatus.IN_PROGRESS
         prep_dirty = self._state.is_dirty(section.id, "prep")
 
-        def prep_status(is_done: bool) -> AlignmentStatus:
+        draft = self._state.get_prep_draft(section.id)
+        mask_dirty = draft is not None and draft.mask_dirty
+        lr_dirty = draft is not None and draft.lr_dirty
+        flip_dirty = draft is not None and (
+            draft.base_flip_h != section.preprocessing.flip_horizontal
+            or draft.base_flip_v != section.preprocessing.flip_vertical
+        )
+
+        def prep_status(is_done: bool, sub_dirty: bool) -> AlignmentStatus:
+            if sub_dirty:
+                return in_progress
             if is_done:
                 return done
+            # Not done, no per-sub-step signal (e.g. the section is the one open
+            # in Prep, whose draft is checked out) — fall back to the step flag.
             return in_progress if prep_dirty else not_started
 
         statuses = [
-            prep_status(bool(section.preprocessing.flip_horizontal)),
-            prep_status(bool(section.preprocessing.slice_mask_path)),
-            prep_status(bool(section.preprocessing.lr_mask_path)),
+            prep_status(bool(section.preprocessing.flip_horizontal), flip_dirty),
+            prep_status(bool(section.preprocessing.slice_mask_path), mask_dirty),
+            prep_status(bool(section.preprocessing.lr_mask_path), lr_dirty),
             section_step_status(
                 section, "align", dirty=self._state.is_dirty(section.id, "align")
             ),
