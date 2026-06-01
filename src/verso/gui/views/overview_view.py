@@ -76,6 +76,7 @@ class OverviewView(QWidget):
 
     section_activated = pyqtSignal(int)   # double-click → open in Prep
     section_selected = pyqtSignal(int)    # single click → update properties
+    sections_reordered = pyqtSignal()     # slice_index edited → re-sort + persist
 
     def __init__(self, state: AppState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -83,6 +84,7 @@ class OverviewView(QWidget):
         self._project: Project | None = None
         self._dim_loader: _DimensionLoader | None = None
         self._dim_thread: QThread | None = None
+        self._suppress_edits = False  # ignore cellChanged during programmatic fills
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -137,7 +139,16 @@ class OverviewView(QWidget):
 
         t.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         t.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        t.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        # Only the "#" (slice index) cell is editable — see _fill_row. Editing
+        # any other cell is blocked by stripping ItemIsEditable in _make_cell.
+        t.setEditTriggers(
+            QAbstractItemView.EditTrigger.DoubleClicked
+            | QAbstractItemView.EditTrigger.EditKeyPressed
+        )
+        t.horizontalHeaderItem(_COL_SERIAL).setToolTip(
+            "Slice index — physical position along the interpolation axis. "
+            "Double-click to edit; rows re-sort by index."
+        )
         t.setAlternatingRowColors(True)
         t.verticalHeader().setDefaultSectionSize(36)
         t.verticalHeader().setVisible(False)
@@ -148,6 +159,7 @@ class OverviewView(QWidget):
 
         t.cellDoubleClicked.connect(self._on_double_click)
         t.currentCellChanged.connect(self._on_selection_changed)
+        t.cellChanged.connect(self._on_cell_changed)
 
     @staticmethod
     def _make_cell(
@@ -155,6 +167,8 @@ class OverviewView(QWidget):
     ) -> QTableWidgetItem:
         item = QTableWidgetItem(text)
         item.setTextAlignment(align)
+        # Non-editable by default; _fill_row re-enables only the slice-index cell.
+        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         return item
 
     def _stop_dim_loader(self) -> None:
@@ -195,6 +209,7 @@ class OverviewView(QWidget):
         self._table.setVisible(True)
 
         t = self._table
+        self._suppress_edits = True
         t.setRowCount(len(p.sections))
 
         complete = 0
@@ -207,6 +222,7 @@ class OverviewView(QWidget):
                 complete += 1
             elif ws == AlignmentStatus.IN_PROGRESS:
                 in_progress += 1
+        self._suppress_edits = False
 
         total = len(p.sections)
         self._summary.setText(
@@ -228,7 +244,12 @@ class OverviewView(QWidget):
         t = self._table
 
         import os
-        t.setItem(row, _COL_SERIAL, self._make_cell(str(section.serial_number)))
+        serial_cell = self._make_cell(str(section.slice_index))
+        serial_cell.setFlags(serial_cell.flags() | Qt.ItemFlag.ItemIsEditable)
+        # Carry the section id so an edit maps to the right section regardless of
+        # how rows are later re-sorted.
+        serial_cell.setData(Qt.ItemDataRole.UserRole, section.id)
+        t.setItem(row, _COL_SERIAL, serial_cell)
         file_align = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
         t.setItem(
             row,
@@ -296,7 +317,9 @@ class OverviewView(QWidget):
         if self._project is None:
             return
         section = self._project.sections[section_index]
+        self._suppress_edits = True
         self._fill_row(section_index, section)
+        self._suppress_edits = False
         # Single-row refresh: read dims synchronously (~5–20 ms, acceptable).
         try:
             from verso.engine.io.image_io import registration_dimensions
@@ -317,8 +340,56 @@ class OverviewView(QWidget):
         rows = {idx.row() for idx in self._table.selectionModel().selectedRows()}
         return sorted(rows)
 
-    def _on_double_click(self, row: int, _col: int) -> None:
+    def _on_double_click(self, row: int, col: int) -> None:
+        # Double-click on the "#" column opens the inline editor instead of the
+        # section; every other column activates (opens in Prep).
+        if col == _COL_SERIAL:
+            return
         self.section_activated.emit(row)
+
+    def _on_cell_changed(self, row: int, col: int) -> None:
+        """Commit an edited slice-index cell: update, re-sort, persist."""
+        if self._suppress_edits or col != _COL_SERIAL or self._project is None:
+            return
+        item = self._table.item(row, col)
+        if item is None:
+            return
+        section_id = item.data(Qt.ItemDataRole.UserRole)
+        section = next(
+            (s for s in self._project.sections if s.id == section_id), None
+        )
+        if section is None:
+            return
+
+        text = item.text().strip()
+        if not text.isdigit():
+            # Reject non-integer input — restore the previous value.
+            self._suppress_edits = True
+            item.setText(str(section.slice_index))
+            self._suppress_edits = False
+            return
+
+        new_index = int(text)
+        if new_index == section.slice_index:
+            return
+
+        # Keep the same physical section selected across the re-sort.
+        current = self._state.current_section
+        keep_id = current.id if current is not None else None
+
+        section.slice_index = new_index
+        self._project.sort_sections()
+        self._populate()
+
+        if keep_id is not None:
+            new_pos = next(
+                (i for i, s in enumerate(self._project.sections) if s.id == keep_id),
+                None,
+            )
+            if new_pos is not None:
+                self._state.set_section(new_pos)
+
+        self.sections_reordered.emit()
 
     def _on_selection_changed(self, row: int, *_) -> None:
         if row >= 0:

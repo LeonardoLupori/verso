@@ -446,6 +446,7 @@ class MainWindow(QMainWindow):
         # Overview interactions
         self._overview.section_activated.connect(self._on_section_activated)
         self._overview.section_selected.connect(self._state.set_section)
+        self._overview.sections_reordered.connect(self._on_sections_reordered)
 
         # Filmstrip
         self._filmstrip.section_selected.connect(self._state.set_section)
@@ -1101,6 +1102,36 @@ class MainWindow(QMainWindow):
         self._switch_view(_VIEW_PREP)
         self._prep.load_section(self._state.current_section)
 
+    def _on_sections_reordered(self) -> None:
+        """A slice index was edited in Overview: re-interpolate, refresh, persist.
+
+        The Overview view has already mutated ``slice_index``, re-sorted the
+        sections, and updated the selection; here we recompute everything that
+        depends on the section order and save the project to disk.
+        """
+        project = self._state.project
+        if project is None:
+            return
+
+        if self._state.atlas is not None:
+            from verso.engine.registration import interpolate_anchorings
+
+            interpolate_anchorings(
+                project.sections,
+                atlas_shape=self._state.atlas.shape,
+                interpolation_axis=project.interpolation_axis_index,
+                reverse_axis=self._reverse_axis_proposal,
+            )
+        self._sync_position_mm(project.sections)
+
+        self._filmstrip.populate(project.sections, project.channels)
+        self._filmstrip.set_current(self._state.section_index)
+        self._overview.refresh()
+        self._update_ap_plot()
+
+        if self._state.project_path is not None:
+            self._write_project(self._state.project_path)
+
     def _refresh_properties(self) -> None:
         self._props.update_section(self._state.current_section, self._current_mode)
         if self._current_mode == "prep":
@@ -1481,7 +1512,7 @@ class MainWindow(QMainWindow):
             )
         propagated = quicknii_series_anchorings(
             image_sizes=[(w, h) for _, w, h in usable],
-            serial_numbers=[section.serial_number for section, _, _ in usable],
+            slice_indices=[section.slice_index for section, _, _ in usable],
             atlas_shape=atlas.shape,
             interpolation_axis=self._interpolation_axis(),
             stored_anchorings=display_anchorings,
@@ -1489,8 +1520,8 @@ class MainWindow(QMainWindow):
             center_proposals=True,
         )
 
-        stored_serials = {
-            section.serial_number
+        stored_indices = {
+            section.slice_index
             for (section, _, _), anch in zip(usable, display_anchorings)
             if anch is not None
         }
@@ -1500,14 +1531,15 @@ class MainWindow(QMainWindow):
         ):
             if anch is not None:
                 continue
-            # Always sync sections that share a serial with a stored section —
-            # they represent the same physical slice and must show the same image.
-            is_serial_duplicate = section.serial_number in stored_serials
+            # Always sync sections that share a slice index with a stored
+            # section — they are the same physical slice and must show the same
+            # image.
+            is_index_duplicate = section.slice_index in stored_indices
             has_existing = section.alignment.anchoring and any(
                 v != 0.0 for v in section.alignment.anchoring
             )
             if (
-                not is_serial_duplicate
+                not is_index_duplicate
                 and has_existing
                 and section.alignment.status != AlignmentStatus.NOT_STARTED
                 and section.alignment.source != "quicknii_default"

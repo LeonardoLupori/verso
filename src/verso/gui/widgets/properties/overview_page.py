@@ -43,5 +43,5 @@ class OverviewPage(QWidget):
             return
         self._title.setText(os.path.basename(section.original_path))
         self._lbl_file.setText(section.original_path)
-        self._lbl_serial.setText(str(section.serial_number))
+        self._lbl_serial.setText(str(section.slice_index))
         self._lbl_scale.setText(f"{section.scale:.4f}")

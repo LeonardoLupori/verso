@@ -6,20 +6,49 @@ import numpy as np
 
 from verso.engine.io.image_io import (
     _save_ome_tiff,
+    guess_slice_indices,
     load_image,
-    parse_section_serial_number,
     probe_channels,
     thumbnail_filename,
     to_multichannel,
 )
 
 
-def test_parse_section_serial_number_from_mouse_name():
-    assert parse_section_serial_number("MOUSE_0042_CODEs.tif", fallback=1) == 42
+def test_guess_slice_indices_picks_most_discriminating_field():
+    # Constant mouse id + constant channel; only the section field varies.
+    paths = [
+        "M1_slide03_section012_DAPI.tif",
+        "M1_slide03_section045_DAPI.tif",
+        "M1_slide03_section007_DAPI.tif",
+    ]
+    assert guess_slice_indices(paths) == [12, 45, 7]
 
 
-def test_parse_section_serial_number_falls_back_to_list_order():
-    assert parse_section_serial_number("section_without_number.tif", fallback=7) == 7
+def test_guess_slice_indices_preserves_gaps_and_duplicates():
+    paths = [
+        "img_001.tif",
+        "img_002.tif",
+        "img_018.tif",  # gap before this one
+        "img_018.tif",  # duplicate index (broken slice)
+    ]
+    assert guess_slice_indices(paths) == [1, 2, 18, 18]
+
+
+def test_guess_slice_indices_falls_back_to_sequential_when_no_numbers():
+    paths = ["anterior.tif", "middle.tif", "posterior.tif"]
+    # No numeric field → 1..N assigned by natural-sorted name order.
+    assert guess_slice_indices(paths) == [1, 2, 3]
+
+
+def test_guess_slice_indices_ignores_partial_number_field():
+    # The numeric field is absent from the first file, so no token position has
+    # full coverage → sequential fallback assigned by name order.
+    paths = ["plain.tif", "plain_2.tif", "plain_3.tif"]
+    assert guess_slice_indices(paths) == [1, 2, 3]
+
+
+def test_guess_slice_indices_empty():
+    assert guess_slice_indices([]) == []
 
 
 def test_thumbnail_filename_is_ome_tiff():

@@ -37,16 +37,69 @@ FILMSTRIP_MAX_SIDE = 150
 _MAX_PLAUSIBLE_CHANNELS = 8
 
 
-def parse_section_serial_number(path: str | Path, fallback: int) -> int:
-    """Extract the absolute section number from a microscopy filename."""
-    stem = Path(path).stem
-    match = re.match(r"^[^_]+_(\d+)(?:_|$)", stem)
-    if match:
-        return int(match.group(1))
-    match = re.search(r"(?:^|_)(\d+)(?:_|$)", stem)
-    if match:
-        return int(match.group(1))
-    return fallback
+def _natural_key(stem: str) -> list[object]:
+    """Sort key that orders embedded numbers numerically (``s2`` before ``s10``)."""
+    return [
+        int(chunk) if chunk.isdigit() else chunk
+        for chunk in re.split(r"(\d+)", stem)
+    ]
+
+
+def guess_slice_indices(paths: list[str | Path]) -> list[int]:
+    """Guess a slice index per file from numbers embedded in the filenames.
+
+    A batch of histology filenames usually shares a layout where one numeric
+    field is the section number and the rest are constants (mouse id, channel,
+    magnification). This tokenises every filename stem into its numeric runs and
+    picks the *token position* that best discriminates the series — preferring
+    more distinct values, then a wider spread, then values that increase with
+    the natural filename order. That position's integer becomes each file's
+    slice index.
+
+    Only token positions present in *every* file are eligible. When no such
+    position carries usable numbers, indices fall back to ``1..N`` assigned by
+    natural-sorted filename order.
+
+    Args:
+        paths: Source image paths (any order).
+
+    Returns:
+        One slice index per input path, in the same order as ``paths``. Values
+        may be non-contiguous and may repeat; the caller can override them.
+    """
+    n = len(paths)
+    if n == 0:
+        return []
+
+    stems = [Path(p).stem for p in paths]
+    per_file = [[int(tok) for tok in re.findall(r"\d+", stem)] for stem in stems]
+    max_tokens = max((len(nums) for nums in per_file), default=0)
+
+    name_order = sorted(range(n), key=lambda i: _natural_key(stems[i]))
+
+    best: tuple[int, int, float, int] | None = None
+    for j in range(max_tokens):
+        if any(len(nums) <= j for nums in per_file):
+            continue  # not present in every file — ineligible
+        values = [nums[j] for nums in per_file]
+        distinct = len(set(values))
+        spread = max(values) - min(values)
+        ordered = [per_file[i][j] for i in name_order]
+        rising = sum(a < b for a, b in zip(ordered, ordered[1:]))
+        monotonic = rising / (n - 1) if n > 1 else 0.0
+        score = (distinct, spread, monotonic, -j)
+        if best is None or score > best:
+            best = score
+
+    if best is None:
+        # No fully-covered numeric field: assign 1..N by natural name order.
+        indices = [0] * n
+        for rank, i in enumerate(name_order, start=1):
+            indices[i] = rank
+        return indices
+
+    chosen = -best[3]
+    return [nums[chosen] for nums in per_file]
 
 
 def thumbnail_filename(path: str | Path) -> str:

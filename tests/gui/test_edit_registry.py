@@ -21,7 +21,7 @@ def _project() -> Project:
     sections = [
         Section(
             id=f"s{i}",
-            serial_number=i,
+            slice_index=i,
             original_path=f"s{i}.png",
             thumbnail_path=f"thumbnails/s{i}.tif",
         )

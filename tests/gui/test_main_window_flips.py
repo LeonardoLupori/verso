@@ -55,7 +55,7 @@ def _stored_anchoring_section() -> Section:
     anchoring = [10.0, 20.0, 30.0, 100.0, 12.0, 0.0, 0.0, 0.0, 80.0]
     return Section(
         id="s001",
-        serial_number=1,
+        slice_index=1,
         original_path="s001.png",
         thumbnail_path="s001.png",
         alignment=Alignment(

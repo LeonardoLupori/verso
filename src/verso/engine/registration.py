@@ -392,7 +392,7 @@ def quicknii_pack_anchoring(
 
 def quicknii_series_anchorings(
     image_sizes: list[tuple[int, int]],
-    serial_numbers: list[int],
+    slice_indices: list[int],
     atlas_shape: tuple[int, int, int],
     interpolation_axis: int,
     stored_anchorings: list[list[float] | None] | None = None,
@@ -403,7 +403,7 @@ def quicknii_series_anchorings(
 
     Args:
         image_sizes: Per-section registration image ``(width, height)``.
-        serial_numbers: Per-section serial numbers used for interpolation.
+        slice_indices: Per-section slice indices used for interpolation.
         atlas_shape: BrainGlobe annotation shape ``(AP, DV, LR)``.
         interpolation_axis: QuickNII voxel axis along which the series runs
             (0 = ML / LR, 1 = AP, 2 = DV).
@@ -418,8 +418,8 @@ def quicknii_series_anchorings(
     Returns:
         One packed QuickNII anchoring per section.
     """
-    if len(image_sizes) != len(serial_numbers):
-        raise ValueError("image_sizes and serial_numbers must have the same length")
+    if len(image_sizes) != len(slice_indices):
+        raise ValueError("image_sizes and slice_indices must have the same length")
     if stored_anchorings is not None and len(stored_anchorings) != len(image_sizes):
         raise ValueError("stored_anchorings must match image_sizes length")
     if not image_sizes:
@@ -428,11 +428,11 @@ def quicknii_series_anchorings(
     k = interpolation_axis
     u_axis, v_axis = _in_plane_axes(k)
 
-    order = sorted(range(len(serial_numbers)), key=lambda i: (serial_numbers[i], i))
-    if order != list(range(len(serial_numbers))):
+    order = sorted(range(len(slice_indices)), key=lambda i: (slice_indices[i], i))
+    if order != list(range(len(slice_indices))):
         sorted_anchorings = quicknii_series_anchorings(
             image_sizes=[image_sizes[i] for i in order],
-            serial_numbers=[serial_numbers[i] for i in order],
+            slice_indices=[slice_indices[i] for i in order],
             atlas_shape=atlas_shape,
             interpolation_axis=k,
             stored_anchorings=(
@@ -443,7 +443,7 @@ def quicknii_series_anchorings(
             reverse_axis=reverse_axis,
             center_proposals=center_proposals,
         )
-        restored: list[list[float] | None] = [None] * len(serial_numbers)
+        restored: list[list[float] | None] = [None] * len(slice_indices)
         for sorted_idx, original_idx in enumerate(order):
             restored[original_idx] = sorted_anchorings[sorted_idx]
         return [anchoring for anchoring in restored if anchoring is not None]
@@ -487,19 +487,19 @@ def quicknii_series_anchorings(
         w, h = image_sizes[i]
         unpacked_by_index[i] = quicknii_unpack_anchoring(anchoring, w, h)
 
-    stored_by_serial: dict[int, int] = {}
+    stored_by_slice_index: dict[int, int] = {}
     for i in stored_indices:
-        stored_by_serial.setdefault(serial_numbers[i], i)
+        stored_by_slice_index.setdefault(slice_indices[i], i)
 
-    duplicate_serial_indices: list[int] = []
-    for i, serial in enumerate(serial_numbers):
-        if i in stored_indices or serial not in stored_by_serial:
+    duplicate_index_positions: list[int] = []
+    for i, slice_idx in enumerate(slice_indices):
+        if i in stored_indices or slice_idx not in stored_by_slice_index:
             continue
-        stored_idx = stored_by_serial[serial]
+        stored_idx = stored_by_slice_index[slice_idx]
         unpacked_by_index[i] = list(unpacked_by_index[stored_idx])
-        duplicate_serial_indices.append(i)
+        duplicate_index_positions.append(i)
 
-    anchor_indices = sorted(stored_indices + duplicate_serial_indices)
+    anchor_indices = sorted(stored_indices + duplicate_index_positions)
 
     controls: list[int] = []
     if not stored_indices:
@@ -532,13 +532,13 @@ def quicknii_series_anchorings(
         controls.extend(anchor_indices)
         if anchor_indices[0] != 0:
             unpacked_by_index[0] = _quicknii_regressed_unpacked(
-                stored_indices, unpacked_by_index, serial_numbers, serial_numbers[0]
+                stored_indices, unpacked_by_index, slice_indices, slice_indices[0]
             )
             controls.insert(0, 0)
         if anchor_indices[-1] != len(image_sizes) - 1:
             last_idx = len(image_sizes) - 1
             unpacked_by_index[last_idx] = _quicknii_regressed_unpacked(
-                stored_indices, unpacked_by_index, serial_numbers, serial_numbers[last_idx]
+                stored_indices, unpacked_by_index, slice_indices, slice_indices[last_idx]
             )
             controls.append(last_idx)
 
@@ -552,13 +552,13 @@ def quicknii_series_anchorings(
         propagated = [list(unpacked_by_index[controls[0]]) for _ in image_sizes]
     else:
         for left, right in zip(controls, controls[1:]):
-            left_sno = serial_numbers[left]
-            right_sno = serial_numbers[right]
+            left_index = slice_indices[left]
+            right_index = slice_indices[right]
             left_u = unpacked_by_index[left]
             right_u = unpacked_by_index[right]
             for i in range(left, right + 1):
-                denom = right_sno - left_sno
-                t = 0.0 if denom == 0 else (serial_numbers[i] - left_sno) / denom
+                denom = right_index - left_index
+                t = 0.0 if denom == 0 else (slice_indices[i] - left_index) / denom
                 propagated[i] = [
                     a + t * (b - a)
                     for a, b in zip(left_u, right_u)
@@ -593,11 +593,11 @@ def quicknii_series_anchorings(
 def _quicknii_regressed_unpacked(
     stored_indices: list[int],
     unpacked_by_index: dict[int, list[float]],
-    serial_numbers: list[int],
-    target_serial: int,
+    slice_indices: list[int],
+    target_index: int,
 ) -> list[float]:
     """Linear-regression endpoint estimate matching QuickNII's fallback path."""
-    xs = np.asarray([serial_numbers[i] for i in stored_indices], dtype=np.float64)
+    xs = np.asarray([slice_indices[i] for i in stored_indices], dtype=np.float64)
     out: list[float] = []
     for component in range(11):
         ys = np.asarray([unpacked_by_index[i][component] for i in stored_indices])
@@ -605,7 +605,7 @@ def _quicknii_regressed_unpacked(
         y_mean = float(ys.mean())
         denom = float(((xs - x_mean) ** 2).sum())
         slope = 0.0 if denom == 0.0 else float(((xs - x_mean) * (ys - y_mean)).sum() / denom)
-        out.append(y_mean + slope * (float(target_serial) - x_mean))
+        out.append(y_mean + slope * (float(target_index) - x_mean))
     return out
 
 
@@ -660,9 +660,9 @@ def interpolate_anchorings(
     k = interpolation_axis
     u_axis, v_axis = _in_plane_axes(k)
 
-    order = sorted(range(len(usable)), key=lambda i: (usable[i][0].serial_number, i))
+    order = sorted(range(len(usable)), key=lambda i: (usable[i][0].slice_index, i))
     sorted_usable = [usable[i] for i in order]
-    serial_numbers = [section.serial_number for section, _, _ in sorted_usable]
+    slice_indices = [section.slice_index for section, _, _ in sorted_usable]
 
     unpacked_by_index: dict[int, list[float]] = {}
     stored_indices: list[int] = []
@@ -680,7 +680,7 @@ def interpolate_anchorings(
         ]
         propagated_anchorings = quicknii_series_anchorings(
             image_sizes=[(w, h) for _, w, h in sorted_usable],
-            serial_numbers=serial_numbers,
+            slice_indices=slice_indices,
             atlas_shape=atlas_shape,
             interpolation_axis=k,
             stored_anchorings=stored_anchorings_for_series,
@@ -703,8 +703,8 @@ def interpolate_anchorings(
         unpacked_by_index[0] = _quicknii_regressed_unpacked(
             stored_indices,
             unpacked_by_index,
-            serial_numbers,
-            serial_numbers[0],
+            slice_indices,
+            slice_indices[0],
         )
         controls.insert(0, 0)
     if stored_indices[-1] != len(sorted_usable) - 1:
@@ -712,21 +712,21 @@ def interpolate_anchorings(
         unpacked_by_index[last_idx] = _quicknii_regressed_unpacked(
             stored_indices,
             unpacked_by_index,
-            serial_numbers,
-            serial_numbers[last_idx],
+            slice_indices,
+            slice_indices[last_idx],
         )
         controls.append(last_idx)
 
     controls = sorted(set(controls))
     propagated: dict[int, list[float]] = {}
     for left, right in zip(controls, controls[1:]):
-        left_serial = serial_numbers[left]
-        right_serial = serial_numbers[right]
+        left_index = slice_indices[left]
+        right_index = slice_indices[right]
         left_unpacked = unpacked_by_index[left]
         right_unpacked = unpacked_by_index[right]
         for idx in range(left, right + 1):
-            denom = right_serial - left_serial
-            t = 0.0 if denom == 0 else (serial_numbers[idx] - left_serial) / denom
+            denom = right_index - left_index
+            t = 0.0 if denom == 0 else (slice_indices[idx] - left_index) / denom
             propagated[idx] = [
                 a + t * (b - a)
                 for a, b in zip(left_unpacked, right_unpacked)

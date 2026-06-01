@@ -24,18 +24,19 @@ from PyQt6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
-    QListWidget,
-    QListWidgetItem,
     QMessageBox,
     QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
 from verso.engine.io.image_io import (
-    parse_section_serial_number,
+    guess_slice_indices,
     probe_channels,
     thumbnail_filename,
 )
@@ -105,6 +106,18 @@ _KNOWN_ATLASES = [
 
 _IMAGE_FILTER = "Images (*.tif *.tiff *.png *.jpg *.jpeg);;All files (*)"
 
+# Columns of the section-image preview table.
+_FILE_COL = 0
+_IDX_COL = 1
+
+
+def _natural_name_key(path: str) -> list[object]:
+    """Order filenames with embedded numbers numerically (tiebreak for equal index)."""
+    import re
+
+    stem = Path(path).stem
+    return [int(c) if c.isdigit() else c for c in re.split(r"(\d+)", stem)]
+
 
 class NewProjectDialog(QDialog):
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -158,21 +171,36 @@ class NewProjectDialog(QDialog):
         sections_box = QGroupBox("Section images")
         sv = QVBoxLayout(sections_box)
 
-        self._file_list = QListWidget()
-        self._file_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self._file_list.setMinimumHeight(160)
-        sv.addWidget(self._file_list)
+        self._file_table = QTableWidget(0, 2)
+        self._file_table.setHorizontalHeaderLabels(["File", "Slice index"])
+        self._file_table.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        self._file_table.setSelectionMode(
+            QAbstractItemView.SelectionMode.ExtendedSelection
+        )
+        self._file_table.setEditTriggers(
+            QAbstractItemView.EditTrigger.DoubleClicked
+            | QAbstractItemView.EditTrigger.EditKeyPressed
+        )
+        self._file_table.verticalHeader().setVisible(False)
+        self._file_table.setMinimumHeight(160)
+        header = self._file_table.horizontalHeader()
+        header.setSectionResizeMode(_FILE_COL, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(_IDX_COL, QHeaderView.ResizeMode.ResizeToContents)
+        self._file_table.itemChanged.connect(self._on_index_edited)
+        sv.addWidget(self._file_table)
 
         btn_row = QHBoxLayout()
         add_btn = QPushButton("Add images…")
         add_btn.clicked.connect(self._add_images)
         remove_btn = QPushButton("Remove selected")
         remove_btn.clicked.connect(self._remove_selected)
-        sort_btn = QPushButton("Sort by name")
-        sort_btn.clicked.connect(self._sort_by_name)
+        renumber_btn = QPushButton("Auto-number from names")
+        renumber_btn.clicked.connect(self._auto_number)
         btn_row.addWidget(add_btn)
         btn_row.addWidget(remove_btn)
-        btn_row.addWidget(sort_btn)
+        btn_row.addWidget(renumber_btn)
         btn_row.addStretch()
         sv.addLayout(btn_row)
 
@@ -209,40 +237,80 @@ class NewProjectDialog(QDialog):
                 project_path = project_path.with_suffix(".json")
             self._project_file_edit.setText(str(project_path))
 
+    def _current_entries(self) -> list[tuple[str, int]]:
+        """Return ``(path, slice_index)`` for every table row, in row order."""
+        entries: list[tuple[str, int]] = []
+        for row in range(self._file_table.rowCount()):
+            file_item = self._file_table.item(row, _FILE_COL)
+            idx_item = self._file_table.item(row, _IDX_COL)
+            path = file_item.data(Qt.ItemDataRole.UserRole)
+            entries.append((path, int(idx_item.data(Qt.ItemDataRole.UserRole))))
+        return entries
+
+    def _set_entries(self, entries: list[tuple[str, int]]) -> None:
+        """Rebuild the table from ``(path, slice_index)`` pairs, sorted by index."""
+        ordered = sorted(
+            entries, key=lambda e: (e[1], _natural_name_key(e[0]))
+        )
+        self._file_table.blockSignals(True)
+        self._file_table.setRowCount(len(ordered))
+        for row, (path, index) in enumerate(ordered):
+            file_item = QTableWidgetItem(os.path.basename(path))
+            file_item.setData(Qt.ItemDataRole.UserRole, path)
+            file_item.setToolTip(path)
+            file_item.setFlags(file_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            idx_item = QTableWidgetItem(str(index))
+            idx_item.setData(Qt.ItemDataRole.UserRole, int(index))
+            idx_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._file_table.setItem(row, _FILE_COL, file_item)
+            self._file_table.setItem(row, _IDX_COL, idx_item)
+        self._file_table.blockSignals(False)
+        self._update_count()
+
     def _add_images(self) -> None:
         paths, _ = QFileDialog.getOpenFileNames(
             self, "Add Section Images", "", _IMAGE_FILTER
         )
-        existing = {self._file_list.item(i).data(Qt.ItemDataRole.UserRole)
-                    for i in range(self._file_list.count())}
+        if not paths:
+            return
+        existing = {p for p, _ in self._current_entries()}
+        merged = [p for p, _ in self._current_entries()]
         for path in paths:
             if path not in existing:
-                item = QListWidgetItem(os.path.basename(path))
-                item.setData(Qt.ItemDataRole.UserRole, path)
-                item.setToolTip(path)
-                self._file_list.addItem(item)
-        self._update_count()
+                merged.append(path)
+                existing.add(path)
+        # Re-guess across the whole set so the heuristic sees every filename.
+        self._set_entries(list(zip(merged, guess_slice_indices(merged))))
 
     def _remove_selected(self) -> None:
-        for item in self._file_list.selectedItems():
-            self._file_list.takeItem(self._file_list.row(item))
-        self._update_count()
+        selected = {idx.row() for idx in self._file_table.selectedIndexes()}
+        if not selected:
+            return
+        entries = self._current_entries()
+        kept = [e for row, e in enumerate(entries) if row not in selected]
+        self._set_entries(kept)
 
-    def _sort_by_name(self) -> None:
-        items = []
-        for i in range(self._file_list.count()):
-            item = self._file_list.item(i)
-            items.append((item.text(), item.data(Qt.ItemDataRole.UserRole)))
-        items.sort(key=lambda x: x[0])
-        self._file_list.clear()
-        for name, path in items:
-            item = QListWidgetItem(name)
-            item.setData(Qt.ItemDataRole.UserRole, path)
-            item.setToolTip(path)
-            self._file_list.addItem(item)
+    def _auto_number(self) -> None:
+        """Re-run the filename heuristic, discarding any manual edits."""
+        paths = [p for p, _ in self._current_entries()]
+        self._set_entries(list(zip(paths, guess_slice_indices(paths))))
+
+    def _on_index_edited(self, item: QTableWidgetItem) -> None:
+        """Validate an edited slice-index cell; revert non-integer input."""
+        if item.column() != _IDX_COL:
+            return
+        text = item.text().strip()
+        self._file_table.blockSignals(True)
+        if text.isdigit():
+            item.setData(Qt.ItemDataRole.UserRole, int(text))
+            item.setText(text)
+        else:
+            prev = item.data(Qt.ItemDataRole.UserRole)
+            item.setText(str(prev if prev is not None else 1))
+        self._file_table.blockSignals(False)
 
     def _update_count(self) -> None:
-        n = self._file_list.count()
+        n = self._file_table.rowCount()
         self._count_label.setText(f"{n} image{'s' if n != 1 else ''} selected")
 
     def _on_accept(self) -> None:
@@ -258,7 +326,7 @@ class NewProjectDialog(QDialog):
         if not project_file:
             QMessageBox.warning(self, "Missing field", "Please choose a project file.")
             return
-        if self._file_list.count() == 0:
+        if self._file_table.rowCount() == 0:
             QMessageBox.warning(self, "No images", "Please add at least one section image.")
             return
 
@@ -274,15 +342,17 @@ class NewProjectDialog(QDialog):
         (folder_path / "alignments").mkdir(exist_ok=True)
         (folder_path / "exports").mkdir(exist_ok=True)
 
+        # Build sections in increasing slice-index order so ``id`` (s001, s002…)
+        # follows the physical series; sort_sections keeps the same order later.
+        entries = sorted(
+            self._current_entries(), key=lambda e: (e[1], _natural_name_key(e[0]))
+        )
         sections: list[Section] = []
-        for i in range(self._file_list.count()):
-            item = self._file_list.item(i)
-            orig_path = item.data(Qt.ItemDataRole.UserRole)
-            section_id = f"s{i + 1:03d}"
+        for i, (orig_path, slice_index) in enumerate(entries):
             sections.append(
                 Section(
-                    id=section_id,
-                    serial_number=parse_section_serial_number(orig_path, fallback=i + 1),
+                    id=f"s{i + 1:03d}",
+                    slice_index=slice_index,
                     original_path=orig_path,
                     thumbnail_path=str(
                         folder_path / "thumbnails" / thumbnail_filename(orig_path)
@@ -309,6 +379,7 @@ class NewProjectDialog(QDialog):
             channels=project_channels,
             interpolation_axis=interpolation_axis,
         )
+        self._project.sort_sections()
         self._project_path = project_path
         self._project.save(self._project_path)
 
