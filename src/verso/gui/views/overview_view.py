@@ -29,9 +29,12 @@ if TYPE_CHECKING:
 
 _STEPS = ("Flip", "Slice mask", "L/R mask", "Align", "Warp")
 
+# Every step shows a dot; the colour carries the meaning, matching the
+# filmstrip convention (gray = not started, yellow = unsaved edits, green =
+# saved).  See verso.engine.model.status.STATUS_COLOR.
 _STATUS_SYMBOL = {
-    AlignmentStatus.NOT_STARTED: "",
-    AlignmentStatus.IN_PROGRESS: "",
+    AlignmentStatus.NOT_STARTED: "●",
+    AlignmentStatus.IN_PROGRESS: "●",
     AlignmentStatus.COMPLETE: "●",
 }
 
