@@ -14,7 +14,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QRectF, Qt
+from PyQt6.QtGui import QColor, QPainter, QPen
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -24,18 +25,22 @@ from PyQt6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
-    QListWidget,
-    QListWidgetItem,
     QMessageBox,
     QPushButton,
+    QStyle,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
 from verso.engine.io.image_io import (
-    parse_section_serial_number,
+    guess_slice_indices,
     probe_channels,
     thumbnail_filename,
 )
@@ -52,13 +57,13 @@ from verso.engine.model.project import (
 # Default per-channel pseudo-color palettes used when seeding Project.channels
 # at project creation time.
 _FLUORESCENCE_PALETTE: list[tuple[int, int, int]] = [
-    (255, 0, 0),      # Ch 0 — red
-    (0, 255, 0),      # Ch 1 — green
-    (0, 100, 255),    # Ch 2 — blue / DAPI
-    (255, 0, 200),    # Ch 3 — far-red / magenta
+    (255, 0, 0),  # Ch 0 — red
+    (0, 255, 0),  # Ch 1 — green
+    (0, 100, 255),  # Ch 2 — blue / DAPI
+    (255, 0, 200),  # Ch 3 — far-red / magenta
     (255, 255, 255),  # Ch 4 — white
-    (255, 255, 0),    # Ch 5 — yellow
-    (0, 255, 255),    # Ch 6 — cyan
+    (255, 255, 0),  # Ch 5 — yellow
+    (0, 255, 255),  # Ch 6 — cyan
 ]
 
 _RGB_IDENTITY_PALETTE: list[tuple[int, int, int]] = [
@@ -68,9 +73,7 @@ _RGB_IDENTITY_PALETTE: list[tuple[int, int, int]] = [
 ]
 
 
-def _default_channel_specs(
-    channel_names: list[str], source_ext: str
-) -> list[ChannelSpec]:
+def _default_channel_specs(channel_names: list[str], source_ext: str) -> list[ChannelSpec]:
     """Pick the per-channel color palette based on the source file extension.
 
     Single-channel inputs default to white. JPG/PNG inputs use the identity
@@ -95,6 +98,7 @@ def _default_channel_specs(
         specs.append(ChannelSpec(name=name, color=color))
     return specs
 
+
 _KNOWN_ATLASES = [
     "allen_mouse_25um",
     "allen_mouse_10um",
@@ -104,6 +108,90 @@ _KNOWN_ATLASES = [
 ]
 
 _IMAGE_FILTER = "Images (*.tif *.tiff *.png *.jpg *.jpeg);;All files (*)"
+
+# Columns of the section-image preview table.
+_FILE_COL = 0
+_IDX_COL = 1
+
+# Table styling mirrored from OverviewView so the two tables read as a family:
+# flat, gridline-free rows, a quiet uppercase header with a soft accent rule.
+# Cell padding is trimmed (vs. the overview's 6px 10px) because this dialog
+# table has far less horizontal room to spend.
+_TABLE_STYLE = """
+QTableWidget {
+    background: #1e1e1e;
+    alternate-background-color: #242424;
+    gridline-color: transparent;
+    border: 1px solid #383838;
+    border-radius: 8px;
+    color: #d6d6d6;
+    font-size: 12px;
+    outline: none;
+}
+QTableWidget::item {
+    padding: 4px 8px;
+    border: none;
+}
+QTableWidget::item:selected {
+    background: #1e5a8a;
+    color: #ffffff;
+}
+QHeaderView::section {
+    background: #262626;
+    color: #9aa0a6;
+    padding: 7px 8px;
+    border: none;
+    border-bottom: 2px solid #1e5a8a;
+    font-size: 11px;
+    font-weight: 600;
+}
+QTableCornerButton::section {
+    background: #262626;
+    border: none;
+}
+"""
+
+
+class _SliceIndexDelegate(QStyledItemDelegate):
+    """Renders the slice-index cells as a subtle, editable input chip.
+
+    Matches the affordance used in OverviewView: a faint rounded outline at
+    rest that fills and brightens on hover, hinting the value can be edited
+    without drawing the eye. Selected rows defer to the default highlight.
+    The chip inset is a touch tighter than the overview's to suit this
+    dialog's shorter rows.
+    """
+
+    _BORDER = QColor("#3f3f3f")
+    _BORDER_HOVER = QColor("#3a6d99")
+    _FILL_HOVER = QColor("#27414f")
+    _TEXT = QColor("#d6d6d6")
+    _TEXT_HOVER = QColor("#9fd0f2")
+
+    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index) -> None:
+        super().paint(painter, option, index)
+        if option.state & QStyle.StateFlag.State_Selected:
+            return
+
+        hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        chip = QRectF(option.rect).adjusted(5, 4, -5, -4)
+        painter.setPen(QPen(self._BORDER_HOVER if hovered else self._BORDER, 1))
+        painter.setBrush(self._FILL_HOVER if hovered else Qt.BrushStyle.NoBrush)
+        painter.drawRoundedRect(chip, 5, 5)
+
+        painter.setPen(self._TEXT_HOVER if hovered else self._TEXT)
+        painter.drawText(option.rect, Qt.AlignmentFlag.AlignCenter, index.data() or "")
+        painter.restore()
+
+
+def _natural_name_key(path: str) -> list[object]:
+    """Order filenames with embedded numbers numerically (tiebreak for equal index)."""
+    import re
+
+    stem = Path(path).stem
+    return [int(c) if c.isdigit() else c for c in re.split(r"(\d+)", stem)]
 
 
 class NewProjectDialog(QDialog):
@@ -158,21 +246,42 @@ class NewProjectDialog(QDialog):
         sections_box = QGroupBox("Section images")
         sv = QVBoxLayout(sections_box)
 
-        self._file_list = QListWidget()
-        self._file_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self._file_list.setMinimumHeight(160)
-        sv.addWidget(self._file_list)
+        self._file_table = QTableWidget(0, 2)
+        self._file_table.setHorizontalHeaderLabels(["File", "Slice index"])
+        self._file_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._file_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self._file_table.setEditTriggers(
+            QAbstractItemView.EditTrigger.DoubleClicked
+            | QAbstractItemView.EditTrigger.EditKeyPressed
+        )
+        self._file_table.verticalHeader().setVisible(False)
+        self._file_table.setMinimumHeight(160)
+        self._file_table.setAlternatingRowColors(True)
+        self._file_table.setShowGrid(False)
+        self._file_table.verticalHeader().setDefaultSectionSize(30)
+        self._file_table.horizontalHeader().setHighlightSections(False)
+        self._file_table.setStyleSheet(_TABLE_STYLE)
+        header = self._file_table.horizontalHeader()
+        header.setSectionResizeMode(_FILE_COL, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(_IDX_COL, QHeaderView.ResizeMode.ResizeToContents)
+        # Slice index is the only editable column — render it as an input chip
+        # with a hover affordance so users see it can be changed (mirrors the
+        # overview table).
+        self._file_table.setMouseTracking(True)
+        self._file_table.setItemDelegateForColumn(_IDX_COL, _SliceIndexDelegate(self._file_table))
+        self._file_table.itemChanged.connect(self._on_index_edited)
+        sv.addWidget(self._file_table)
 
         btn_row = QHBoxLayout()
         add_btn = QPushButton("Add images…")
         add_btn.clicked.connect(self._add_images)
         remove_btn = QPushButton("Remove selected")
         remove_btn.clicked.connect(self._remove_selected)
-        sort_btn = QPushButton("Sort by name")
-        sort_btn.clicked.connect(self._sort_by_name)
+        renumber_btn = QPushButton("Auto-number from names")
+        renumber_btn.clicked.connect(self._auto_number)
         btn_row.addWidget(add_btn)
         btn_row.addWidget(remove_btn)
-        btn_row.addWidget(sort_btn)
+        btn_row.addWidget(renumber_btn)
         btn_row.addStretch()
         sv.addLayout(btn_row)
 
@@ -209,40 +318,77 @@ class NewProjectDialog(QDialog):
                 project_path = project_path.with_suffix(".json")
             self._project_file_edit.setText(str(project_path))
 
+    def _current_entries(self) -> list[tuple[str, int]]:
+        """Return ``(path, slice_index)`` for every table row, in row order."""
+        entries: list[tuple[str, int]] = []
+        for row in range(self._file_table.rowCount()):
+            file_item = self._file_table.item(row, _FILE_COL)
+            idx_item = self._file_table.item(row, _IDX_COL)
+            path = file_item.data(Qt.ItemDataRole.UserRole)
+            entries.append((path, int(idx_item.data(Qt.ItemDataRole.UserRole))))
+        return entries
+
+    def _set_entries(self, entries: list[tuple[str, int]]) -> None:
+        """Rebuild the table from ``(path, slice_index)`` pairs, sorted by index."""
+        ordered = sorted(entries, key=lambda e: (e[1], _natural_name_key(e[0])))
+        self._file_table.blockSignals(True)
+        self._file_table.setRowCount(len(ordered))
+        for row, (path, index) in enumerate(ordered):
+            file_item = QTableWidgetItem(os.path.basename(path))
+            file_item.setData(Qt.ItemDataRole.UserRole, path)
+            file_item.setToolTip(path)
+            file_item.setFlags(file_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            idx_item = QTableWidgetItem(str(index))
+            idx_item.setData(Qt.ItemDataRole.UserRole, int(index))
+            idx_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            idx_item.setToolTip("Double-click to edit")
+            self._file_table.setItem(row, _FILE_COL, file_item)
+            self._file_table.setItem(row, _IDX_COL, idx_item)
+        self._file_table.blockSignals(False)
+        self._update_count()
+
     def _add_images(self) -> None:
-        paths, _ = QFileDialog.getOpenFileNames(
-            self, "Add Section Images", "", _IMAGE_FILTER
-        )
-        existing = {self._file_list.item(i).data(Qt.ItemDataRole.UserRole)
-                    for i in range(self._file_list.count())}
+        paths, _ = QFileDialog.getOpenFileNames(self, "Add Section Images", "", _IMAGE_FILTER)
+        if not paths:
+            return
+        existing = {p for p, _ in self._current_entries()}
+        merged = [p for p, _ in self._current_entries()]
         for path in paths:
             if path not in existing:
-                item = QListWidgetItem(os.path.basename(path))
-                item.setData(Qt.ItemDataRole.UserRole, path)
-                item.setToolTip(path)
-                self._file_list.addItem(item)
-        self._update_count()
+                merged.append(path)
+                existing.add(path)
+        # Re-guess across the whole set so the heuristic sees every filename.
+        self._set_entries(list(zip(merged, guess_slice_indices(merged))))
 
     def _remove_selected(self) -> None:
-        for item in self._file_list.selectedItems():
-            self._file_list.takeItem(self._file_list.row(item))
-        self._update_count()
+        selected = {idx.row() for idx in self._file_table.selectedIndexes()}
+        if not selected:
+            return
+        entries = self._current_entries()
+        kept = [e for row, e in enumerate(entries) if row not in selected]
+        self._set_entries(kept)
 
-    def _sort_by_name(self) -> None:
-        items = []
-        for i in range(self._file_list.count()):
-            item = self._file_list.item(i)
-            items.append((item.text(), item.data(Qt.ItemDataRole.UserRole)))
-        items.sort(key=lambda x: x[0])
-        self._file_list.clear()
-        for name, path in items:
-            item = QListWidgetItem(name)
-            item.setData(Qt.ItemDataRole.UserRole, path)
-            item.setToolTip(path)
-            self._file_list.addItem(item)
+    def _auto_number(self) -> None:
+        """Re-run the filename heuristic, discarding any manual edits."""
+        paths = [p for p, _ in self._current_entries()]
+        self._set_entries(list(zip(paths, guess_slice_indices(paths))))
+
+    def _on_index_edited(self, item: QTableWidgetItem) -> None:
+        """Validate an edited slice-index cell; revert non-integer input."""
+        if item.column() != _IDX_COL:
+            return
+        text = item.text().strip()
+        self._file_table.blockSignals(True)
+        if text.isdigit():
+            item.setData(Qt.ItemDataRole.UserRole, int(text))
+            item.setText(text)
+        else:
+            prev = item.data(Qt.ItemDataRole.UserRole)
+            item.setText(str(prev if prev is not None else 1))
+        self._file_table.blockSignals(False)
 
     def _update_count(self) -> None:
-        n = self._file_list.count()
+        n = self._file_table.rowCount()
         self._count_label.setText(f"{n} image{'s' if n != 1 else ''} selected")
 
     def _on_accept(self) -> None:
@@ -258,7 +404,7 @@ class NewProjectDialog(QDialog):
         if not project_file:
             QMessageBox.warning(self, "Missing field", "Please choose a project file.")
             return
-        if self._file_list.count() == 0:
+        if self._file_table.rowCount() == 0:
             QMessageBox.warning(self, "No images", "Please add at least one section image.")
             return
 
@@ -274,19 +420,17 @@ class NewProjectDialog(QDialog):
         (folder_path / "alignments").mkdir(exist_ok=True)
         (folder_path / "exports").mkdir(exist_ok=True)
 
+        # Build sections in increasing slice-index order so ``id`` (s001, s002…)
+        # follows the physical series; sort_sections keeps the same order later.
+        entries = sorted(self._current_entries(), key=lambda e: (e[1], _natural_name_key(e[0])))
         sections: list[Section] = []
-        for i in range(self._file_list.count()):
-            item = self._file_list.item(i)
-            orig_path = item.data(Qt.ItemDataRole.UserRole)
-            section_id = f"s{i + 1:03d}"
+        for i, (orig_path, slice_index) in enumerate(entries):
             sections.append(
                 Section(
-                    id=section_id,
-                    serial_number=parse_section_serial_number(orig_path, fallback=i + 1),
+                    id=f"s{i + 1:03d}",
+                    slice_index=slice_index,
                     original_path=orig_path,
-                    thumbnail_path=str(
-                        folder_path / "thumbnails" / thumbnail_filename(orig_path)
-                    ),
+                    thumbnail_path=str(folder_path / "thumbnails" / thumbnail_filename(orig_path)),
                     alignment=Alignment(status=AlignmentStatus.NOT_STARTED),
                     warp=WarpState(status=AlignmentStatus.NOT_STARTED),
                 )
@@ -309,6 +453,7 @@ class NewProjectDialog(QDialog):
             channels=project_channels,
             interpolation_axis=interpolation_axis,
         )
+        self._project.sort_sections()
         self._project_path = project_path
         self._project.save(self._project_path)
 
@@ -336,8 +481,7 @@ class NewProjectDialog(QDialog):
             if progress.wasCanceled():
                 break
             progress.setLabelText(
-                f"Generating thumbnails… ({i + 1}/{n})\n"
-                f"{os.path.basename(section.original_path)}"
+                f"Generating thumbnails… ({i + 1}/{n})\n{os.path.basename(section.original_path)}"
             )
             progress.setValue(i)
             QApplication.processEvents()

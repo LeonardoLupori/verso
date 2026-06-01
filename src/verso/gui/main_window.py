@@ -178,6 +178,7 @@ class MainWindow(QMainWindow):
             return
         self._filmstrip.shutdown()
         self._overview.shutdown()
+        self._state.shutdown()
         super().closeEvent(event)
 
     # ------------------------------------------------------------------
@@ -253,6 +254,9 @@ class MainWindow(QMainWindow):
         act_adjust = QAction("Adjust &channels/brightness…", self)
         act_adjust.triggered.connect(self._open_brightness_dialog)
         images_menu.addAction(act_adjust)
+        act_reorder = QAction("Reorder slices based on &filename…", self)
+        act_reorder.triggered.connect(self._reorder_by_filename)
+        images_menu.addAction(act_reorder)
 
         batch_menu = mb.addMenu("&Batch")
 
@@ -446,6 +450,7 @@ class MainWindow(QMainWindow):
         # Overview interactions
         self._overview.section_activated.connect(self._on_section_activated)
         self._overview.section_selected.connect(self._state.set_section)
+        self._overview.sections_reordered.connect(self._on_sections_reordered)
 
         # Filmstrip
         self._filmstrip.section_selected.connect(self._state.set_section)
@@ -1130,6 +1135,80 @@ class MainWindow(QMainWindow):
         self._switch_view(_VIEW_PREP)
         self._prep.load_section(self._state.current_section)
 
+    def _reorder_by_filename(self) -> None:
+        """Re-derive every slice index from the image filenames.
+
+        Runs the same heuristic used to seed indices at import
+        (:func:`guess_slice_indices`) over the current sections, overwriting any
+        manual edits, then re-sorts and recomputes like an overview edit.
+        """
+        from PyQt6.QtWidgets import QMessageBox
+
+        from verso.engine.io.image_io import guess_slice_indices
+
+        project = self._state.project
+        if project is None or not project.sections:
+            return
+
+        resp = QMessageBox.question(
+            self,
+            "Reorder slices based on filename",
+            "Re-derive every slice index from the image filenames?\n\n"
+            "This overwrites any manual slice-index edits.",
+            QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+        )
+        if resp != QMessageBox.StandardButton.Ok:
+            return
+
+        indices = guess_slice_indices([s.original_path for s in project.sections])
+        keep_id = (
+            self._state.current_section.id
+            if self._state.current_section is not None
+            else None
+        )
+        for section, index in zip(project.sections, indices):
+            section.slice_index = index
+        project.sort_sections()
+
+        if keep_id is not None:
+            new_pos = next(
+                (i for i, s in enumerate(project.sections) if s.id == keep_id), None
+            )
+            if new_pos is not None:
+                self._state.set_section(new_pos)
+
+        self._on_sections_reordered()
+
+    def _on_sections_reordered(self) -> None:
+        """A slice index was edited in Overview: re-interpolate, refresh, persist.
+
+        The Overview view has already mutated ``slice_index``, re-sorted the
+        sections, and updated the selection; here we recompute everything that
+        depends on the section order and save the project to disk.
+        """
+        project = self._state.project
+        if project is None:
+            return
+
+        if self._state.atlas is not None:
+            from verso.engine.registration import interpolate_anchorings
+
+            interpolate_anchorings(
+                project.sections,
+                atlas_shape=self._state.atlas.shape,
+                interpolation_axis=project.interpolation_axis_index,
+                reverse_axis=self._reverse_axis_proposal,
+            )
+        self._sync_position_mm(project.sections)
+
+        self._filmstrip.populate(project.sections, project.channels)
+        self._filmstrip.set_current(self._state.section_index)
+        self._overview.refresh()
+        self._update_ap_plot()
+
+        if self._state.project_path is not None:
+            self._write_project(self._state.project_path)
+
     def _refresh_properties(self) -> None:
         self._props.update_section(self._state.current_section, self._current_mode)
         if self._current_mode == "prep":
@@ -1510,7 +1589,7 @@ class MainWindow(QMainWindow):
             )
         propagated = quicknii_series_anchorings(
             image_sizes=[(w, h) for _, w, h in usable],
-            serial_numbers=[section.serial_number for section, _, _ in usable],
+            slice_indices=[section.slice_index for section, _, _ in usable],
             atlas_shape=atlas.shape,
             interpolation_axis=self._interpolation_axis(),
             stored_anchorings=display_anchorings,
@@ -1518,8 +1597,8 @@ class MainWindow(QMainWindow):
             center_proposals=True,
         )
 
-        stored_serials = {
-            section.serial_number
+        stored_indices = {
+            section.slice_index
             for (section, _, _), anch in zip(usable, display_anchorings)
             if anch is not None
         }
@@ -1529,14 +1608,15 @@ class MainWindow(QMainWindow):
         ):
             if anch is not None:
                 continue
-            # Always sync sections that share a serial with a stored section —
-            # they represent the same physical slice and must show the same image.
-            is_serial_duplicate = section.serial_number in stored_serials
+            # Always sync sections that share a slice index with a stored
+            # section — they are the same physical slice and must show the same
+            # image.
+            is_index_duplicate = section.slice_index in stored_indices
             has_existing = section.alignment.anchoring and any(
                 v != 0.0 for v in section.alignment.anchoring
             )
             if (
-                not is_serial_duplicate
+                not is_index_duplicate
                 and has_existing
                 and section.alignment.status != AlignmentStatus.NOT_STARTED
                 and section.alignment.source != "quicknii_default"

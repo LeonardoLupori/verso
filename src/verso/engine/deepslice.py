@@ -45,7 +45,7 @@ class DeepSliceSectionSuggestion:
     """One affine suggestion returned by DeepSlice."""
 
     filename: str
-    serial_number: int
+    slice_index: int
     anchoring: list[float]
     confidence: float | None = None
 
@@ -189,7 +189,7 @@ def apply_deepslice_suggestions_with_atlas(
 
     by_stem = {Path(s.thumbnail_path or s.original_path).stem: s for s in project.sections}
     by_original_stem = {Path(s.original_path).stem: s for s in project.sections}
-    by_serial = {s.serial_number: s for s in project.sections}
+    by_slice_index = {s.slice_index: s for s in project.sections}
     bad_ids = set(result.bad_section_ids)
     applied = 0
     applied_section_ids: set[str] = set()
@@ -202,7 +202,7 @@ def apply_deepslice_suggestions_with_atlas(
             # An older format kept a leading ``s`` on the prefix; accept both.
             m = re.match(r"^s?(\d+)(?:-\d+)?_s\d+$", stem)
             if m:
-                section = by_serial.get(int(m.group(1)))
+                section = by_slice_index.get(int(m.group(1)))
         if section is None:
             # Legacy staged-name format: ``{section.id}_s{nr}``
             section = next(
@@ -210,7 +210,7 @@ def apply_deepslice_suggestions_with_atlas(
                 None,
             )
         if section is None:
-            section = by_serial.get(suggestion.serial_number)
+            section = by_slice_index.get(suggestion.slice_index)
         if section is None:
             continue
         if section.id in bad_ids:
@@ -276,7 +276,7 @@ def _interpolate_bad_sections(
     # DeepSlice is coronal-only, so this interpolation always runs along AP.
     propagated = quicknii_series_anchorings(
         image_sizes=[(w, h) for _, w, h in usable],
-        serial_numbers=[s.serial_number for s, _, _ in usable],
+        slice_indices=[s.slice_index for s, _, _ in usable],
         atlas_shape=atlas_shape,
         interpolation_axis=1,
         stored_anchorings=stored,
@@ -339,7 +339,7 @@ def reset_in_progress_to_default_proposals(
         stored_anchorings.append(display if any(v != 0.0 for v in display) else None)
     propagated = quicknii_series_anchorings(
         image_sizes=[(w, h) for _, w, h in usable],
-        serial_numbers=[section.serial_number for section, _, _ in usable],
+        slice_indices=[section.slice_index for section, _, _ in usable],
         atlas_shape=atlas_shape,
         interpolation_axis=interpolation_axis,
         stored_anchorings=stored_anchorings,
@@ -392,7 +392,7 @@ def _copy_registration_images(
     from verso.engine.io.image_io import ensure_working_copy
 
     copied: list[tuple[Path, str]] = []
-    serials = [section.serial_number for section in sections]
+    slice_indices = [section.slice_index for section in sections]
     for section in sections:
         original_thumbnail_path = section.thumbnail_path
         original_scale = section.scale
@@ -411,19 +411,19 @@ def _copy_registration_images(
             gamma=gamma,
         )
         deepslice_nr = _deepslice_section_number(
-            section.serial_number, serials, reverse_section_order
+            section.slice_index, slice_indices, reverse_section_order
         )
-        # Filename layout: ``{user_serial}_s{deepslice_nr}.png``.
-        # - Prefix is the user's true (possibly non-contiguous) serial so they
-        #   recognise it in the staged folder.
+        # Filename layout: ``{slice_index}_s{deepslice_nr}.png``.
+        # - Prefix is the user's true (possibly non-contiguous) slice index so
+        #   they recognise it in the staged folder.
         # - Suffix is the only ``_s\d+`` token in the name, which is what
         #   DeepSlice's ``number_sections`` regex picks up.  Reverse maps the
-        #   suffix to ``min+max-serial`` so the reflection is visible.
-        dst = input_dir / f"{section.serial_number:03d}_s{deepslice_nr:03d}.png"
+        #   suffix to ``min+max-index`` so the reflection is visible.
+        dst = input_dir / f"{section.slice_index:03d}_s{deepslice_nr:03d}.png"
         if dst.exists():
             dst = (
                 input_dir
-                / f"{section.serial_number:03d}-{len(copied)}_s{deepslice_nr:03d}.png"
+                / f"{section.slice_index:03d}-{len(copied)}_s{deepslice_nr:03d}.png"
             )
         Image.fromarray(img).save(dst)
         copied.append((dst, section.id))
@@ -434,20 +434,20 @@ def _copy_registration_images(
 
 
 def _deepslice_section_number(
-    serial_number: int,
-    serial_numbers: list[int],
+    slice_index: int,
+    slice_indices: list[int],
     reverse_section_order: bool,
 ) -> int:
     """Return the section number encoded in the staged DeepSlice filename.
 
     When the physical series is ordered posterior-to-anterior, DeepSlice still
-    needs numbers increasing in its expected direction.  Reflecting the serial
-    number around the first/last serial preserves gaps from missing sections
+    needs numbers increasing in its expected direction.  Reflecting the slice
+    index around the first/last index preserves gaps from missing sections
     (e.g. 10, 20, 40 -> 40, 30, 10).
     """
-    if not reverse_section_order or len(serial_numbers) < 2:
-        return serial_number
-    return min(serial_numbers) + max(serial_numbers) - serial_number
+    if not reverse_section_order or len(slice_indices) < 2:
+        return slice_index
+    return min(slice_indices) + max(slice_indices) - slice_index
 
 
 def _format_deepslice_image(
@@ -563,7 +563,7 @@ def _load_suggestions(path: Path) -> list[DeepSliceSectionSuggestion]:
         suggestions.append(
             DeepSliceSectionSuggestion(
                 filename=raw_section.get("filename", ""),
-                serial_number=int(raw_section.get("nr", i + 1)),
+                slice_index=int(raw_section.get("nr", i + 1)),
                 anchoring=anchoring,
                 confidence=float(confidence) if confidence is not None else None,
             )

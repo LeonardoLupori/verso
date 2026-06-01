@@ -21,7 +21,7 @@ from verso.engine.model.status import STATUS_COLOR, section_step_status
 def _section(**kw) -> Section:
     return Section(
         id=kw.get("id", "s1"),
-        serial_number=1,
+        slice_index=1,
         original_path=kw.get("original_path", "img.png"),
         thumbnail_path=kw.get("thumbnail_path", "thumbnails/img.tif"),
         preprocessing=kw.get("preprocessing", Preprocessing()),

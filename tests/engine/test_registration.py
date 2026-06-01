@@ -216,7 +216,7 @@ def test_quicknii_pack_unpack_round_trip():
 def test_quicknii_coronal_series_initializes_ap_endpoints():
     anchorings = quicknii_series_anchorings(
         image_sizes=[(1000, 800), (1000, 800), (1000, 800)],
-        serial_numbers=[1, 2, 3],
+        slice_indices=[1, 2, 3],
         atlas_shape=(528, 320, 456),
         interpolation_axis=1,
     )
@@ -237,7 +237,7 @@ def test_quicknii_coronal_series_initializes_ap_endpoints():
 def test_quicknii_coronal_series_can_reverse_ap_proposal():
     anchorings = quicknii_series_anchorings(
         image_sizes=[(1000, 800), (1000, 800), (1000, 800)],
-        serial_numbers=[1, 2, 3],
+        slice_indices=[1, 2, 3],
         atlas_shape=(528, 320, 456),
         interpolation_axis=1,
         reverse_axis=True,
@@ -250,10 +250,10 @@ def test_quicknii_coronal_series_can_reverse_ap_proposal():
     np.testing.assert_allclose([c[1] for c in centers], [0.0, 263.5, 527.0])
 
 
-def test_quicknii_coronal_series_uses_serial_numbers_not_list_indices():
+def test_quicknii_coronal_series_uses_slice_indices_not_list_indices():
     anchorings = quicknii_series_anchorings(
         image_sizes=[(1000, 800), (1000, 800), (1000, 800)],
-        serial_numbers=[30, 10, 20],
+        slice_indices=[30, 10, 20],
         atlas_shape=(528, 320, 456),
         interpolation_axis=1,
     )
@@ -272,14 +272,14 @@ def test_quicknii_coronal_series_uses_serial_numbers_not_list_indices():
 def test_quicknii_coronal_series_duplicate_serial_gets_stored_ap_but_default_orientation():
     stored = quicknii_series_anchorings(
         image_sizes=[(1000, 800), (1000, 800), (1000, 800)],
-        serial_numbers=[9, 10, 11],
+        slice_indices=[9, 10, 11],
         atlas_shape=(528, 320, 456),
         interpolation_axis=1,
     )
 
     anchorings = quicknii_series_anchorings(
         image_sizes=[(800, 600), (1000, 800), (1000, 800), (1000, 800)],
-        serial_numbers=[10, 10, 11, 12],
+        slice_indices=[10, 10, 11, 12],
         atlas_shape=(528, 320, 456),
         interpolation_axis=1,
         stored_anchorings=[None, stored[1], None, None],
@@ -301,7 +301,7 @@ def test_quicknii_coronal_series_same_serial_same_ap_with_different_sizes():
     """Sections sharing a serial get the same AP position regardless of image size."""
     anchorings = quicknii_series_anchorings(
         image_sizes=[(800, 600), (1000, 800), (600, 400)],
-        serial_numbers=[10, 10, 10],
+        slice_indices=[10, 10, 10],
         atlas_shape=(528, 320, 456),
         interpolation_axis=1,
     )
@@ -328,7 +328,7 @@ def test_quicknii_coronal_series_centers_generated_proposals_from_off_center_key
 
     anchorings = quicknii_series_anchorings(
         image_sizes=[(1000, 800), (1000, 800), (1000, 800)],
-        serial_numbers=[1, 2, 3],
+        slice_indices=[1, 2, 3],
         atlas_shape=(528, 320, 456),
         interpolation_axis=1,
         stored_anchorings=[off_center_left, None, off_center_right],
@@ -362,7 +362,7 @@ def test_quicknii_coronal_series_proposals_are_upright_even_when_keyframe_is_rot
 
     anchorings = quicknii_series_anchorings(
         image_sizes=[(1000, 800)] * 3,
-        serial_numbers=[1, 2, 3],
+        slice_indices=[1, 2, 3],
         atlas_shape=(528, 320, 456),
         interpolation_axis=1,
         stored_anchorings=[left_anchoring, None, right_anchoring],
@@ -393,27 +393,27 @@ def test_interpolate_anchorings_uses_quicknii_decomposed_space(tmp_path):
 
     stored = quicknii_series_anchorings(
         image_sizes=[(1000, 800), (1000, 800), (1000, 800)],
-        serial_numbers=[1, 2, 3],
+        slice_indices=[1, 2, 3],
         atlas_shape=(528, 320, 456),
         interpolation_axis=1,
     )
     sections = [
         Section(
             id="s001",
-            serial_number=1,
+            slice_index=1,
             original_path=str(paths[0]),
             thumbnail_path=str(paths[0]),
             alignment=Alignment(anchoring=stored[0], status=AlignmentStatus.COMPLETE),
         ),
         Section(
             id="s002",
-            serial_number=2,
+            slice_index=2,
             original_path=str(paths[1]),
             thumbnail_path=str(paths[1]),
         ),
         Section(
             id="s003",
-            serial_number=3,
+            slice_index=3,
             original_path=str(paths[2]),
             thumbnail_path=str(paths[2]),
             alignment=Alignment(anchoring=stored[2], status=AlignmentStatus.COMPLETE),
@@ -424,7 +424,7 @@ def test_interpolate_anchorings_uses_quicknii_decomposed_space(tmp_path):
 
     expected = quicknii_series_anchorings(
         image_sizes=[(1000, 800), (1000, 800), (1000, 800)],
-        serial_numbers=[1, 2, 3],
+        slice_indices=[1, 2, 3],
         atlas_shape=(528, 320, 456),
         interpolation_axis=1,
         stored_anchorings=[stored[0], None, stored[2]],
@@ -445,7 +445,7 @@ def test_interpolate_anchorings_with_one_keyframe_matches_quicknii(tmp_path):
     sections = [
         Section(
             id="s001",
-            serial_number=1,
+            slice_index=1,
             original_path=str(paths[0]),
             thumbnail_path=str(paths[0]),
             alignment=Alignment(
@@ -455,7 +455,7 @@ def test_interpolate_anchorings_with_one_keyframe_matches_quicknii(tmp_path):
         ),
         Section(
             id="s002",
-            serial_number=2,
+            slice_index=2,
             original_path=str(paths[1]),
             thumbnail_path=str(paths[1]),
         ),
@@ -465,7 +465,7 @@ def test_interpolate_anchorings_with_one_keyframe_matches_quicknii(tmp_path):
 
     expected = quicknii_series_anchorings(
         image_sizes=[(1000, 800), (1000, 800)],
-        serial_numbers=[1, 2],
+        slice_indices=[1, 2],
         atlas_shape=(528, 320, 456),
         interpolation_axis=1,
         stored_anchorings=[SAMPLE_ANCHORING, None],
@@ -500,20 +500,20 @@ def test_interpolate_anchorings_handles_horizontally_flipped_stored_keyframe(
     sections = [
         Section(
             id="s001",
-            serial_number=1,
+            slice_index=1,
             original_path=str(paths[0]),
             thumbnail_path=str(paths[0]),
             alignment=Alignment(anchoring=left, status=AlignmentStatus.COMPLETE),
         ),
         Section(
             id="s002",
-            serial_number=2,
+            slice_index=2,
             original_path=str(paths[1]),
             thumbnail_path=str(paths[1]),
         ),
         Section(
             id="s003",
-            serial_number=3,
+            slice_index=3,
             original_path=str(paths[2]),
             thumbnail_path=str(paths[2]),
             preprocessing=Preprocessing(flip_horizontal=True),
@@ -559,13 +559,13 @@ def test_interpolate_anchorings_duplicate_serial_strips_inplane_rotation_keeps_t
     sections = [
         Section(
             id="s001",
-            serial_number=10,
+            slice_index=10,
             original_path=str(paths[0]),
             thumbnail_path=str(paths[0]),
         ),
         Section(
             id="s002",
-            serial_number=10,
+            slice_index=10,
             original_path=str(paths[1]),
             thumbnail_path=str(paths[1]),
             alignment=Alignment(
@@ -575,7 +575,7 @@ def test_interpolate_anchorings_duplicate_serial_strips_inplane_rotation_keeps_t
         ),
         Section(
             id="s003",
-            serial_number=11,
+            slice_index=11,
             original_path=str(paths[2]),
             thumbnail_path=str(paths[2]),
         ),
@@ -612,7 +612,7 @@ def test_interpolate_anchorings_without_atlas_shape_keeps_legacy_one_keyframe_no
     sections = [
         Section(
             id="s001",
-            serial_number=1,
+            slice_index=1,
             original_path=str(paths[0]),
             thumbnail_path=str(paths[0]),
             alignment=Alignment(
@@ -622,7 +622,7 @@ def test_interpolate_anchorings_without_atlas_shape_keeps_legacy_one_keyframe_no
         ),
         Section(
             id="s002",
-            serial_number=2,
+            slice_index=2,
             original_path=str(paths[1]),
             thumbnail_path=str(paths[1]),
         ),
@@ -690,7 +690,7 @@ def test_quicknii_series_endpoint_voxels_match_axis_dim(axis):
     qn_dims = (456, 528, 320)  # (ML, AP, DV)
     anchorings = quicknii_series_anchorings(
         image_sizes=[(1000, 800), (1000, 800)],
-        serial_numbers=[1, 2],
+        slice_indices=[1, 2],
         atlas_shape=atlas_shape,
         interpolation_axis=axis,
     )
@@ -708,7 +708,7 @@ def test_quicknii_sagittal_series_interpolates_along_ml():
     atlas_shape = (528, 320, 456)
     anchorings = quicknii_series_anchorings(
         image_sizes=[(1000, 800), (1000, 800), (1000, 800)],
-        serial_numbers=[1, 2, 3],
+        slice_indices=[1, 2, 3],
         atlas_shape=atlas_shape,
         interpolation_axis=0,
     )
@@ -756,20 +756,20 @@ def test_interpolate_anchorings_sagittal_axis_strips_in_plane_rotation(tmp_path)
     sections = [
         Section(
             id="s001",
-            serial_number=1,
+            slice_index=1,
             original_path=str(paths[0]),
             thumbnail_path=str(paths[0]),
             alignment=Alignment(anchoring=left, status=AlignmentStatus.COMPLETE),
         ),
         Section(
             id="s002",
-            serial_number=2,
+            slice_index=2,
             original_path=str(paths[1]),
             thumbnail_path=str(paths[1]),
         ),
         Section(
             id="s003",
-            serial_number=3,
+            slice_index=3,
             original_path=str(paths[2]),
             thumbnail_path=str(paths[2]),
             alignment=Alignment(anchoring=right, status=AlignmentStatus.COMPLETE),

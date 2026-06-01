@@ -93,7 +93,7 @@ class BadSectionsDialog(QDialog):
             row_layout.addWidget(thumb_label)
 
             name = Path(section.original_path).name
-            text_label = QLabel(f"s{section.serial_number:03d}  {name}")
+            text_label = QLabel(f"s{section.slice_index:03d}  {name}")
             text_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
             row_layout.addWidget(text_label)
 

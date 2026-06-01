@@ -120,7 +120,11 @@ class Section:
     """One histological section within a project."""
 
     id: str
-    serial_number: int
+    # Physical position of the section along the project's interpolation axis
+    # (e.g. AP). Ground truth for ordering. Need not be contiguous (1, 2, 18, 19
+    # encodes a gap), and may repeat when one physical slice broke into several
+    # images. The section ``id`` breaks ties for a stable order.
+    slice_index: int
     original_path: str
     thumbnail_path: str
     preprocessing: Preprocessing = field(default_factory=Preprocessing)
@@ -132,7 +136,7 @@ class Section:
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
-            "serial_number": self.serial_number,
+            "slice_index": self.slice_index,
             "original_path": self.original_path,
             "thumbnail_path": self.thumbnail_path,
             "preprocessing": self.preprocessing.to_dict(),
@@ -145,7 +149,7 @@ class Section:
     def from_dict(cls, d: dict[str, Any]) -> Section:
         return cls(
             id=d["id"],
-            serial_number=d["serial_number"],
+            slice_index=d["slice_index"],
             original_path=d["original_path"],
             thumbnail_path=d["thumbnail_path"],
             preprocessing=Preprocessing.from_dict(d.get("preprocessing", {})),
@@ -197,6 +201,15 @@ class Project:
             "sections": [s.to_dict() for s in self.sections],
         }
 
+    def sort_sections(self) -> None:
+        """Sort ``sections`` in place by ``(slice_index, id)``.
+
+        This is the canonical display/navigation order: filmstrip, overview, and
+        interpolation all follow increasing ``slice_index``, with the section
+        ``id`` (import order) breaking ties for duplicate indices.
+        """
+        self.sections.sort(key=lambda s: (s.slice_index, s.id))
+
     def save(self, path: Path) -> None:
         """Write project state to disk."""
         path.write_text(json.dumps(self.to_dict(), indent=2), encoding="utf-8")
@@ -209,7 +222,7 @@ class Project:
         )
         raw_axis = str(d.get("interpolation_axis", "AP")).upper()
         interpolation_axis = raw_axis if raw_axis in AXIS_NAME_TO_INDEX else "AP"
-        return cls(
+        project = cls(
             name=d["name"],
             atlas=AtlasRef.from_dict(d["atlas"]),
             sections=[Section.from_dict(s) for s in d.get("sections", [])],
@@ -220,6 +233,8 @@ class Project:
             interpolation_axis=interpolation_axis,
             version="1.1",
         )
+        project.sort_sections()
+        return project
 
     @classmethod
     def load(cls, path: Path) -> Project:

@@ -99,7 +99,7 @@ def test_apply_deepslice_suggestions_marks_editable_and_clears_warp(tmp_path: Pa
         suggestions=[
             DeepSliceSectionSuggestion(
                 filename="s001.png",
-                serial_number=1,
+                slice_index=1,
                 anchoring=[1.0] * 9,
                 confidence=0.5,
             )
@@ -125,7 +125,7 @@ def test_apply_deepslice_suggestions_matches_temporary_id_filename(tmp_path: Pat
         suggestions=[
             DeepSliceSectionSuggestion(
                 filename="s001_s999.png",
-                serial_number=999,
+                slice_index=999,
                 anchoring=[1.0] * 9,
             )
         ],
@@ -149,7 +149,7 @@ def test_apply_deepslice_suggestions_converts_quicknii_convention(tmp_path: Path
         suggestions=[
             DeepSliceSectionSuggestion(
                 filename="s001_s001.png",
-                serial_number=1,
+                slice_index=1,
                 anchoring=quicknii,
             )
         ],
@@ -183,7 +183,7 @@ def test_apply_deepslice_suggestions_does_not_mirror_for_reversed_section_order(
         suggestions=[
             DeepSliceSectionSuggestion(
                 filename="s001_s002.png",
-                serial_number=2,
+                slice_index=2,
                 anchoring=[10.0, 428.0, 280.0, 20.0, -3.0, -4.0, 5.0, -6.0, -7.0],
             )
         ],
@@ -303,17 +303,17 @@ def test_apply_deepslice_discards_bad_predictions_and_interpolates(tmp_path: Pat
     suggestions = [
         DeepSliceSectionSuggestion(
             filename="001_s001.png",
-            serial_number=1,
+            slice_index=1,
             anchoring=[228.0, 100.0, 160.0, 456.0, 0.0, 0.0, 0.0, 0.0, 320.0],
         ),
         DeepSliceSectionSuggestion(
             filename="002_s002.png",
-            serial_number=2,
+            slice_index=2,
             anchoring=[0.0, 999.0, 0.0, 999.0, 999.0, 999.0, 999.0, 999.0, 999.0],
         ),
         DeepSliceSectionSuggestion(
             filename="003_s003.png",
-            serial_number=3,
+            slice_index=3,
             anchoring=[228.0, 400.0, 160.0, 456.0, 0.0, 0.0, 0.0, 0.0, 320.0],
         ),
     ]

@@ -266,7 +266,7 @@ def export_section(
     )
 
     stem = Path(section.original_path).stem
-    base = f"{section.serial_number:03d}_{stem}"
+    base = f"{section.slice_index:03d}_{stem}"
     written: list[Path] = []
 
     if options.burn_overlay:

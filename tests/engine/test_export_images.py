@@ -29,7 +29,7 @@ def _make_section(*, flip_h: bool = False, flip_v: bool = False) -> Section:
     anchoring = [0.0, 264.0, 0.0, 456.0, 0.0, 0.0, 0.0, 0.0, 320.0]
     return Section(
         id="s1",
-        serial_number=1,
+        slice_index=1,
         original_path="img.tif",
         thumbnail_path="thumb.png",
         preprocessing=Preprocessing(flip_horizontal=flip_h, flip_vertical=flip_v),

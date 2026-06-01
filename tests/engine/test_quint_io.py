@@ -235,7 +235,7 @@ def test_quicknii_save_load_round_trip(tmp_path: Path):
         # Both loaded in BrainGlobe convention — must be identical
         for a, b in zip(orig.alignment.anchoring, rel.alignment.anchoring):
             assert abs(a - b) < 1e-3
-        assert rel.serial_number == orig.serial_number
+        assert rel.slice_index == orig.slice_index
 
 
 def test_save_quicknii_uses_registration_thumbnail_dimensions(tmp_path: Path):
@@ -252,7 +252,7 @@ def test_save_quicknii_uses_registration_thumbnail_dimensions(tmp_path: Path):
         sections=[
             Section(
                 id="s001",
-                serial_number=1,
+                slice_index=1,
                 original_path=str(original),
                 thumbnail_path=str(thumbnail),
                 scale=0.2,
@@ -287,7 +287,7 @@ def test_save_quicknii_writes_relative_thumbnail_path(tmp_path: Path):
         sections=[
             Section(
                 id="s001",
-                serial_number=1,
+                slice_index=1,
                 original_path=str(original),
                 thumbnail_path=str(thumbnail),
                 scale=0.2,

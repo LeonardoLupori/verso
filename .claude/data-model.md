@@ -67,7 +67,7 @@ Top level:
 ```json
 {
   "id": "s001",
-  "serial_number": 17,
+  "slice_index": 17,
   "original_path": "/data/raw/IMG_0234.tif",
   "thumbnail_path": "thumbnails/IMG_0234-thumb.ome.tif",
   "preprocessing": { ... },
@@ -79,8 +79,8 @@ Top level:
 
 | Field | Type | Notes |
 |---|---|---|
-| `id` | str | Stable identifier (used internally; not user-edited). |
-| `serial_number` | int | Section's physical order in the cutting series. Drives ordering in the overview / filmstrip. Parsed from the original filename on import via `parse_section_serial_number`. |
+| `id` | str | Stable identifier (used internally; not user-edited). Breaks ties when two sections share a `slice_index`. |
+| `slice_index` | int | Section's physical position along the project's interpolation axis (e.g. AP). Ground truth for ordering everywhere (overview / filmstrip / interpolation). **Need not be contiguous** (1, 2, 18, 19 encodes a gap) and **may repeat** (a slice that broke into several images shares one index). Guessed from filenames on import via `guess_slice_indices` and editable afterwards in the overview `#` column. |
 | `original_path` | str | Absolute path to the full-resolution source image. |
 | `thumbnail_path` | str | Path to the working-resolution OME-TIFF (relative or absolute). |
 | `scale` | float | Ratio `working_long_side / original_long_side`. Default `WORKING_SCALE = 0.2` (`engine/io/image_io.py`). |
@@ -230,20 +230,29 @@ full resolution ──→ working resolution ──→ normalised [0, 1] ──�
 
 ## Section ordering
 
-`Section.serial_number` is the **only** ordering signal. The overview
-table and filmstrip both sort by `(serial_number, list-position)`.
-Drag-to-reorder is not implemented; reorder by editing the serial
-number column in the overview.
+`Section.slice_index` is the **only** ordering signal. `Project.sections`
+is kept **canonically sorted by `(slice_index, id)`** — `Project.sort_sections()`
+re-sorts in place and is called on load (`from_dict`), after import, and after
+a manual index edit. The overview table, filmstrip, and navigation all just
+iterate the list, so they follow increasing `slice_index` with `id` (import
+order) breaking ties for duplicates.
 
-`serial_number` is:
+`slice_index` is:
 - An **int**, mutable.
-- **Not guaranteed unique** in principle (two images of the same
-  physical slice could share a number), but VERSO does not currently
-  treat duplicates specially in any pipeline.
-- Parsed from filenames on import by `parse_section_serial_number`
-  (`engine/io/image_io.py`) — first integer run after the leading
-  underscore, falling back to the first integer anywhere, falling back
-  to the import index.
+- **Need not be contiguous** — `1, 2, 18, 19` encodes two adjacent slices, a
+  gap, then two more.
+- **Allowed to repeat** — a physical slice that broke into several images
+  shares one index. Interpolation collapses equal indices to the same position
+  (the `denom == 0 → t = 0` guard in `quicknii_series_anchorings`); no separate
+  `replicate` field exists.
+- Guessed from filenames on import by `guess_slice_indices`
+  (`engine/io/image_io.py`): every filename stem is tokenised into its numeric
+  runs and the **token position with the widest range / most distinct values /
+  most monotonic order** is chosen, falling back to `1..N` by natural-sorted
+  name when no fully-covered numeric field exists. The New Project dialog shows
+  the guesses in an editable `File | Slice index` preview table.
+- Editable after import via the overview `#` column (double-click; rows re-sort
+  on commit). Drag-to-reorder is intentionally not implemented.
 
 ## Interpolation axis
 
@@ -279,7 +288,7 @@ each section near the right pose. Implementation:
 The 9-float anchoring is unpacked into 11 components (midpoint xyz,
 unit u-vector xyz, unit v-vector xyz, u-stretch, v-stretch) for
 component-wise interpolation between the nearest stored neighbours
-sorted by `serial_number`. After interpolation:
+sorted by `slice_index`. After interpolation:
 
 | Component | Interpolated? |
 |---|---|
@@ -299,12 +308,12 @@ any alignment has been saved.
 
 ### Future spec (not yet implemented)
 
-The original specification also called for split-slice handling
-(combining sections sharing a `serial_number` by median during
-interpolation), filename-based variance-driven serial-number seeding,
-and physical-distance-proportional lerp using raw `serial_number`
-differences. These remain on the roadmap but are not part of the
-current implementation.
+Filename-based variance-driven index seeding (`guess_slice_indices`) and
+physical-distance-proportional lerp using raw `slice_index` differences are now
+implemented. Split-slice handling that *combines* sections sharing a
+`slice_index` (e.g. by median anchoring during interpolation) is still on the
+roadmap — today duplicate indices simply collapse to the same interpolated
+position rather than being merged.
 
 ## Persistence rules
 

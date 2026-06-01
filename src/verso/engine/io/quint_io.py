@@ -221,7 +221,7 @@ def load_quicknii(path: Path, atlas_name: str = "allen_mouse_25um") -> Project:
         )
         section = Section(
             id=f"s{i + 1:03d}",
-            serial_number=parsed["nr"],
+            slice_index=parsed["nr"],
             original_path=parsed["filename"],
             thumbnail_path="",
             alignment=alignment,
@@ -484,7 +484,7 @@ def save_quicknii_xml(
         filename = _export_image_filename(section)
         line = (
             f"    <slice filename='{filename}'"
-            f" nr='{section.serial_number}'"
+            f" nr='{section.slice_index}'"
             f" width='{w}' height='{h}"
         )
         if section.alignment.status == AlignmentStatus.COMPLETE:
@@ -524,7 +524,7 @@ def save_quicknii(
         w, h = _registration_dims(section)
         entry: dict[str, Any] = {
             "filename": _export_image_filename(section),
-            "nr": section.serial_number,
+            "nr": section.slice_index,
             "width": w,
             "height": h,
         }
@@ -656,7 +656,7 @@ def save_visualign(
         w, h = _registration_dims(section)
         entry: dict[str, Any] = {
             "filename": _export_image_filename(section),
-            "nr": section.serial_number,
+            "nr": section.slice_index,
             "width": w,
             "height": h,
         }

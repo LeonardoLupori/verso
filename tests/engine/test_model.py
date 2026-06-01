@@ -135,7 +135,7 @@ def test_preprocessing_legacy_dict_without_lr_line():
 def _make_section() -> Section:
     return Section(
         id="s001",
-        serial_number=1,
+        slice_index=1,
         original_path="/data/raw/IMG_0234.tif",
         thumbnail_path="thumbnails/s001.ome.tif",
         preprocessing=Preprocessing(flip_horizontal=True),
