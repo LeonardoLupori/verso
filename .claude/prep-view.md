@@ -208,9 +208,11 @@ A `dirty_changed(bool)` signal is emitted whenever `_dirty` transitions.
   Deep-copy `section.preprocessing` into `_baseline_preprocessing`.
 - On slice change or view switch: `discard()` reverts the section's
   preprocessing to baseline and reloads PNGs.
-- On **Save** (via `SaveBarBox` or `Ctrl+S` while Prep is active): write
-  any dirty PNGs, persist preprocessing field changes, then `MainWindow`
-  writes `project.json`.
+- On **Save** (via `SaveBarBox`): write any dirty PNGs, persist
+  preprocessing field changes, then `MainWindow` writes `project.json`.
+  The SaveBar button is scoped to the current slice/view. `Ctrl+S` is
+  global instead — it saves the active view plus every other dirty
+  section/step (see below).
 - On **Clear**: delete PNGs, reset preprocessing, then `project.json` is
   written.
 - Slice masks live at `<project>/masks/<stem>-slice-mask.png`.
@@ -230,7 +232,7 @@ when the view is not visible.
 | **U** or **Ctrl+Z** | Undo last slice-mask edit |
 | **Shift** (held during drag/click) | Erase instead of draw |
 | **Alt + wheel** (over canvas, brush mode) | Adjust brush size |
-| **Ctrl+S** | Save the active view's draft + write `project.json` |
+| **Ctrl+S** | Save **all** unsaved edits across every slice/step + write `project.json` (global, not Prep-only) |
 | **← / →** (from main window) | Previous / next section |
 
 ---

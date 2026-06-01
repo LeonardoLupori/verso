@@ -126,7 +126,7 @@ Original images are referenced by path in `section.original_path`, not copied. S
 
 ## Save policy
 
-Edits in Prep / Align / Warp are **drafts** — they live in memory only until the user clicks **Save** on the per-view SaveBar ("Local changes"), or hits `Ctrl+S`. The same bar offers **Clear edits** (revert unsaved changes to the last-saved version, or default if never saved) and **Reset** (wipe both saved and unsaved changes back to default). Drafts survive slice/view navigation; close, open-other-project, import, batch, and export operations prompt **Save / Discard / Cancel** if anything is dirty. See [.claude/ui-design.md](.claude/ui-design.md#properties-panel-right-dock) for the full SaveBar semantics.
+Edits in Prep / Align / Warp are **drafts** — they live in memory only until the user persists them. The per-view SaveBar **Save** button ("Local changes") saves only the current slice/view, whereas `Ctrl+S` (File → Save all) is global: it saves the active view plus every other dirty section/step before writing `project.json` once. The same bar offers **Clear edits** (revert unsaved changes to the last-saved version, or default if never saved) and **Reset** (wipe both saved and unsaved changes back to default). Drafts survive slice/view navigation; close, open-other-project, import, batch, and export operations prompt **Save / Discard / Cancel** if anything is dirty. See [.claude/ui-design.md](.claude/ui-design.md#properties-panel-right-dock) for the full SaveBar semantics.
 
 ## GUI structure
 

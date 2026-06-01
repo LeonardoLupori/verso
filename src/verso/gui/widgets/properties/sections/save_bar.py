@@ -33,7 +33,7 @@ class SaveBarBox(QGroupBox):
         self._save_btn = QPushButton("Save")
         self._save_btn.setIcon(colored_icon("save.svg", "#ffffff"))
         self._save_btn.setIconSize(QSize(14, 14))
-        self._save_btn.setToolTip("Save local changes (also Ctrl+S)")
+        self._save_btn.setToolTip("Save local changes")
         self._save_btn.setEnabled(False)
         self._save_btn.clicked.connect(self.save_requested)
 

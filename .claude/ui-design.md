@@ -129,8 +129,11 @@ open-other-project, import, batch, and export all route through
 `MainWindow._confirm_discard_active_draft()` which offers
 **Save / Discard / Cancel** across every dirty section.
 
-`Ctrl+S` (File → Save project) calls the active view's `save()` first,
-then writes `project.json`.
+`Ctrl+S` (File → **Save all**) is global, not view-scoped. It calls the
+active view's `save()` first, then persists every remaining dirty
+`(section, step)` across all slices (prep / align / warp), and finally
+writes `project.json` once. The per-view SaveBar button is the narrower
+option — it saves only the current slice/view.
 
 ## Filmstrip
 
