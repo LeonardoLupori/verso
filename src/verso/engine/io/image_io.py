@@ -27,9 +27,14 @@ from pathlib import Path
 import numpy as np
 
 # Default scale factor for working copies (fraction of original resolution).
-# A value of 0.2 preserves the pixel:atlas-voxel ratio for typical mouse-brain
-# slides scanned at ~1 µm/px with a 25 µm atlas (25 × 0.2 = 5 px/voxel).
+# Used as a fallback when no per-import scale has been computed (e.g. lazily
+# generating a thumbnail for a QuickNII-imported section).
 WORKING_SCALE: float = 0.2
+
+# Target longest-side, in pixels, for the working copy of the *largest* image in
+# an import batch. The per-batch scale is derived from this so the biggest
+# section fits within THUMBNAIL_MAX_SIDE and every section shares one scale.
+THUMBNAIL_MAX_SIDE = 2000
 FILMSTRIP_MAX_SIDE = 150
 
 # Heuristic upper bound on plausible channel count. Used to disambiguate
@@ -147,6 +152,45 @@ def image_dimensions(path: str | Path) -> tuple[int, int]:
     from PIL import Image
     with Image.open(str(path)) as im:
         return im.size
+
+
+def compute_working_scale(
+    paths: list[str | Path], max_side: int = THUMBNAIL_MAX_SIDE
+) -> float:
+    """Compute a single working-copy scale factor for an import batch.
+
+    Reads the dimensions of every image (without fully decoding them), finds the
+    largest longest-side across the batch, and returns the scale that brings
+    that largest image's longest side down to ``max_side``. The same factor is
+    meant to be applied to every section so they share a consistent resolution.
+
+    The factor is rounded to two decimal places and never upscales (capped at
+    ``1.0``). Images whose dimensions cannot be read are skipped.
+
+    Args:
+        paths: Source image paths in the import batch.
+        max_side: Target longest-side, in pixels, for the largest image.
+
+    Returns:
+        Scale factor in ``(0, 1]``, rounded to two decimals. Falls back to
+        :data:`WORKING_SCALE` when no dimensions could be read.
+    """
+    longest = 0
+    for path in paths:
+        try:
+            w, h = image_dimensions(path)
+        except Exception:
+            continue
+        longest = max(longest, w, h)
+
+    if longest == 0:
+        return WORKING_SCALE
+    if longest <= max_side:
+        return 1.0
+
+    scale = round(max_side / longest, 2)
+    # Guard against very large images rounding the factor down to 0.0.
+    return max(scale, 0.01)
 
 
 # ---------------------------------------------------------------------------

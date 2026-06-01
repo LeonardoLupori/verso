@@ -464,11 +464,18 @@ class NewProjectDialog(QDialog):
         self.accept()
 
     def _generate_thumbnails(self, sections: list[Section]) -> None:
-        """Generate working-resolution OME-TIFF thumbnails for all sections."""
+        """Generate working-resolution OME-TIFF thumbnails for all sections.
+
+        A single scale factor is derived from the batch so the largest source
+        image fits within ``THUMBNAIL_MAX_SIDE``; every section is downscaled by
+        that same factor.
+        """
         from PyQt6.QtCore import Qt
         from PyQt6.QtWidgets import QApplication, QProgressDialog
 
-        from verso.engine.io.image_io import ensure_working_copy
+        from verso.engine.io.image_io import compute_working_scale, ensure_working_copy
+
+        scale = compute_working_scale([s.original_path for s in sections])
 
         n = len(sections)
         progress = QProgressDialog("Generating thumbnails…", "Skip", 0, n, self)
@@ -486,7 +493,7 @@ class NewProjectDialog(QDialog):
             progress.setValue(i)
             QApplication.processEvents()
             try:
-                ensure_working_copy(section)
+                ensure_working_copy(section, scale=scale)
             except Exception:
                 pass  # will be generated lazily on first view
 

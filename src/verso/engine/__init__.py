@@ -24,6 +24,7 @@ from verso.engine.io.export_images import (
     render_section_rgb,
 )
 from verso.engine.io.image_io import (
+    compute_working_scale,
     ensure_working_copy,
     image_dimensions,
     load_filmstrip_thumbnail,
@@ -74,6 +75,7 @@ __all__ = [
     "DeepSliceRunResult",
     "DeepSliceSectionSuggestion",
     # I/O — image
+    "compute_working_scale",
     "ensure_working_copy",
     "image_dimensions",
     "load_filmstrip_thumbnail",

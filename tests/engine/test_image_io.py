@@ -5,13 +5,46 @@ from pathlib import Path
 import numpy as np
 
 from verso.engine.io.image_io import (
+    WORKING_SCALE,
     _save_ome_tiff,
+    compute_working_scale,
     guess_slice_indices,
     load_image,
     probe_channels,
     thumbnail_filename,
     to_multichannel,
 )
+
+
+def _write_tiff(path: Path, height: int, width: int) -> Path:
+    import tifffile
+
+    tifffile.imwrite(str(path), np.zeros((height, width), dtype=np.uint8))
+    return path
+
+
+def test_compute_working_scale_fits_largest_image(tmp_path: Path):
+    small = _write_tiff(tmp_path / "small.tif", 500, 800)
+    big = _write_tiff(tmp_path / "big.tif", 4000, 10000)  # long side 10000
+
+    # 2000 / 10000 = 0.2, applied uniformly to the whole batch.
+    assert compute_working_scale([small, big], max_side=2000) == 0.2
+
+
+def test_compute_working_scale_rounds_to_two_decimals(tmp_path: Path):
+    big = _write_tiff(tmp_path / "odd.tif", 3000, 9000)  # 2000/9000 = 0.2222…
+
+    assert compute_working_scale([big], max_side=2000) == 0.22
+
+
+def test_compute_working_scale_never_upscales(tmp_path: Path):
+    small = _write_tiff(tmp_path / "tiny.tif", 300, 400)
+
+    assert compute_working_scale([small], max_side=2000) == 1.0
+
+
+def test_compute_working_scale_falls_back_when_unreadable(tmp_path: Path):
+    assert compute_working_scale([tmp_path / "missing.tif"]) == WORKING_SCALE
 
 
 def test_guess_slice_indices_picks_most_discriminating_field():
