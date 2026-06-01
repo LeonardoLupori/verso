@@ -23,7 +23,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from verso.engine.model.alignment import AlignmentStatus, WarpState
+from verso.engine.model.alignment import AlignmentStatus, ControlPoint, WarpState
 from verso.gui.widgets.section_canvas_panel import SectionCanvasPanel
 from verso.gui.widgets.view_chrome import make_view_status_bar
 
@@ -41,6 +41,9 @@ class WarpView(QWidget):
 
     # Pixel distance threshold for picking an existing control point.
     _CP_PICK_RADIUS = 16  # px
+
+    # Maximum number of control-point snapshots kept in the undo history.
+    _UNDO_LIMIT = 100
 
     def __init__(
         self,
@@ -75,6 +78,11 @@ class WarpView(QWidget):
         self._baseline_warp: WarpState | None = None
         self._dirty = False
 
+        # In-memory undo history of control-point snapshots for the active
+        # slice.  Reset whenever the baseline is re-snapshotted (section / view
+        # change, save, revert, clear).
+        self._undo_stack: list[list[ControlPoint]] = []
+
         self._build_ui()
         self._wire_panel()
 
@@ -101,6 +109,13 @@ class WarpView(QWidget):
             sc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
             sc.activated.connect(self._delete_hovered_cp)
 
+        # Ctrl+Z undo — scoped to this view and its children (the reparented
+        # canvas panel) so it only fires while the Warp view is active.
+        undo = QShortcut(QKeySequence.StandardKey.Undo, self)
+        undo.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        undo.activated.connect(self.undo)
+        self._undo_shortcut = undo
+
     def _wire_panel(self) -> None:
         self._panel.canvas_clicked.connect(self._on_canvas_clicked)
         self._panel.canvas_drag_started.connect(self._on_canvas_drag_started)
@@ -123,6 +138,7 @@ class WarpView(QWidget):
         self._panel.cursor_to_atlas_mapper = self._cursor_to_src
         self._cp_hovered = -1
         self._cp_dragging = -1
+        self._reset_undo()
         self._panel.update_overlay()
         # Re-snapshot in case the section was loaded before activate.
         section = self._panel.section
@@ -190,6 +206,7 @@ class WarpView(QWidget):
         self._cp_dragging = -1
         self._cp_drag_start_norm = None
         self._cp_drag_start_dst = None
+        self._reset_undo()
         if section is None:
             self._baseline_warp = None
             self._set_dirty(False)
@@ -319,7 +336,7 @@ class WarpView(QWidget):
         if self._pick_cp(x, y) >= 0:
             return
         u, v = self._cursor_to_src(s, t)
-        from verso.engine.model.alignment import ControlPoint
+        self._push_undo()
         section.warp.control_points.append(ControlPoint(u, v, s, t))
         self._cp_hovered = len(section.warp.control_points) - 1
         self._panel.update_overlay()
@@ -332,6 +349,8 @@ class WarpView(QWidget):
         self._cp_drag_start_dst = None
         section = self._panel.section
         if section is not None and self._cp_dragging >= 0:
+            # Snapshot once before the move so the whole drag undoes in one step.
+            self._push_undo()
             cp = section.warp.control_points[self._cp_dragging]
             self._cp_drag_start_dst = (cp.dst_x, cp.dst_y)
 
@@ -364,6 +383,7 @@ class WarpView(QWidget):
         if 0 <= self._cp_hovered < len(cps):
             if self._cp_hovered == self._cp_dragging:
                 self._cp_dragging = -1
+            self._push_undo()
             cps.pop(self._cp_hovered)
             self._cp_hovered = -1
             self._panel.update_overlay()
@@ -390,6 +410,7 @@ class WarpView(QWidget):
             return False
         self._baseline_warp = copy.deepcopy(section.warp)
         self._state.pop_baseline(section.id, "warp")
+        self._reset_undo()
         self._set_dirty(False)
         return True
 
@@ -404,6 +425,7 @@ class WarpView(QWidget):
         self._cp_drag_start_norm = None
         self._cp_drag_start_dst = None
         self._state.pop_baseline(section.id, "warp")
+        self._reset_undo()
         self._set_dirty(False)
         if self._active:
             self._panel.update_overlay()
@@ -422,10 +444,46 @@ class WarpView(QWidget):
         self._cp_drag_start_dst = None
         self._baseline_warp = copy.deepcopy(section.warp)
         self._state.pop_baseline(section.id, "warp")
+        self._reset_undo()
         self._set_dirty(False)
         if self._active:
             self._panel.update_overlay()
         return True
+
+    # ------------------------------------------------------------------
+    # Undo
+    # ------------------------------------------------------------------
+
+    def undo(self) -> None:
+        """Restore the previous control-point set from history (Ctrl+Z)."""
+        section = self._panel.section
+        if section is None or not self._undo_stack:
+            return
+        previous = self._undo_stack.pop()
+        section.warp.control_points = previous
+        self._cp_hovered = -1
+        self._cp_dragging = -1
+        self._cp_drag_start_norm = None
+        self._cp_drag_start_dst = None
+        self._warp_timer.stop()
+        self._panel.update_overlay()
+        base_cps = self._baseline_warp.control_points if self._baseline_warp else []
+        self._set_dirty(previous != base_cps)
+        self.cp_changed.emit()
+
+    def _push_undo(self) -> None:
+        """Snapshot the current control points before a mutating edit."""
+        section = self._panel.section
+        if section is None:
+            return
+        self._undo_stack.append(copy.deepcopy(section.warp.control_points))
+        # Bound the history so a long editing session can't grow without limit.
+        if len(self._undo_stack) > self._UNDO_LIMIT:
+            self._undo_stack.pop(0)
+
+    def _reset_undo(self) -> None:
+        """Clear the undo history (called whenever the baseline is re-snapshotted)."""
+        self._undo_stack.clear()
 
     def _set_dirty(self, dirty: bool) -> None:
         if self._dirty == dirty:
