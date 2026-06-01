@@ -31,6 +31,15 @@ class _FakeState:
     def is_dirty(self, _section_id, _step):
         return False
 
+    def set_baseline(self, _section_id, _step, _snapshot):
+        pass
+
+    def get_baseline(self, _section_id, _step):
+        return None
+
+    def pop_baseline(self, _section_id, _step):
+        return None
+
 
 def _make_prep_mock(section: Section, base_flip: tuple[bool, bool]) -> SimpleNamespace:
     """SimpleNamespace that quacks like PrepView for save() calls."""

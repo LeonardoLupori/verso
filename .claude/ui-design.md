@@ -59,7 +59,8 @@ Implemented in `src/verso/gui/views/align_view.py`.
   each axis label, driven by the atlas dimensions.
 - Space + mouse drag pans the overlay; navigator scale buttons stretch.
 - Anchoring edits are drafts; **Save** commits `anchoring → stored_anchoring`
-  and sets the slice's alignment status to `COMPLETE`. **Clear** wipes the
+  and sets the slice's alignment status to `COMPLETE`. **Clear edits** reverts
+  unsaved anchoring back to the last-saved plane. **Reset** wipes the
   alignment + the slice's warp control points (since they were anchored to
   the old plane).
 
@@ -71,8 +72,8 @@ Implemented in `src/verso/gui/views/warp_view.py`.
 - Click empty canvas to place a control point; drag an existing point to
   move it; **Delete** / **Backspace** removes the hovered point.
 - A `_warp_timer` throttles overlay re-warps to ~30 fps during drag.
-- Control-point edits are drafts; **Save** persists, **Clear** wipes the
-  slice's control points.
+- Control-point edits are drafts; **Save** persists, **Clear edits** reverts
+  to the last-saved control points, **Reset** wipes the slice's control points.
 
 ## Properties panel (right dock)
 
@@ -93,29 +94,40 @@ does not re-export them.
 
 On Prep / Align / Warp pages the section list scrolls inside a
 `QScrollArea`, but `SaveBarBox` is pinned **outside** the scroll area so
-the Save / Clear buttons are always visible.
+the Save / Clear edits / Reset buttons are always visible.
 
 ### SaveBarBox
 
-`widgets/properties/sections/save_bar.py`. Two buttons:
+`widgets/properties/sections/save_bar.py`. Titled **"Local changes"**,
+with three buttons:
 
 - **Save** — enabled when the view has unsaved draft edits; commits them
   to the in-memory `Section` and triggers a `project.json` write.
-- **Clear** — enabled when the slice has any persisted state to wipe;
-  resets the slice's view-specific state and writes `project.json`.
+- **Clear edits** — enabled when the view has unsaved edits; reverts those
+  edits back to the last-saved version (or to default if this slice/view
+  was never saved). The on-disk project is **not** touched.
+- **Reset** — enabled when the slice has persisted state **or** unsaved
+  edits; wipes both saved and unsaved changes back to default and writes
+  `project.json`.
 
-Each view exposes `save()`, `clear()`, `discard()`, `is_dirty()`,
+Each view exposes `save()`, `revert()`, `clear()`, `is_dirty()`,
 `has_persisted_state()`, and a `dirty_changed(bool)` signal. MainWindow
-mirrors `dirty_changed` to `SaveBarBox.set_dirty`.
+mirrors `dirty_changed` to `SaveBarBox.set_dirty` (which drives the Save +
+Clear-edits buttons and one half of Reset) and calls `set_reset_enabled`
+with `has_persisted_state()` (the other half of Reset).
 
 **Draft semantics.** All in-canvas edits mutate `Section` in memory but
-take a deep-copy *baseline* snapshot at section-load time. `save()`
-commits the draft to disk; `clear()` wipes the slice's view-specific
-state to disk; `discard()` rolls the in-memory `Section` back to the
-baseline. Switching slice or view fires `discard()` silently; close,
+take a deep-copy *baseline* snapshot of the last-saved state. `save()`
+commits the draft to disk; `revert()` rolls the in-memory `Section` back
+to that baseline (the per-view **Clear edits**); `clear()` wipes the
+slice's view-specific state to disk (the per-view **Reset**). Because
+edits survive slice/view navigation, the baseline is preserved across
+navigation in `AppState` (`set_baseline` / `get_baseline` / `pop_baseline`,
+keyed by `(section_id, step)`) so **Clear edits** still reverts to the
+genuine last-saved state after navigating away and back. Close,
 open-other-project, import, batch, and export all route through
 `MainWindow._confirm_discard_active_draft()` which offers
-**Save / Discard / Cancel**.
+**Save / Discard / Cancel** across every dirty section.
 
 `Ctrl+S` (File → Save project) calls the active view's `save()` first,
 then writes `project.json`.
@@ -189,7 +201,8 @@ OpenGL viewport is opt-in inside `widgets/canvas.py`.
 │  (Overview / Prep / Align / Warp)        │  panel         │
 │                                          │  (right dock)  │
 │                                          │                │
-│                                          │  [Save] [Clear]│  ← pinned bottom
+│                                          │ [Save][Clr edt]│  ← pinned bottom
+│                                          │ [   Reset    ] │
 ├──────────────────────────────────────────┴────────────────┤
 │  filmstrip (bottom dock; hidden in Overview)              │
 └──────────────────────────────────────────────────────────┘

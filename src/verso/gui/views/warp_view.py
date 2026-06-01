@@ -194,9 +194,19 @@ class WarpView(QWidget):
             self._baseline_warp = None
             self._set_dirty(False)
             return
-        self._baseline_warp = copy.deepcopy(section.warp)
         # Persisted CP edits survive navigation; mirror the registry dirty state.
-        self._set_dirty(self._state.is_dirty(section.id, "warp"))
+        # When the slice is still dirty, recover the genuine last-saved baseline
+        # from the stash rather than re-snapshotting the (dirty) section.
+        if self._state.is_dirty(section.id, "warp"):
+            stashed = self._state.get_baseline(section.id, "warp")
+            self._baseline_warp = (
+                stashed if stashed is not None else copy.deepcopy(section.warp)
+            )
+            self._set_dirty(True)
+        else:
+            self._baseline_warp = copy.deepcopy(section.warp)
+            self._state.pop_baseline(section.id, "warp")
+            self._set_dirty(False)
 
     def _on_overlay_updated(self, _anchoring, _display_w, _display_h) -> None:
         if not self._active:
@@ -379,7 +389,24 @@ class WarpView(QWidget):
         if section is None:
             return False
         self._baseline_warp = copy.deepcopy(section.warp)
+        self._state.pop_baseline(section.id, "warp")
         self._set_dirty(False)
+        return True
+
+    def revert(self) -> bool:
+        """Discard unsaved control-point edits, restoring the last-saved warp."""
+        section = self._panel.section
+        if section is None or self._baseline_warp is None:
+            return False
+        section.warp = copy.deepcopy(self._baseline_warp)
+        self._cp_hovered = -1
+        self._cp_dragging = -1
+        self._cp_drag_start_norm = None
+        self._cp_drag_start_dst = None
+        self._state.pop_baseline(section.id, "warp")
+        self._set_dirty(False)
+        if self._active:
+            self._panel.update_overlay()
         return True
 
     def clear(self) -> bool:
@@ -394,6 +421,7 @@ class WarpView(QWidget):
         self._cp_drag_start_norm = None
         self._cp_drag_start_dst = None
         self._baseline_warp = copy.deepcopy(section.warp)
+        self._state.pop_baseline(section.id, "warp")
         self._set_dirty(False)
         if self._active:
             self._panel.update_overlay()
@@ -402,5 +430,11 @@ class WarpView(QWidget):
     def _set_dirty(self, dirty: bool) -> None:
         if self._dirty == dirty:
             return
+        if dirty:
+            section = self._panel.section
+            if section is not None and self._baseline_warp is not None:
+                self._state.set_baseline(
+                    section.id, "warp", copy.deepcopy(self._baseline_warp)
+                )
         self._dirty = dirty
         self.dirty_changed.emit(dirty)

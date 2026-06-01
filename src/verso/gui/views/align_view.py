@@ -142,8 +142,18 @@ class AlignView(QWidget):
         self._reset_undo()
         section = self._panel.section
         if section is not None:
-            self._baseline_alignment = copy.deepcopy(section.alignment)
-            self._set_dirty(self._state.is_dirty(section.id, "align"))
+            if self._state.is_dirty(section.id, "align"):
+                stashed = self._state.get_baseline(section.id, "align")
+                self._baseline_alignment = (
+                    stashed
+                    if stashed is not None
+                    else copy.deepcopy(section.alignment)
+                )
+                self._set_dirty(True)
+            else:
+                self._baseline_alignment = copy.deepcopy(section.alignment)
+                self._state.pop_baseline(section.id, "align")
+                self._set_dirty(False)
 
     def deactivate(self) -> None:
         """Release any state set on the panel."""
@@ -176,10 +186,19 @@ class AlignView(QWidget):
             self._navigator.set_anchoring(None)
             self._set_dirty(False)
             return
-        self._baseline_alignment = copy.deepcopy(section.alignment)
         # Persisted edits are not discarded on navigation; reflect the section's
-        # registry dirty state instead of forcing clean.
-        self._set_dirty(self._state.is_dirty(section.id, "align"))
+        # registry dirty state instead of forcing clean.  When still dirty,
+        # recover the genuine last-saved baseline from the stash.
+        if self._state.is_dirty(section.id, "align"):
+            stashed = self._state.get_baseline(section.id, "align")
+            self._baseline_alignment = (
+                stashed if stashed is not None else copy.deepcopy(section.alignment)
+            )
+            self._set_dirty(True)
+        else:
+            self._baseline_alignment = copy.deepcopy(section.alignment)
+            self._state.pop_baseline(section.id, "align")
+            self._set_dirty(False)
 
     def _on_overlay_updated(self, anchoring, _display_w, _display_h) -> None:
         self._navigator.set_anchoring(anchoring)
@@ -297,8 +316,24 @@ class AlignView(QWidget):
         section.alignment.stored_anchoring = list(section.alignment.anchoring)
         section.alignment.status = AlignmentStatus.COMPLETE
         self._baseline_alignment = copy.deepcopy(section.alignment)
+        self._state.pop_baseline(section.id, "align")
         self._reset_undo()
         self._set_dirty(False)
+        self.alignments_updated.emit()
+        return True
+
+    def revert(self) -> bool:
+        """Discard unsaved anchoring edits, restoring the last-saved alignment."""
+        section = self._panel.section
+        if section is None or self._baseline_alignment is None:
+            return False
+        section.alignment = copy.deepcopy(self._baseline_alignment)
+        self._state.pop_baseline(section.id, "align")
+        self._reset_undo()
+        self._set_dirty(False)
+        self._sync_position_from_anchoring(section.alignment.anchoring)
+        self._panel.update_overlay()
+        self.anchoring_changed.emit(list(section.alignment.anchoring))
         self.alignments_updated.emit()
         return True
 
@@ -318,6 +353,7 @@ class AlignView(QWidget):
         section.warp.control_points.clear()
         section.warp.status = AlignmentStatus.NOT_STARTED
         self._baseline_alignment = copy.deepcopy(section.alignment)
+        self._state.pop_baseline(section.id, "align")
         self._reset_undo()
         self._set_dirty(False)
         self.alignments_updated.emit()
@@ -365,5 +401,11 @@ class AlignView(QWidget):
     def _set_dirty(self, dirty: bool) -> None:
         if self._dirty == dirty:
             return
+        if dirty:
+            section = self._panel.section
+            if section is not None and self._baseline_alignment is not None:
+                self._state.set_baseline(
+                    section.id, "align", copy.deepcopy(self._baseline_alignment)
+                )
         self._dirty = dirty
         self.dirty_changed.emit(dirty)

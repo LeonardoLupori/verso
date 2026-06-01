@@ -47,8 +47,11 @@ class AppState(QObject):
         self._atlas_thread: QThread | None = None
         # Persistent unsaved-edit bookkeeping, surviving slice/view navigation.
         # _dirty: which (section.id, step) pairs have unsaved edits.
+        # _baselines: last-saved view-state snapshot for each dirty (id, step),
+        #             so "Clear edits" can revert to it even after navigation.
         # _prep_drafts: resident slice/L-R mask edits, keyed by section.id.
         self._dirty: dict[tuple[str, str], bool] = {}
+        self._baselines: dict[tuple[str, str], object] = {}
         self._prep_drafts: dict[str, PrepDraft] = {}
 
     # ------------------------------------------------------------------
@@ -68,6 +71,7 @@ class AppState(QObject):
         self._project_path = path
         self._section_index = 0
         self._dirty.clear()
+        self._baselines.clear()
         self._prep_drafts.clear()
         self.project_changed.emit()
         self.section_changed.emit(0)
@@ -101,6 +105,7 @@ class AppState(QObject):
     def clear_all_edits(self) -> None:
         """Forget every unsaved edit (registry + resident drafts) without saving."""
         self._dirty.clear()
+        self._baselines.clear()
         self._prep_drafts.clear()
 
     def dirty_sections(self) -> list[tuple[Section, set[str]]]:
@@ -113,6 +118,25 @@ class AppState(QObject):
             if flag and section_id in by_id:
                 grouped.setdefault(section_id, set()).add(step)
         return [(by_id[sid], steps) for sid, steps in grouped.items()]
+
+    # ------------------------------------------------------------------
+    # Last-saved baselines (for per-view "Clear edits" reverts)
+    # ------------------------------------------------------------------
+
+    def set_baseline(self, section_id: str, step: str, snapshot: object) -> None:
+        """Stash the last-saved view-state for a section/step.
+
+        Stores only if absent so the first stash — taken at the clean→dirty
+        transition — captures the genuine last-saved value, never a later
+        mid-edit state.
+        """
+        self._baselines.setdefault((section_id, step), snapshot)
+
+    def get_baseline(self, section_id: str, step: str) -> object | None:
+        return self._baselines.get((section_id, step))
+
+    def pop_baseline(self, section_id: str, step: str) -> object | None:
+        return self._baselines.pop((section_id, step), None)
 
     # ------------------------------------------------------------------
     # Prep mask drafts (resident in RAM until saved)

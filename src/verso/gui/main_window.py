@@ -497,16 +497,19 @@ class MainWindow(QMainWindow):
         self._align.alignments_updated.connect(self._on_alignments_updated)
         self._props.warp.cp.style_changed.connect(self._on_cp_style_changed)
 
-        # Save / Clear bars and per-view dirty signals.
+        # Local-changes bars (Save / Clear edits / Reset) and per-view dirty signals.
         view_bindings = (
             ("prep", self._prep, self._props.prep,
-             self._on_prep_save_clicked, self._on_prep_clear_clicked),
+             self._on_prep_save_clicked, self._on_prep_revert_clicked,
+             self._on_prep_clear_clicked),
             ("align", self._align, self._props.align,
-             self._on_align_save_clicked, self._on_align_clear_clicked),
+             self._on_align_save_clicked, self._on_align_revert_clicked,
+             self._on_align_clear_clicked),
             ("warp", self._warp, self._props.warp,
-             self._on_warp_save_clicked, self._on_warp_clear_clicked),
+             self._on_warp_save_clicked, self._on_warp_revert_clicked,
+             self._on_warp_clear_clicked),
         )
-        for step, view, page, on_save, on_clear in view_bindings:
+        for step, view, page, on_save, on_revert, on_reset in view_bindings:
             view.dirty_changed.connect(page.save_bar.set_dirty)
             # Mirror the view's dirty state into the persistent edit registry for
             # the section currently loaded in that view.
@@ -514,7 +517,8 @@ class MainWindow(QMainWindow):
                 lambda dirty, s=step: self._on_view_dirty_changed(s, dirty)
             )
             page.save_bar.save_requested.connect(on_save)
-            page.save_bar.clear_requested.connect(on_clear)
+            page.save_bar.revert_requested.connect(on_revert)
+            page.save_bar.reset_requested.connect(on_reset)
 
         # A prep save/clear that flips the section invalidates its alignment+warp.
         self._prep.alignment_invalidated.connect(self._on_prep_invalidated_alignment)
@@ -577,7 +581,7 @@ class MainWindow(QMainWindow):
         # Refresh properties with current section
         self._props.set_mode(self._current_mode)
         self._refresh_properties()
-        self._refresh_clear_enabled()
+        self._refresh_reset_enabled()
         self._update_reverse_order_enabled()
         self._update_deepslice_enabled()
         self._refresh_filmstrip_dots()
@@ -737,7 +741,7 @@ class MainWindow(QMainWindow):
             self._panel.update_overlay()
         self._overview.refresh()
         self._update_ap_plot()
-        self._refresh_clear_enabled()
+        self._refresh_reset_enabled()
         self._refresh_filmstrip_dots()
         return True
 
@@ -758,7 +762,7 @@ class MainWindow(QMainWindow):
                 project_path = project_path.with_suffix(".json")
             self._write_project(project_path)
             self._state.set_project_path(project_path)
-            self._refresh_clear_enabled()
+            self._refresh_reset_enabled()
 
     def _write_project(self, path: Path) -> None:
         project = self._state.project
@@ -858,19 +862,30 @@ class MainWindow(QMainWindow):
         self._state.load_project(project, path)
 
     def _after_view_save(self) -> None:
-        """Refresh dependent UI after a per-view save/clear and write project."""
+        """Refresh dependent UI after a per-view save/reset and write project."""
         if self._state.project is not None and self._state.project_path is not None:
             self._write_project(self._state.project_path)
         self._overview.refresh()
         self._update_ap_plot()
-        self._refresh_clear_enabled()
+        self._refresh_reset_enabled()
         self._refresh_filmstrip_dots()
 
-    def _refresh_clear_enabled(self) -> None:
-        """Sync each save bar's Clear button to whether the slice has state to wipe."""
-        self._props.prep.save_bar.set_clear_enabled(self._prep.has_persisted_state())
-        self._props.align.save_bar.set_clear_enabled(self._align.has_persisted_state())
-        self._props.warp.save_bar.set_clear_enabled(self._warp.has_persisted_state())
+    def _after_view_revert(self) -> None:
+        """Refresh dependent UI after a per-view "Clear edits" revert.
+
+        Reverting only drops unsaved edits, so the on-disk project is already
+        the last-saved version — no write is needed.
+        """
+        self._overview.refresh()
+        self._update_ap_plot()
+        self._refresh_reset_enabled()
+        self._refresh_filmstrip_dots()
+
+    def _refresh_reset_enabled(self) -> None:
+        """Sync each bar's Reset button to whether the slice has persisted state."""
+        self._props.prep.save_bar.set_reset_enabled(self._prep.has_persisted_state())
+        self._props.align.save_bar.set_reset_enabled(self._align.has_persisted_state())
+        self._props.warp.save_bar.set_reset_enabled(self._warp.has_persisted_state())
 
     # ------------------------------------------------------------------
     # Filmstrip status dots
@@ -927,13 +942,23 @@ class MainWindow(QMainWindow):
         if self._prep.save():
             self._after_view_save()
 
+    def _on_prep_revert_clicked(self) -> None:
+        if self._prep.revert():
+            self._props.prep.update_section(self._state.current_section)
+            self._after_view_revert()
+
     def _on_prep_clear_clicked(self) -> None:
         if self._prep.clear():
+            self._props.prep.update_section(self._state.current_section)
             self._after_view_save()
 
     def _on_align_save_clicked(self) -> None:
         if self._align.save():
             self._after_view_save()
+
+    def _on_align_revert_clicked(self) -> None:
+        if self._align.revert():
+            self._after_view_revert()
 
     def _on_align_clear_clicked(self) -> None:
         if self._align.clear():
@@ -942,6 +967,10 @@ class MainWindow(QMainWindow):
     def _on_warp_save_clicked(self) -> None:
         if self._warp.save():
             self._after_view_save()
+
+    def _on_warp_revert_clicked(self) -> None:
+        if self._warp.revert():
+            self._after_view_revert()
 
     def _on_warp_clear_clicked(self) -> None:
         if self._warp.clear():
@@ -1069,7 +1098,7 @@ class MainWindow(QMainWindow):
 
         self._overview.refresh()
         self._refresh_properties()
-        self._refresh_clear_enabled()
+        self._refresh_reset_enabled()
         self._update_ap_plot()
         self._update_deepslice_enabled()
 
@@ -1763,7 +1792,7 @@ class MainWindow(QMainWindow):
             self._panel.load_section(section)
         self._overview.refresh()
         self._refresh_properties()
-        self._refresh_clear_enabled()
+        self._refresh_reset_enabled()
         self._update_ap_plot()
         self._update_reverse_order_enabled()
         self._update_deepslice_enabled()
