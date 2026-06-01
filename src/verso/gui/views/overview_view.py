@@ -364,24 +364,34 @@ class OverviewView(QWidget):
         done = AlignmentStatus.COMPLETE
         not_started = AlignmentStatus.NOT_STARTED
         in_progress = AlignmentStatus.IN_PROGRESS
-        prep_dirty = self._state.is_dirty(section.id, "prep")
 
         draft = self._state.get_prep_draft(section.id)
-        mask_dirty = draft is not None and draft.mask_dirty
-        lr_dirty = draft is not None and draft.lr_dirty
-        flip_dirty = draft is not None and (
-            draft.base_flip_h != section.preprocessing.flip_horizontal
-            or draft.base_flip_v != section.preprocessing.flip_vertical
-        )
+        if draft is not None:
+            # The flushed draft carries per-sub-step dirty flags, so colour each
+            # sub-step independently — editing only the mask yellows just the
+            # Slice-mask dot, not Flip and L/R.
+            mask_dirty = draft.mask_dirty
+            lr_dirty = draft.lr_dirty
+            flip_dirty = (
+                draft.base_flip_h != section.preprocessing.flip_horizontal
+                or draft.base_flip_v != section.preprocessing.flip_vertical
+            )
 
-        def prep_status(is_done: bool, sub_dirty: bool) -> AlignmentStatus:
-            if sub_dirty:
-                return in_progress
-            if is_done:
-                return done
-            # Not done, no per-sub-step signal (e.g. the section is the one open
-            # in Prep, whose draft is checked out) — fall back to the step flag.
-            return in_progress if prep_dirty else not_started
+            def prep_status(is_done: bool, sub_dirty: bool) -> AlignmentStatus:
+                if sub_dirty:
+                    return in_progress
+                return done if is_done else not_started
+        else:
+            # No draft — the section is the one currently open in Prep, whose
+            # live edits aren't flushed yet, so we only know the aggregate prep
+            # flag.  Fall back to it for any not-yet-saved sub-step.
+            prep_dirty = self._state.is_dirty(section.id, "prep")
+            mask_dirty = lr_dirty = flip_dirty = False
+
+            def prep_status(is_done: bool, _sub_dirty: bool) -> AlignmentStatus:
+                if is_done:
+                    return done
+                return in_progress if prep_dirty else not_started
 
         statuses = [
             prep_status(bool(section.preprocessing.flip_horizontal), flip_dirty),
