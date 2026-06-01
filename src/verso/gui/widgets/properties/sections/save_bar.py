@@ -55,12 +55,14 @@ class SaveBarBox(QGroupBox):
         self._reset_btn.setEnabled(False)
         self._reset_btn.clicked.connect(self.reset_requested)
 
+        # Clear edits / Reset are the secondary actions on top; Save is the
+        # primary action — full-width — on the bottom row, same height as the rest.
         layout = QGridLayout(self)
         layout.setHorizontalSpacing(6)
         layout.setVerticalSpacing(6)
-        layout.addWidget(self._save_btn, 0, 0)
-        layout.addWidget(self._revert_btn, 0, 1)
-        layout.addWidget(self._reset_btn, 1, 0, 1, 2)
+        layout.addWidget(self._revert_btn, 0, 0)
+        layout.addWidget(self._reset_btn, 0, 1)
+        layout.addWidget(self._save_btn, 1, 0, 1, 2)
 
     def set_dirty(self, dirty: bool) -> None:
         """Reflect whether the view has unsaved edits."""
