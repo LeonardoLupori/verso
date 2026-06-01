@@ -576,6 +576,10 @@ class MainWindow(QMainWindow):
             # then ensure the section state is current.
             if self._current_mode == "align":
                 self._align.activate()
+                # The AP plot is no longer refreshed on every section change
+                # (only while Align is visible), so refresh it on entry to pick
+                # up any section change made while Align was hidden.
+                self._update_ap_plot()
             else:
                 self._warp.activate()
             if self._panel.section is not section:
@@ -1101,11 +1105,16 @@ class MainWindow(QMainWindow):
         if section is not None:
             self._sync_position_mm([section])
 
-        self._overview.refresh()
         self._refresh_properties()
         self._refresh_reset_enabled()
-        self._update_ap_plot()
         self._update_deepslice_enabled()
+        # The overview table is rebuilt on entry to Overview (see _switch_view),
+        # and its contents track edits/saves, not which section is current, so a
+        # selection change needs no rebuild here.  The AP plot lives only in the
+        # Align panel, so refresh it only when that view is visible (entering
+        # Align refreshes it too — see _switch_view).
+        if self._current_mode == "align":
+            self._update_ap_plot()
 
     def _step_section(self, delta: int) -> None:
         if not self._section_shortcuts_enabled():
