@@ -328,7 +328,7 @@ def _canonical_thumbnail(section) -> Path:
 
 def ensure_working_copy(
     section,
-    scale: float | None = None,
+    working_scale: float,
 ) -> np.ndarray | None:
     """Return the working-resolution multichannel array for a section.
 
@@ -346,13 +346,15 @@ def ensure_working_copy(
 
     Args:
         section: A :class:`~verso.engine.model.project.Section` instance.
-        scale: Override :data:`WORKING_SCALE`. ``None`` uses the default.
+        working_scale: The project's :attr:`Project.working_scale`. Used only
+            when regenerating from the original (path 3); paths 1 and 2 return
+            the cached thumbnail unchanged. **Always pass the project value** —
+            every section in a project must share one scale, so this is required
+            (no default) to make an accidental mis-scaled regeneration impossible.
 
     Returns:
         uint8 ``(H, W, C)`` array, or ``None`` if no source image is available.
     """
-    working_scale = scale if scale is not None else WORKING_SCALE
-
     canonical = _canonical_thumbnail(section)
     existing = Path(section.thumbnail_path) if section.thumbnail_path else None
 
@@ -395,8 +397,7 @@ def ensure_working_copy(
         ) from exc
 
     img = to_multichannel(raw)
-    img, actual_scale = resize_by_scale(img, working_scale)
-    section.scale = actual_scale
+    img, _ = resize_by_scale(img, working_scale)
 
     try:
         canonical.parent.mkdir(parents=True, exist_ok=True)
@@ -507,6 +508,7 @@ def registration_dimensions(section) -> tuple[int, int]:
 
 def load_filmstrip_thumbnail(
     section,
+    working_scale: float,
     channels=None,
 ) -> np.ndarray | None:
     """Return a tiny (≤ FILMSTRIP_MAX_SIDE) grayscale RGB tile for the filmstrip.
@@ -515,8 +517,14 @@ def load_filmstrip_thumbnail(
     The ``channels`` parameter is accepted for API compatibility but ignored —
     filmstrip thumbnails are always grayscale to avoid recompositing on every
     channel change.
+
+    Args:
+        section: The section to render.
+        working_scale: The project's :attr:`Project.working_scale`, forwarded to
+            :func:`ensure_working_copy` for any on-demand regeneration.
+        channels: Ignored (see above).
     """
-    arr = ensure_working_copy(section)
+    arr = ensure_working_copy(section, working_scale)
     if arr is None:
         return None
 

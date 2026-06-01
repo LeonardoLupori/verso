@@ -37,6 +37,7 @@ Top level:
   "cp_size": 10,
   "cp_shape": "Cross",
   "cp_color": "#fff500",
+  "working_scale": 0.2,
   "sections": [ ... ]
 }
 ```
@@ -49,6 +50,7 @@ Top level:
 | `interpolation_axis` | str | Brain axis the cutting series runs along: `"AP"` (coronal, default), `"ML"` (sagittal), or `"DV"` (horizontal). Set at project creation; drives the QuickNII voxel axis used by `quicknii_series_anchorings`. See "Interpolation axis" below. |
 | `channels` | `list[ChannelSpec]` | Project-wide channel display settings (shared across all sections). |
 | `cp_size` / `cp_shape` / `cp_color` | int / str / hex | Warp control-point drawing style, project-wide. |
+| `working_scale` | float | Ratio `working_long_side / original_long_side`, **uniform across all sections**. Derived once at import from the largest image so its longest side fits within `THUMBNAIL_MAX_SIDE` (2000 px); see `compute_working_scale` in `engine/io/image_io.py`. Full-resolution export scales back up by this factor. Default `0.2`. |
 | `sections` | `list[Section]` | Sections in the cutting series. |
 
 ### `ChannelSpec`
@@ -72,8 +74,7 @@ Top level:
   "thumbnail_path": "thumbnails/IMG_0234-thumb.ome.tif",
   "preprocessing": { ... },
   "alignment": { ... },
-  "warp": { ... },
-  "scale": 0.2
+  "warp": { ... }
 }
 ```
 
@@ -83,7 +84,6 @@ Top level:
 | `slice_index` | int | Section's physical position along the project's interpolation axis (e.g. AP). Ground truth for ordering everywhere (overview / filmstrip / interpolation). **Need not be contiguous** (1, 2, 18, 19 encodes a gap) and **may repeat** (a slice that broke into several images shares one index). Guessed from filenames on import via `guess_slice_indices` and editable afterwards in the overview `#` column. |
 | `original_path` | str | Absolute path to the full-resolution source image. |
 | `thumbnail_path` | str | Path to the working-resolution OME-TIFF (relative or absolute). |
-| `scale` | float | Ratio `working_long_side / original_long_side`. Default `WORKING_SCALE = 0.2` (`engine/io/image_io.py`). |
 
 ### `Preprocessing`
 
@@ -214,12 +214,13 @@ Three tiers exist; transforms must be explicit at the boundaries.
 | Tier | Where | Notes |
 |---|---|---|
 | Full resolution | Original on disk (e.g. 20000 × 15000). | Loaded only for export. |
-| Working resolution | `WORKING_SCALE × full` (default 0.2). | All interactive operations — masks, anchoring, control points — happen here. Cached as a multichannel OME-TIFF in `thumbnails/<stem>-thumb.ome.tif`. |
+| Working resolution | `Project.working_scale × full`. | All interactive operations — masks, anchoring, control points — happen here. Cached as a multichannel OME-TIFF in `thumbnails/<stem>-thumb.ome.tif`. |
 | Filmstrip thumbnail | Long side ≤ `FILMSTRIP_MAX_SIDE` (150 px). | RGB composite generated on demand. |
 
-Scaling factor `Section.scale = working_long_side / original_long_side`
-is stored per section so full-resolution export can scale back up.
-Control points in normalised `[0, 1]` need no rescaling.
+Scaling factor `Project.working_scale = working_long_side / original_long_side`
+is uniform across all sections (derived at import from the largest image, so
+its longest side fits within `THUMBNAIL_MAX_SIDE` = 2000 px) so full-resolution
+export can scale back up. Control points in normalised `[0, 1]` need no rescaling.
 
 ### Transform chain
 

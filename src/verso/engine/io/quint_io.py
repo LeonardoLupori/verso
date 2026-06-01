@@ -397,7 +397,7 @@ def write_section_pngs(project: Project, output_dir: Path) -> None:
         png_path.parent.mkdir(parents=True, exist_ok=True)
         if png_path.exists():
             continue
-        img = ensure_working_copy(section)
+        img = ensure_working_copy(section, project.working_scale)
         if img is None:
             continue
         if project.channels:
@@ -415,7 +415,7 @@ def _registration_dims(section) -> tuple[int, int]:
     ``HStretch = len(u) / width`` and ``VStretch = len(v) / height``.  VERSO
     aligns against the working thumbnail when present, so exports must report
     that image size instead of reconstructing full-resolution dimensions from
-    ``section.scale``.
+    the project's ``working_scale``.
     """
     try:
         from verso.engine.io.image_io import registration_dimensions

@@ -96,6 +96,7 @@ def run_deepslice_suggestions(
         copied = _copy_registration_images(
             project.sections,
             input_dir,
+            working_scale=project.working_scale,
             reverse_section_order=opts.reverse_section_order,
             channels=project.channels,
             gamma=opts.gamma,
@@ -370,6 +371,7 @@ def reset_in_progress_to_default_proposals(
 def _copy_registration_images(
     sections: list[Section],
     input_dir: Path,
+    working_scale: float,
     reverse_section_order: bool = False,
     channels=None,
     gamma: float = 1.0,
@@ -395,12 +397,10 @@ def _copy_registration_images(
     slice_indices = [section.slice_index for section in sections]
     for section in sections:
         original_thumbnail_path = section.thumbnail_path
-        original_scale = section.scale
         try:
-            img = ensure_working_copy(section)
+            img = ensure_working_copy(section, working_scale)
         finally:
             section.thumbnail_path = original_thumbnail_path
-            section.scale = original_scale
         if img is None:
             continue
         img = _format_deepslice_image(

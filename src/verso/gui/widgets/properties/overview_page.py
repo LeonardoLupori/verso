@@ -26,10 +26,8 @@ class OverviewPage(QWidget):
         self._lbl_file = QLabel("-")
         self._lbl_file.setWordWrap(True)
         self._lbl_serial = QLabel("-")
-        self._lbl_scale = QLabel("-")
         info_layout.addRow("File:", self._lbl_file)
         info_layout.addRow("Serial #:", self._lbl_serial)
-        info_layout.addRow("Scale:", self._lbl_scale)
         layout.addWidget(info_box)
 
         layout.addStretch()
@@ -39,9 +37,7 @@ class OverviewPage(QWidget):
             self._title.setText("No section selected")
             self._lbl_file.setText("-")
             self._lbl_serial.setText("-")
-            self._lbl_scale.setText("-")
             return
         self._title.setText(os.path.basename(section.original_path))
         self._lbl_file.setText(section.original_path)
         self._lbl_serial.setText(str(section.slice_index))
-        self._lbl_scale.setText(f"{section.scale:.4f}")

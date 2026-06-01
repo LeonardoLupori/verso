@@ -63,10 +63,10 @@ Original images are never modified. All preprocessing (flip, masks, contrast) is
 | Tier | Resolution | Purpose |
 |---|---|---|
 | Full resolution | Original (e.g., 20000×15000) | On disk, used only for final export |
-| Working resolution | `WORKING_SCALE × original` (default 0.2; see `engine/io/image_io.py`) | Interactive registration, masks, warping |
+| Working resolution | `Project.working_scale × original` | Interactive registration, masks, warping |
 | Filmstrip thumbnail | ≤ `FILMSTRIP_MAX_SIDE` = 150 px on long side | Overview table, filmstrip nav |
 
-Control points and masks are defined in working-resolution space. The per-section ratio `section.scale = working_long_side / original_long_side` is stored so full-resolution export can scale back up.
+Control points and masks are defined in working-resolution space. The ratio `Project.working_scale = working_long_side / original_long_side` is uniform across all sections — derived once at import from the largest image so its longest side fits within `THUMBNAIL_MAX_SIDE` (2000 px; see `compute_working_scale` in `engine/io/image_io.py`) — and is stored so full-resolution export can scale back up.
 
 ### Warping algorithm
 

@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from verso.engine.io.image_io import WORKING_SCALE
 from verso.engine.model.project import Section
 from verso.engine.preprocessing import channel_lut
 from verso.gui.widgets.canvas import ImageCanvas
@@ -64,6 +65,10 @@ class SectionCanvasPanel(QWidget):
         self._raw_image: np.ndarray | None = None
         self._atlas: AtlasVolume | None = None
         self._channels: list = []
+        # Project-wide working scale, pushed via set_working_scale. Only consulted
+        # if a thumbnail must be regenerated from the original (see
+        # ensure_working_copy); kept in sync with the active project.
+        self._working_scale: float = WORKING_SCALE
         # (id(raw_image), flip_h, flip_v, n) — invalidated only by section /
         # flip / channel-count changes; brightness/colour edits don't touch it.
         self._channel_planes_key: tuple | None = None
@@ -143,6 +148,10 @@ class SectionCanvasPanel(QWidget):
         self._channels = list(channels)
         self._display_image()
 
+    def set_working_scale(self, working_scale: float) -> None:
+        """Set the project's working scale used for any thumbnail regeneration."""
+        self._working_scale = working_scale
+
     def set_overlay_mode(self, mode: str) -> None:
         if mode == self._overlay_mode:
             return
@@ -176,7 +185,7 @@ class SectionCanvasPanel(QWidget):
 
         from verso.engine.io.image_io import ensure_working_copy
         try:
-            self._raw_image = ensure_working_copy(section)
+            self._raw_image = ensure_working_copy(section, self._working_scale)
         except RuntimeError as exc:
             QMessageBox.warning(self, "Cannot load image", str(exc))
             self.section_loaded.emit(section)

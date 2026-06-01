@@ -40,6 +40,7 @@ from PyQt6.QtWidgets import (
 )
 
 from verso.engine.io.image_io import (
+    compute_working_scale,
     guess_slice_indices,
     probe_channels,
     thumbnail_filename,
@@ -446,36 +447,37 @@ class NewProjectDialog(QDialog):
             channel_names = ["Ch 0"]
         project_channels = _default_channel_specs(channel_names, first_path.suffix)
 
+        # One working scale for the whole batch, derived from the largest image
+        # so its longest side fits within THUMBNAIL_MAX_SIDE.
+        working_scale = compute_working_scale([s.original_path for s in sections])
+
         self._project = Project(
             name=name,
             atlas=AtlasRef(name=atlas),
             sections=sections,
             channels=project_channels,
             interpolation_axis=interpolation_axis,
+            working_scale=working_scale,
         )
         self._project.sort_sections()
         self._project_path = project_path
         self._project.save(self._project_path)
 
         # Generate working-resolution thumbnails now so all views load quickly.
-        self._generate_thumbnails(self._project.sections)
+        self._generate_thumbnails(self._project.sections, self._project.working_scale)
         self._project.save(self._project_path)
 
         self.accept()
 
-    def _generate_thumbnails(self, sections: list[Section]) -> None:
+    def _generate_thumbnails(self, sections: list[Section], scale: float) -> None:
         """Generate working-resolution OME-TIFF thumbnails for all sections.
 
-        A single scale factor is derived from the batch so the largest source
-        image fits within ``THUMBNAIL_MAX_SIDE``; every section is downscaled by
-        that same factor.
+        Every section is downscaled by the project's single ``scale`` factor.
         """
         from PyQt6.QtCore import Qt
         from PyQt6.QtWidgets import QApplication, QProgressDialog
 
-        from verso.engine.io.image_io import compute_working_scale, ensure_working_copy
-
-        scale = compute_working_scale([s.original_path for s in sections])
+        from verso.engine.io.image_io import ensure_working_copy
 
         n = len(sections)
         progress = QProgressDialog("Generating thumbnails…", "Skip", 0, n, self)
@@ -493,7 +495,7 @@ class NewProjectDialog(QDialog):
             progress.setValue(i)
             QApplication.processEvents()
             try:
-                ensure_working_copy(section, scale=scale)
+                ensure_working_copy(section, scale)
             except Exception:
                 pass  # will be generated lazily on first view
 

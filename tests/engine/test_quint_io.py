@@ -255,9 +255,9 @@ def test_save_quicknii_uses_registration_thumbnail_dimensions(tmp_path: Path):
                 slice_index=1,
                 original_path=str(original),
                 thumbnail_path=str(thumbnail),
-                scale=0.2,
             )
         ],
+        working_scale=0.2,
     )
 
     dst = tmp_path / "qn_out.json"
@@ -290,9 +290,9 @@ def test_save_quicknii_writes_relative_thumbnail_path(tmp_path: Path):
                 slice_index=1,
                 original_path=str(original),
                 thumbnail_path=str(thumbnail),
-                scale=0.2,
             )
         ],
+        working_scale=0.2,
     )
 
     dst = tmp_path / "quicknii.json"

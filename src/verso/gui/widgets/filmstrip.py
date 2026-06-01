@@ -12,6 +12,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from verso.engine.io.image_io import WORKING_SCALE
+
 _THUMB_SIZE = 100  # px long side
 _BORDER_W = 3
 _DOT_DIAMETER = 14  # status dot in the top-right corner
@@ -29,10 +31,11 @@ class _ThumbnailLoader(QObject):
     thumbnail_ready = pyqtSignal(int, QPixmap)  # (section_index, pixmap)
     finished = pyqtSignal()
 
-    def __init__(self, sections: list, channels: list) -> None:
+    def __init__(self, sections: list, channels: list, working_scale: float) -> None:
         super().__init__()
         self._sections = list(sections)  # snapshot — avoid races with caller
         self._channels = list(channels)
+        self._working_scale = working_scale
         self._abort = False
 
     def stop(self) -> None:
@@ -47,7 +50,9 @@ class _ThumbnailLoader(QObject):
             if self._abort:
                 break
             try:
-                arr = load_filmstrip_thumbnail(section, self._channels)
+                arr = load_filmstrip_thumbnail(
+                    section, self._working_scale, self._channels
+                )
                 if arr is not None:
                     self.thumbnail_ready.emit(i, ndarray_to_pixmap(arr))
             except Exception:
@@ -160,7 +165,12 @@ class Filmstrip(QWidget):
         outer.addStretch()
         self._scroll = scroll
 
-    def populate(self, sections: list, channels: list | None = None) -> None:
+    def populate(
+        self,
+        sections: list,
+        channels: list | None = None,
+        working_scale: float = WORKING_SCALE,
+    ) -> None:
         """Rebuild thumbnails from a list of Section objects.
 
         Creates all placeholder buttons immediately (non-blocking), then loads
@@ -170,6 +180,8 @@ class Filmstrip(QWidget):
             sections: section list to render.
             channels: project-level :class:`ChannelSpec` list used to composite
                 the cached multichannel thumbnail to RGB.
+            working_scale: project's :attr:`Project.working_scale`, forwarded to
+                thumbnail regeneration so every section keeps one scale.
         """
         channels = channels or []
         self._cancel_loader()
@@ -192,7 +204,7 @@ class Filmstrip(QWidget):
         self._highlight(self._current)
 
         # Load thumbnails in the background; update each button as it arrives.
-        loader = _ThumbnailLoader(sections, channels)
+        loader = _ThumbnailLoader(sections, channels, working_scale)
         thread = QThread()  # No parent — we control lifetime explicitly via shutdown()
         loader.moveToThread(thread)
         thread.started.connect(loader.run)

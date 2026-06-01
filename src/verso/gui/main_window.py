@@ -92,9 +92,10 @@ class _DeepSliceWorker(QObject):
 class _BatchMaskWorker(QObject):
     done = pyqtSignal(int, list)
 
-    def __init__(self, sections: list) -> None:
+    def __init__(self, sections: list, working_scale: float) -> None:
         super().__init__()
         self._sections = sections
+        self._working_scale = working_scale
         # Detected masks held in RAM (section.id -> bool array), drained by the
         # main thread into the resident prep-draft store on completion.  Nothing
         # is written to disk until the user saves.
@@ -110,7 +111,7 @@ class _BatchMaskWorker(QObject):
 
         for section in self._sections:
             try:
-                image = ensure_working_copy(section)
+                image = ensure_working_copy(section, self._working_scale)
                 if image is None:
                     errors.append(f"{Path(section.original_path).name}: no readable image")
                     continue
@@ -582,6 +583,10 @@ class MainWindow(QMainWindow):
                 self._update_ap_plot()
             else:
                 self._warp.activate()
+            # Push the working scale before load_section so any thumbnail
+            # regeneration uses the project's scale, not the panel default.
+            if project is not None:
+                self._panel.set_working_scale(project.working_scale)
             if self._panel.section is not section:
                 self._panel.load_section(section)
             if project is not None:
@@ -682,7 +687,9 @@ class MainWindow(QMainWindow):
         self._prep.set_channels(project.channels)
         if self._brightness_dialog is not None:
             self._brightness_dialog.set_channels(project.channels)
-        self._filmstrip.populate(project.sections, project.channels)
+        self._filmstrip.populate(
+            project.sections, project.channels, project.working_scale
+        )
         self._props.warp.cp.apply_style(project.cp_size, project.cp_shape, project.cp_color)
         self._warp.set_cp_style(project.cp_size, project.cp_shape, project.cp_color)
 
@@ -1030,9 +1037,12 @@ class MainWindow(QMainWindow):
             self._seed_channels_from_first_section(project)
 
         self._overview.load_project(project)
-        self._filmstrip.populate(project.sections, project.channels)
+        self._filmstrip.populate(
+            project.sections, project.channels, project.working_scale
+        )
         self._prep.set_channels(project.channels)
         self._panel.set_channels(project.channels)
+        self._panel.set_working_scale(project.working_scale)
         if self._brightness_dialog is not None:
             self._brightness_dialog.set_channels(project.channels)
         self._props.warp.cp.apply_style(project.cp_size, project.cp_shape, project.cp_color)
@@ -1210,7 +1220,9 @@ class MainWindow(QMainWindow):
             )
         self._sync_position_mm(project.sections)
 
-        self._filmstrip.populate(project.sections, project.channels)
+        self._filmstrip.populate(
+            project.sections, project.channels, project.working_scale
+        )
         self._filmstrip.set_current(self._state.section_index)
         self._overview.refresh()
         self._update_ap_plot()
@@ -1352,7 +1364,7 @@ class MainWindow(QMainWindow):
         self._show_batch_mask_progress()
 
         thread = QThread(self)
-        worker = _BatchMaskWorker(list(project.sections))
+        worker = _BatchMaskWorker(list(project.sections), project.working_scale)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.done.connect(self._on_batch_masks_done)

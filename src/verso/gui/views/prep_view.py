@@ -199,7 +199,9 @@ class PrepView(QWidget):
         from verso.engine.io.image_io import ensure_working_copy
 
         try:
-            self._raw_image = ensure_working_copy(section)
+            self._raw_image = ensure_working_copy(
+                section, self._state.project.working_scale
+            )
         except RuntimeError as exc:
             QMessageBox.warning(self, "Cannot load image", str(exc))
             return

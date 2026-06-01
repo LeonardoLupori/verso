@@ -130,8 +130,6 @@ class Section:
     preprocessing: Preprocessing = field(default_factory=Preprocessing)
     alignment: Alignment = field(default_factory=Alignment)
     warp: WarpState = field(default_factory=WarpState)
-    # Ratio: working_long_side / original_long_side (uniform, same for x and y)
-    scale: float = 1.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -142,7 +140,6 @@ class Section:
             "preprocessing": self.preprocessing.to_dict(),
             "alignment": self.alignment.to_dict(),
             "warp": self.warp.to_dict(),
-            "scale": self.scale,
         }
 
     @classmethod
@@ -155,7 +152,6 @@ class Section:
             preprocessing=Preprocessing.from_dict(d.get("preprocessing", {})),
             alignment=Alignment.from_dict(d.get("alignment", {})),
             warp=WarpState.from_dict(d.get("warp", {})),
-            scale=d.get("scale", 1.0),
         )
 
 
@@ -181,6 +177,10 @@ class Project:
     cp_shape: str = "Cross"
     cp_color: str = "#fff500"
     interpolation_axis: str = "AP"
+    # Ratio working_long_side / original_long_side, uniform across all sections.
+    # Derived once at import from the largest image (see compute_working_scale);
+    # full-resolution export scales back up by this factor.
+    working_scale: float = 0.2
     version: str = "1.1"
 
     @property
@@ -198,6 +198,7 @@ class Project:
             "cp_size": self.cp_size,
             "cp_shape": self.cp_shape,
             "cp_color": self.cp_color,
+            "working_scale": self.working_scale,
             "sections": [s.to_dict() for s in self.sections],
         }
 
@@ -231,6 +232,7 @@ class Project:
             cp_shape=str(d.get("cp_shape", "Cross")),
             cp_color=cp_color,
             interpolation_axis=interpolation_axis,
+            working_scale=float(d.get("working_scale", 0.2)),
             version="1.1",
         )
         project.sort_sections()

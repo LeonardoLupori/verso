@@ -147,7 +147,6 @@ def _make_section() -> Section:
             control_points=[ControlPoint(10.0, 20.0, 12.0, 19.0)],
             status=AlignmentStatus.IN_PROGRESS,
         ),
-        scale=0.06,
     )
 
 
@@ -169,6 +168,7 @@ def _make_project() -> Project:
             ChannelSpec(name="DAPI", color=(0, 100, 255), scale=0.8, visible=True),
             ChannelSpec(name="GFP", color=(0, 255, 0), scale=1.0, visible=True),
         ],
+        working_scale=0.06,
     )
 
 
