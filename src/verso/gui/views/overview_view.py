@@ -393,8 +393,19 @@ class OverviewView(QWidget):
                     return done
                 return in_progress if prep_dirty else not_started
 
-        statuses = [
-            prep_status(bool(section.preprocessing.flip_horizontal), flip_dirty),
+        # Flip is a state, not a task: both flipped and un-flipped are valid end
+        # states, so it gets a plain H / V / H+V label (regular colour) instead
+        # of a traffic-light dot — tinted the same yellow only when unsaved.
+        fh = bool(section.preprocessing.flip_horizontal)
+        fv = bool(section.preprocessing.flip_vertical)
+        flip_text = "H+V" if (fh and fv) else "H" if fh else "V" if fv else "—"
+        flip_item = self._make_cell(flip_text)
+        if flip_dirty:
+            flip_item.setForeground(QColor(_STATUS_COLOR[in_progress]))
+        t.setItem(row, _COL_STEPS_START, flip_item)
+
+        # The remaining steps are genuine tasks — render them as status dots.
+        dot_statuses = [
             prep_status(bool(section.preprocessing.slice_mask_path), mask_dirty),
             prep_status(bool(section.preprocessing.lr_mask_path), lr_dirty),
             section_step_status(
@@ -404,8 +415,8 @@ class OverviewView(QWidget):
                 section, "warp", dirty=self._state.is_dirty(section.id, "warp")
             ),
         ]
-        for i, status in enumerate(statuses):
-            col = _COL_STEPS_START + i
+        for i, status in enumerate(dot_statuses):
+            col = _COL_STEPS_START + 1 + i
             item = self._make_cell(_STATUS_SYMBOL[status])
             item.setForeground(QColor(_STATUS_COLOR[status]))
             t.setItem(row, col, item)
