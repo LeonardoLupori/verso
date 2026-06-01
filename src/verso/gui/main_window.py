@@ -178,6 +178,7 @@ class MainWindow(QMainWindow):
             return
         self._filmstrip.shutdown()
         self._overview.shutdown()
+        self._state.shutdown()
         super().closeEvent(event)
 
     # ------------------------------------------------------------------

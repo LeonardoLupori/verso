@@ -186,3 +186,14 @@ class AppState(QObject):
     def _on_atlas_loaded(self, atlas: AtlasVolume) -> None:
         self._atlas = atlas
         self.atlas_changed.emit()
+
+    def shutdown(self) -> None:
+        """Stop the background atlas loader. Must be called before destruction."""
+        if self._atlas_thread is not None:
+            try:
+                if self._atlas_thread.isRunning():
+                    self._atlas_thread.quit()
+                    self._atlas_thread.wait()
+            except RuntimeError:
+                pass  # C++ object already deleted — thread has already finished
+        self._atlas_thread = None
