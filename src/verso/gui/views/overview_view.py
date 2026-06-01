@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QColor
+from PyQt6.QtCore import QObject, QRectF, Qt, QThread, pyqtSignal
+from PyQt6.QtGui import QColor, QPainter, QPen
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QHeaderView,
     QLabel,
+    QStyle,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -37,6 +40,92 @@ _COL_FILE = 1
 _COL_DIMS = 2
 _COL_AP = 3
 _COL_STEPS_START = 4  # Flip, Slice, LR, Align, Warp
+
+# Modern table styling, tuned to the app's dark theme (#2a2a2a chrome,
+# #1e5a8a accent — see main_window / view_chrome).  Flat, gridline-free rows
+# with a quiet uppercase header and a soft accent rule beneath it.
+_TABLE_STYLE = """
+QTableWidget {
+    background: #1e1e1e;
+    alternate-background-color: #242424;
+    gridline-color: transparent;
+    border: 1px solid #383838;
+    border-radius: 8px;
+    color: #d6d6d6;
+    font-size: 12px;
+    outline: none;
+}
+QTableWidget::item {
+    padding: 6px 10px;
+    border: none;
+}
+QTableWidget::item:selected {
+    background: #1e5a8a;
+    color: #ffffff;
+}
+QHeaderView::section {
+    background: #262626;
+    color: #9aa0a6;
+    padding: 9px 10px;
+    border: none;
+    border-bottom: 2px solid #1e5a8a;
+    font-size: 11px;
+    font-weight: 600;
+}
+QTableCornerButton::section {
+    background: #262626;
+    border: none;
+}
+"""
+
+_SUMMARY_STYLE = (
+    "color: #888; padding: 10px 6px 2px 6px; font-size: 11px; "
+    "border-top: 1px solid #333;"
+)
+
+
+class _SliceIndexDelegate(QStyledItemDelegate):
+    """Renders the slice-index cells as a subtle, editable input field.
+
+    Slice index is the only editable column, so we outline each cell with a
+    faint rounded "chip" — quiet at rest, filling and brightening on hover — to
+    hint that the value can be changed without drawing the eye.  Selected rows
+    defer to the default highlight so the chip never fights the selection.
+    """
+
+    # At rest the chip is just a faint outline so it reads as editable without
+    # drawing the eye; hovering fills and brightens it to invite the edit.
+    _BORDER = QColor("#3f3f3f")
+    _BORDER_HOVER = QColor("#3a6d99")
+    _FILL_HOVER = QColor("#27414f")
+    _TEXT = QColor("#d6d6d6")
+    _TEXT_HOVER = QColor("#9fd0f2")
+
+    def paint(
+        self, painter: QPainter, option: QStyleOptionViewItem, index
+    ) -> None:
+        # Let the base style paint the cell background (alternating bands and,
+        # when selected, the highlight).  On a selected row we stop there so the
+        # chip never competes with the selection colour.
+        super().paint(painter, option, index)
+        if option.state & QStyle.StateFlag.State_Selected:
+            return
+
+        hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        # The base style already drew the value; cover it so we can recolour on
+        # hover, then outline the chip over the (matching) row background.
+        chip = QRectF(option.rect).adjusted(7, 7, -7, -7)
+        painter.setPen(QPen(self._BORDER_HOVER if hovered else self._BORDER, 1))
+        painter.setBrush(self._FILL_HOVER if hovered else Qt.BrushStyle.NoBrush)
+        painter.drawRoundedRect(chip, 5, 5)
+
+        painter.setPen(self._TEXT_HOVER if hovered else self._TEXT)
+        painter.drawText(
+            option.rect, Qt.AlignmentFlag.AlignCenter, index.data() or ""
+        )
+        painter.restore()
 
 
 class _DimensionLoader(QObject):
@@ -89,7 +178,7 @@ class OverviewView(QWidget):
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(24, 16, 24, 10)
         layout.setSpacing(0)
 
         # Empty state (shown when no project is loaded)
@@ -114,9 +203,7 @@ class OverviewView(QWidget):
 
         # Summary bar
         self._summary = QLabel("  —")
-        self._summary.setStyleSheet(
-            "background: #2a2a2a; color: #aaa; padding: 4px 8px; font-size: 11px;"
-        )
+        self._summary.setStyleSheet(_SUMMARY_STYLE)
         layout.addWidget(self._summary)
 
     def _setup_table(self) -> None:
@@ -126,7 +213,7 @@ class OverviewView(QWidget):
         axis_name = (
             self._project.interpolation_axis if self._project is not None else "AP"
         )
-        headers = ["#", "File", "Dimensions", f"{axis_name} (mm)"] + list(_STEPS)
+        headers = ["Slice index", "File", "Dimensions", f"{axis_name} (mm)"] + list(_STEPS)
         t.setHorizontalHeaderLabels(headers)
 
         t.horizontalHeader().setSectionResizeMode(
@@ -150,12 +237,16 @@ class OverviewView(QWidget):
             "Double-click to edit; rows re-sort by index."
         )
         t.setAlternatingRowColors(True)
-        t.verticalHeader().setDefaultSectionSize(36)
+        t.setShowGrid(False)
+        t.verticalHeader().setDefaultSectionSize(38)
         t.verticalHeader().setVisible(False)
-        t.setStyleSheet(
-            "QTableWidget { gridline-color: #333; }"
-            "QTableWidget::item:selected { background: #1e5a8a; }"
-        )
+        t.horizontalHeader().setHighlightSections(False)
+        t.setStyleSheet(_TABLE_STYLE)
+
+        # Slice index is the only editable column — render it as an input chip
+        # (with a hover affordance) so users see it can be changed.
+        t.setMouseTracking(True)
+        t.setItemDelegateForColumn(_COL_SERIAL, _SliceIndexDelegate(t))
 
         t.cellDoubleClicked.connect(self._on_double_click)
         t.currentCellChanged.connect(self._on_selection_changed)
@@ -246,6 +337,7 @@ class OverviewView(QWidget):
         import os
         serial_cell = self._make_cell(str(section.slice_index))
         serial_cell.setFlags(serial_cell.flags() | Qt.ItemFlag.ItemIsEditable)
+        serial_cell.setToolTip("Double-click to edit — rows re-sort by slice index")
         # Carry the section id so an edit maps to the right section regardless of
         # how rows are later re-sorted.
         serial_cell.setData(Qt.ItemDataRole.UserRole, section.id)
