@@ -253,6 +253,9 @@ class MainWindow(QMainWindow):
         act_adjust = QAction("Adjust &channels/brightness…", self)
         act_adjust.triggered.connect(self._open_brightness_dialog)
         images_menu.addAction(act_adjust)
+        act_reorder = QAction("Reorder slices based on &filename…", self)
+        act_reorder.triggered.connect(self._reorder_by_filename)
+        images_menu.addAction(act_reorder)
 
         batch_menu = mb.addMenu("&Batch")
 
@@ -1101,6 +1104,50 @@ class MainWindow(QMainWindow):
         self._state.set_section(index)
         self._switch_view(_VIEW_PREP)
         self._prep.load_section(self._state.current_section)
+
+    def _reorder_by_filename(self) -> None:
+        """Re-derive every slice index from the image filenames.
+
+        Runs the same heuristic used to seed indices at import
+        (:func:`guess_slice_indices`) over the current sections, overwriting any
+        manual edits, then re-sorts and recomputes like an overview edit.
+        """
+        from PyQt6.QtWidgets import QMessageBox
+
+        from verso.engine.io.image_io import guess_slice_indices
+
+        project = self._state.project
+        if project is None or not project.sections:
+            return
+
+        resp = QMessageBox.question(
+            self,
+            "Reorder slices based on filename",
+            "Re-derive every slice index from the image filenames?\n\n"
+            "This overwrites any manual slice-index edits.",
+            QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+        )
+        if resp != QMessageBox.StandardButton.Ok:
+            return
+
+        indices = guess_slice_indices([s.original_path for s in project.sections])
+        keep_id = (
+            self._state.current_section.id
+            if self._state.current_section is not None
+            else None
+        )
+        for section, index in zip(project.sections, indices):
+            section.slice_index = index
+        project.sort_sections()
+
+        if keep_id is not None:
+            new_pos = next(
+                (i for i, s in enumerate(project.sections) if s.id == keep_id), None
+            )
+            if new_pos is not None:
+                self._state.set_section(new_pos)
+
+        self._on_sections_reordered()
 
     def _on_sections_reordered(self) -> None:
         """A slice index was edited in Overview: re-interpolate, refresh, persist.
