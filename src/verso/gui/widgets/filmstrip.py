@@ -16,7 +16,7 @@ from verso.engine.io.image_io import WORKING_SCALE
 
 _THUMB_SIZE = 100  # px long side
 _BORDER_W = 3
-_DOT_DIAMETER = 14  # status dot in the top-right corner
+_DOT_DIAMETER = 10  # status dot in the top-right corner
 _DOT_MARGIN = 4
 
 

@@ -416,8 +416,8 @@ class PrepView(QWidget):
             p0 = self._line_endpoint_to_display((stored[0][0], stored[0][1]))
             p1 = self._line_endpoint_to_display((stored[1][0], stored[1][1]))
         else:
-            p0 = (w / 2.0, 0.1 * h)
-            p1 = (w / 2.0, 0.9 * h)
+            p0 = (w / 2.0, 0.9 * h)
+            p1 = (w / 2.0, 0.1 * h)
 
         self._lr_editor = LRLineEditor(self._canvas)
         self._lr_editor.begin(
