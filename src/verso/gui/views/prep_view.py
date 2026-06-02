@@ -94,6 +94,10 @@ class PrepView(QWidget):
         self._lr_dirty = False
         self._lr_visible = True
         self._lr_overlay_needs_update = False
+        # Set by flush_draft() when the mask arrays are released on navigation
+        # away; tells refresh_display() to restore them on re-entry so the
+        # overlays don't render empty when returning to the same section.
+        self._arrays_released = False
         # Draw-mode state — created/destroyed by enter/exit_lr_draw_mode().
         self._lr_editor: LRLineEditor | None = None
         self._lr_draw_mode = False
@@ -171,6 +175,7 @@ class PrepView(QWidget):
         self._mask_dirty = False
         self._lr_mask = None
         self._lr_dirty = False
+        self._arrays_released = False
         self._undo_stack.clear()
         self._stroke_points.clear()
         self._stroke_active = False
@@ -239,9 +244,35 @@ class PrepView(QWidget):
 
     def refresh_display(self) -> None:
         """Re-render from cache after preprocessing parameter changes."""
+        # If the masks were released by flush_draft() on a prior navigation
+        # away, re-checkout the resident draft / reload from disk before
+        # rendering — otherwise re-entry on the same section shows no overlay.
+        if self._arrays_released:
+            self._restore_released_masks()
         self._display_image()
         self._update_mask_overlay()
         self._update_lr_overlay()
+
+    def _restore_released_masks(self) -> None:
+        """Reload the slice / L-R masks released by :meth:`flush_draft`.
+
+        Mirrors the mask-checkout portion of :meth:`load_section` (disk load
+        plus any resident draft overlay) without disturbing the still-valid
+        dirty state, baseline, or flip bookkeeping held in memory.
+        """
+        self._arrays_released = False
+        if self._section is None or self._raw_image is None:
+            return
+        draft = self._state.pop_prep_draft(self._section.id)
+        self._load_or_init_mask()
+        self._load_or_init_lr_mask()
+        if draft is not None:
+            if draft.mask_dirty:
+                self._current_mask = draft.slice_mask
+                self._mask_dirty = True
+            if draft.lr_dirty:
+                self._lr_mask = draft.lr_mask
+                self._lr_dirty = True
 
     def set_mask_visible(self, visible: bool) -> None:
         visible = bool(visible)
@@ -536,6 +567,7 @@ class PrepView(QWidget):
             self._state.set_prep_draft(section.id, draft)
         self._current_mask = None
         self._lr_mask = None
+        self._arrays_released = True
         self._undo_stack.clear()
         self._stroke_points.clear()
         self._stroke_active = False
