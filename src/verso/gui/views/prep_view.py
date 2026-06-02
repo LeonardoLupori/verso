@@ -68,7 +68,7 @@ class PrepView(QWidget):
         self._mask_dirty = False
         self._mask_opacity = 0.4
         self._mask_color = (255, 255, 255)
-        self._lr_mask_opacity: float = 0.5
+        self._lr_mask_opacity: float = 0.25
         self._lr_left_color: tuple[int, int, int] = (220, 60, 60)
         self._lr_right_color: tuple[int, int, int] = (60, 130, 220)
         self._negative_mask = False
