@@ -693,6 +693,12 @@ def interpolate_anchorings(
                 continue
             section.alignment.anchoring = anchoring
             section.alignment.status = AlignmentStatus.IN_PROGRESS
+            # Mark these as auto-generated proposals (same tag the GUI's
+            # _initialize_quicknii_anchorings uses).  Without it, a later
+            # re-interpolation treats these IN_PROGRESS sections as manual
+            # edits and skips them, so a newly-saved keyframe's angle never
+            # propagates here.
+            section.alignment.source = "quicknii_default"
         return
 
     if len(stored_indices) < 2:
@@ -749,6 +755,7 @@ def interpolate_anchorings(
             continue
         section.alignment.anchoring = quicknii_pack_anchoring(unpacked, w, h)
         section.alignment.status = AlignmentStatus.IN_PROGRESS
+        section.alignment.source = "quicknii_default"
 
 
 # ---------------------------------------------------------------------------
