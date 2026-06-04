@@ -232,20 +232,6 @@ class MainWindow(QMainWindow):
 
         file_menu.addSeparator()
 
-        act_export_qn_xml = QAction("Export QuickNII &XML…", self)
-        act_export_qn_xml.triggered.connect(self._export_quicknii_xml)
-        file_menu.addAction(act_export_qn_xml)
-
-        act_export_qn = QAction("Export &QuickNII JSON…", self)
-        act_export_qn.triggered.connect(self._export_quicknii)
-        file_menu.addAction(act_export_qn)
-
-        act_export_va = QAction("Export &VisuAlign JSON…", self)
-        act_export_va.triggered.connect(self._export_visualign)
-        file_menu.addAction(act_export_va)
-
-        file_menu.addSeparator()
-
         act_quit = QAction("&Quit", self)
         act_quit.setShortcut(QKeySequence.StandardKey.Quit)
         act_quit.triggered.connect(self.close)
@@ -304,9 +290,23 @@ class MainWindow(QMainWindow):
         warp_menu.addAction(self._act_clear_all_warps)
 
         export_menu = mb.addMenu("&Export")
-        act_export_images = QAction("Images with atlas &overlay…", self)
+        act_export_images = QAction("Export images with atlas &overlay…", self)
         act_export_images.triggered.connect(self._export_images_with_overlay)
         export_menu.addAction(act_export_images)
+
+        export_menu.addSeparator()
+
+        act_export_qn_xml = QAction("Export QuickNII &XML…", self)
+        act_export_qn_xml.triggered.connect(self._export_quicknii_xml)
+        export_menu.addAction(act_export_qn_xml)
+
+        act_export_qn = QAction("Export &QuickNII JSON…", self)
+        act_export_qn.triggered.connect(self._export_quicknii)
+        export_menu.addAction(act_export_qn)
+
+        act_export_va = QAction("Export &VisuAlign JSON…", self)
+        act_export_va.triggered.connect(self._export_visualign)
+        export_menu.addAction(act_export_va)
 
         help_menu = mb.addMenu("&Help")
         act_atlas_info = QAction("&Atlas info…", self)
