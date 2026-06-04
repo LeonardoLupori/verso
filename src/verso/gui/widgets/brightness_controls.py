@@ -10,11 +10,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from PyQt6.QtCore import QSize, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QIcon, QPixmap
+from PyQt6.QtGui import QColor, QIcon, QKeyEvent, QMouseEvent, QPixmap
 from PyQt6.QtWidgets import (
     QColorDialog,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPushButton,
     QSlider,
     QToolButton,
@@ -26,6 +27,30 @@ from verso.engine.model.project import ChannelSpec
 
 _ICONS_DIR = Path(__file__).parent.parent / "icons"
 
+# Inline name editor styled after the overview table's slice-index chip
+# (see ``_SliceIndexDelegate`` in views/overview_view.py): a faint outline at
+# rest that brightens and fills on hover to hint the value is editable, and a
+# distinct focused look while the user is actually typing.
+_NAME_EDIT_QSS = """
+QLineEdit {
+    border: 1px solid #3f3f3f;
+    border-radius: 5px;
+    background: transparent;
+    color: #d6d6d6;
+    padding: 1px 4px;
+}
+QLineEdit:hover {
+    border-color: #3a6d99;
+    background: #27414f;
+    color: #9fd0f2;
+}
+QLineEdit:focus {
+    border-color: #3a6d99;
+    background: #1e2e38;
+    color: #ffffff;
+}
+"""
+
 
 def _eye_icon(visible: bool) -> QIcon:
     name = "eye.svg" if visible else "eye-off.svg"
@@ -33,6 +58,85 @@ def _eye_icon(visible: bool) -> QIcon:
     pixmap = QPixmap()
     pixmap.loadFromData(svg.encode())
     return QIcon(pixmap)
+
+
+class _EditableName(QLineEdit):
+    """Inline channel-name field: a read-only chip until double-clicked.
+
+    At rest it reads as an editable input (faint outline, hover highlight),
+    matching the overview table's slice-index cell. Double-clicking unlocks
+    editing; Return or focus-out commits, Escape reverts. Empty or unchanged
+    text is silently reverted. The trimmed proposed name is emitted via
+    :attr:`name_committed`; the parent validates/deduplicates it and may push
+    a corrected name back via :meth:`set_name`.
+    """
+
+    name_committed = pyqtSignal(str)  # trimmed, non-empty, changed proposed name
+
+    def __init__(self, name: str, parent: QWidget | None = None) -> None:
+        super().__init__(name, parent)
+        self._committed_text = name
+        self.setReadOnly(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip(f"{name}\nDouble-click to rename")
+        self.setStyleSheet(_NAME_EDIT_QSS)
+        self.setMinimumWidth(60)
+        self.setMaximumWidth(120)
+        self.editingFinished.connect(self._finish_edit)
+
+    def set_name(self, name: str) -> None:
+        """Set the displayed name without triggering a commit."""
+        self._committed_text = name
+        if self.text() != name:
+            self.setText(name)
+        self.setToolTip(f"{name}\nDouble-click to rename")
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
+        if self.isReadOnly():
+            self._begin_edit()
+            return
+        super().mouseDoubleClickEvent(event)
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        if not self.isReadOnly():
+            key = event.key()
+            if key == Qt.Key.Key_Escape:
+                self.setText(self._committed_text)
+                self._lock()
+                self.clearFocus()
+                return
+            if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                # Commit and consume the event so it doesn't bubble up to the
+                # dialog and trigger the auto-default button (the color picker).
+                self._finish_edit()
+                self.clearFocus()
+                event.accept()
+                return
+        super().keyPressEvent(event)
+
+    def _begin_edit(self) -> None:
+        self._committed_text = self.text()
+        self.setReadOnly(False)
+        self.setCursor(Qt.CursorShape.IBeamCursor)
+        self.setFocus(Qt.FocusReason.MouseFocusReason)
+        self.selectAll()
+
+    def _lock(self) -> None:
+        self.setReadOnly(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.deselect()
+
+    def _finish_edit(self) -> None:
+        # editingFinished fires on Return and on focus-out; guard against the
+        # double fire and against firing while already locked.
+        if self.isReadOnly():
+            return
+        proposed = self.text().strip()
+        self._lock()
+        if not proposed or proposed == self._committed_text:
+            self.setText(self._committed_text)
+            return
+        self.name_committed.emit(proposed)
 
 
 class _ChannelRow(QWidget):
@@ -46,8 +150,9 @@ class _ChannelRow(QWidget):
         the filmstrip).
     """
 
-    changed = pyqtSignal(int, object)    # index, ChannelSpec — live
+    changed = pyqtSignal(int, object)  # index, ChannelSpec — live
     committed = pyqtSignal(int, object)  # index, ChannelSpec — on release
+    rename_requested = pyqtSignal(int, str)  # index, proposed name — needs dedup
 
     def __init__(self, index: int, spec: ChannelSpec) -> None:
         super().__init__()
@@ -73,11 +178,9 @@ class _ChannelRow(QWidget):
         self._refresh_visible_btn()
         layout.addWidget(self._visible_btn)
 
-        self._name_label = QLabel(self._spec.name)
-        self._name_label.setMinimumWidth(36)
-        self._name_label.setMaximumWidth(60)
-        self._name_label.setToolTip(self._spec.name)
-        layout.addWidget(self._name_label)
+        self._name_edit = _EditableName(self._spec.name)
+        self._name_edit.name_committed.connect(self._on_name_committed)
+        layout.addWidget(self._name_edit)
 
         self._color_btn = QPushButton()
         self._color_btn.setFixedSize(20, 20)
@@ -122,8 +225,16 @@ class _ChannelRow(QWidget):
             self._visible_btn.blockSignals(True)
             self._visible_btn.setChecked(self._spec.visible)
             self._visible_btn.blockSignals(False)
+        # Don't clobber an in-progress rename; sync only while the field is idle.
+        if self._name_edit.isReadOnly():
+            self._name_edit.set_name(self._spec.name)
         self._refresh_visible_btn()
         self._refresh_color_btn()
+
+    def set_name(self, name: str) -> None:
+        """Apply a (possibly deduplicated) name pushed back by the parent."""
+        self._spec.name = name
+        self._name_edit.set_name(name)
 
     def _refresh_visible_btn(self) -> None:
         self._visible_btn.setIcon(_eye_icon(self._spec.visible))
@@ -131,8 +242,7 @@ class _ChannelRow(QWidget):
     def _refresh_color_btn(self) -> None:
         r, g, b = self._spec.color
         self._color_btn.setStyleSheet(
-            f"background-color: rgb({r}, {g}, {b}); border: 1px solid #555;"
-            " border-radius: 2px;"
+            f"background-color: rgb({r}, {g}, {b}); border: 1px solid #555; border-radius: 2px;"
         )
 
     def _on_visible(self, checked: bool) -> None:
@@ -164,6 +274,10 @@ class _ChannelRow(QWidget):
     def _on_slider_released(self) -> None:
         self.committed.emit(self._index, self.spec())
 
+    def _on_name_committed(self, proposed: str) -> None:
+        # Defer to the parent, which sees all channels and can deduplicate.
+        self.rename_requested.emit(self._index, proposed)
+
 
 class BrightnessControls(QWidget):
     """Dynamic per-channel brightness/color/visibility controls.
@@ -173,7 +287,7 @@ class BrightnessControls(QWidget):
     :attr:`channels_changed` whenever the user touches any control.
     """
 
-    channels_changed = pyqtSignal(list)    # live, on every slider tick
+    channels_changed = pyqtSignal(list)  # live, on every slider tick
     channels_committed = pyqtSignal(list)  # on slider release / discrete edits
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -203,8 +317,7 @@ class BrightnessControls(QWidget):
         # place. Avoids destroying the row that owns the slider currently
         # being dragged when the parent re-syncs us.
         same_structure = len(new_specs) == len(self._channels) and all(
-            new_specs[i].name == self._channels[i].name
-            for i in range(len(new_specs))
+            new_specs[i].name == self._channels[i].name for i in range(len(new_specs))
         )
         if same_structure and len(self._rows) == len(new_specs):
             self._channels = new_specs
@@ -226,6 +339,7 @@ class BrightnessControls(QWidget):
             row = _ChannelRow(i, spec)
             row.changed.connect(self._on_row_changed)
             row.committed.connect(self._on_row_committed)
+            row.rename_requested.connect(self._on_rename_requested)
             self._rows.append(row)
             self._layout.addWidget(row)
 
@@ -247,5 +361,28 @@ class BrightnessControls(QWidget):
 
     def _on_row_committed(self, idx: int, spec: ChannelSpec) -> None:
         if 0 <= idx < len(self._channels):
+            # Preserve the existing name — color/brightness/visibility commits
+            # must not resurrect a stale name from the row's spec.
+            spec.name = self._channels[idx].name
             self._channels[idx] = spec
         self.channels_committed.emit(self._snapshot())
+
+    def _on_rename_requested(self, idx: int, proposed: str) -> None:
+        if not (0 <= idx < len(self._channels)):
+            return
+        final = self._dedupe_name(proposed, exclude=idx)
+        self._channels[idx].name = final
+        # Reflect the (possibly disambiguated) name back into the row.
+        self._rows[idx].set_name(final)
+        self.channels_committed.emit(self._snapshot())
+
+    def _dedupe_name(self, name: str, exclude: int) -> str:
+        """Return *name*, suffixed with ``(2)``, ``(3)``… if another channel
+        already uses it (case-insensitive)."""
+        taken = {c.name.casefold() for i, c in enumerate(self._channels) if i != exclude}
+        if name.casefold() not in taken:
+            return name
+        n = 2
+        while f"{name} ({n})".casefold() in taken:
+            n += 1
+        return f"{name} ({n})"

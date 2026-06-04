@@ -238,7 +238,7 @@ class MainWindow(QMainWindow):
         file_menu.addAction(act_quit)
 
         images_menu = mb.addMenu("&Image")
-        act_adjust = QAction("Adjust &channels/brightness…", self)
+        act_adjust = QAction("&Channels…", self)
         act_adjust.triggered.connect(self._open_brightness_dialog)
         images_menu.addAction(act_adjust)
         act_reorder = QAction("Reorder slices based on &filename…", self)

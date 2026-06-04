@@ -1,7 +1,8 @@
-"""Floating "Adjust channels / brightness" dialog.
+"""Floating "Channel settings" dialog.
 
-A non-modal tool window that hosts the per-channel brightness controls and
-forwards their signals to ``MainWindow``. Opened from the *Images* menu.
+A non-modal tool window that hosts the per-channel controls (visibility,
+name, color, brightness) and forwards their signals to ``MainWindow``.
+Opened from the *Image* menu.
 """
 
 from __future__ import annotations
@@ -27,7 +28,7 @@ class BrightnessDialog(QDialog):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Adjust channels / brightness")
+        self.setWindowTitle("Channel settings")
         # Tool window: floats above main, no taskbar entry, slim title bar,
         # does not steal focus from the canvas while the user edits.
         self.setWindowFlags(

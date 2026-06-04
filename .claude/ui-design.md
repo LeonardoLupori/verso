@@ -154,8 +154,9 @@ checkable pill buttons. Right-aligned: the current project name.
 
 - **File** — New / Open / Import (QuickNII, VisuAlign) / Import settings /
   Save / Save As / Export (XML, QuickNII JSON, VisuAlign JSON) / Quit.
-- **Image** — Adjust channels / brightness (opens the global brightness
-  dialog; brightness is project-wide, not per-section).
+- **Image** — Channels… (opens the global Channel settings dialog:
+  per-channel visibility, name, color, and brightness; all project-wide,
+  not per-section).
 - **Batch**
   - **Preprocess**: Autodetect slice masks; *Clear all slice masks*;
     *Clear all L/R masks*.
