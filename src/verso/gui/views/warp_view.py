@@ -140,11 +140,23 @@ class WarpView(QWidget):
         self._cp_dragging = -1
         self._reset_undo()
         self._panel.update_overlay()
-        # Re-snapshot in case the section was loaded before activate.
+        # Re-snapshot in case the section was loaded before activate. When the
+        # slice is still dirty, recover the genuine last-saved baseline from the
+        # stash rather than re-snapshotting the (dirty) section — otherwise
+        # "Clear edits" would revert to the unsaved edits instead of discarding
+        # them.
         section = self._panel.section
         if section is not None:
-            self._baseline_warp = copy.deepcopy(section.warp)
-            self._set_dirty(self._state.is_dirty(section.id, "warp"))
+            if self._state.is_dirty(section.id, "warp"):
+                stashed = self._state.get_baseline(section.id, "warp")
+                self._baseline_warp = (
+                    stashed if stashed is not None else copy.deepcopy(section.warp)
+                )
+                self._set_dirty(True)
+            else:
+                self._baseline_warp = copy.deepcopy(section.warp)
+                self._state.pop_baseline(section.id, "warp")
+                self._set_dirty(False)
 
     def deactivate(self) -> None:
         """Release warp hooks so other views see a clean panel."""
