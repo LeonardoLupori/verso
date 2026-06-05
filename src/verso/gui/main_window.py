@@ -719,8 +719,11 @@ class MainWindow(QMainWindow):
         # 1. Persist the active view's in-RAM edits first — this materializes
         #    prep masks held only in the view and seeds a default align plane on
         #    an explicit save — then it clears that section/step from the registry.
+        #    Save unconditionally (not gated on is_dirty) so Ctrl+S matches the
+        #    per-view Save button: an untouched alignment still gets its default
+        #    plane committed instead of being silently skipped.
         active = self._active_view()
-        if active is not None and active.is_dirty():
+        if active is not None:
             active.save()
 
         # 2. Persist every remaining dirty (section, step).  Snapshot the list up
