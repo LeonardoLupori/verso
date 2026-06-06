@@ -160,24 +160,13 @@ def _control_points_to_markers(
 # Public load functions
 # ---------------------------------------------------------------------------
 
-# NOTE — flip correction on import (not yet implemented)
-# The three save functions apply _flip_anchoring / _flip_control_points when
-# section.preprocessing.flip_horizontal is True, so exported files always
-# contain coordinates in the original (unflipped) image space.
-#
-# The inverse is NOT yet applied on load.  This means that if a user:
-#   1. sets flip_horizontal=True on a section in VERSO,
-#   2. exports to QuickNII/VisuAlign JSON,
-#   3. re-imports that JSON into VERSO,
-# the loaded anchoring will be in original-image space while VERSO expects it in
-# flipped-display space, so the overlay will appear mirror-reversed.
-#
-# To fix this, load_quicknii / load_visualign would need to know which sections
-# are flipped (information not present in the QuickNII/VisuAlign JSON itself)
-# and call _flip_anchoring / _flip_control_points on load.  The natural place to
-# apply this is after the section's flip flag has been resolved — either by
-# carrying the flag in a VERSO-specific JSON field or by asking the user to
-# re-apply the flip after import.
+# NOTE — coordinate space of exports
+# Exports are written entirely in display space — the same space VERSO stores
+# its anchoring and control points in. Anchoring uses _display_space_anchoring;
+# markers are the stored control points as-is. No flip is applied to either, so
+# save → load is an identity round-trip regardless of a section's flip flag.
+# Horizontal/vertical flips are represented outside the alignment (e.g. baked
+# into the exported images), never by mirroring the saved coordinates.
 
 def load_quicknii(path: Path, atlas_name: str = "allen_mouse_25um") -> Project:
     """Load a QuickNII JSON file into a VERSO :class:`Project`.
@@ -340,24 +329,6 @@ def _to_quicknii_convention(
     ux, uy, uz = anchoring[3], anchoring[4], anchoring[5]
     vx, vy, vz = anchoring[6], anchoring[7], anchoring[8]
     return [ox, ap_max - oy, dv_max - oz, ux, -uy, -uz, vx, -vy, -vz]
-
-
-def _flip_control_points(
-    cps: list[ControlPoint],
-) -> list[ControlPoint]:
-    """Convert control points from flipped display space to original image space.
-
-    Both src and dst horizontal coordinates mirror: x' = 1 - x.
-    """
-    return [
-        ControlPoint(
-            src_x=1.0 - cp.src_x,
-            src_y=cp.src_y,
-            dst_x=1.0 - cp.dst_x,
-            dst_y=cp.dst_y,
-        )
-        for cp in cps
-    ]
 
 
 def _export_image_filename(section) -> str:
@@ -665,10 +636,13 @@ def save_visualign(
             if any(original):
                 entry["anchoring"] = [round(v, 4) for v in _export_anchoring(original, atlas_shape)]
         if section.warp.control_points:
-            cps = section.warp.control_points
-            if section.preprocessing.flip_horizontal:
-                cps = _flip_control_points(cps)
-            entry["markers"] = _control_points_to_markers(cps, w, h)
+            # Markers are written in display space — the same space VERSO stores
+            # control points in — with no flip applied. Flips are represented
+            # outside the alignment (e.g. baked into the exported images), never
+            # by mirroring the saved coordinates.
+            entry["markers"] = _control_points_to_markers(
+                section.warp.control_points, w, h
+            )
         slices_out.append(entry)
 
     va_target, va_resolution = _visualign_target(project.atlas.name if project.atlas else "")
