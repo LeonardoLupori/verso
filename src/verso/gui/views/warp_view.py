@@ -214,6 +214,13 @@ class WarpView(QWidget):
     # ------------------------------------------------------------------
 
     def _on_section_loaded(self, section) -> None:
+        # The canvas panel is shared across views and emits section_loaded to
+        # every connected view.  Ignore it while another view owns the panel:
+        # reacting here would clobber this view's dirty flag / baseline with the
+        # currently-loaded section.  activate() re-syncs baseline + dirty state
+        # from the registry on entry.
+        if not self._active:
+            return
         self._cp_hovered = -1
         self._cp_dragging = -1
         self._cp_drag_start_norm = None

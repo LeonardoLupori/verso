@@ -60,6 +60,7 @@ class AlignView(QWidget):
         # section's dirty state is tracked in the edit registry.
         self._baseline_alignment: Alignment | None = None
         self._dirty = False
+        self._active = False
 
         # In-memory undo history of anchoring snapshots for the active slice.
         # Reset whenever the baseline is re-snapshotted (section / view change,
@@ -131,6 +132,7 @@ class AlignView(QWidget):
 
     def activate(self) -> None:
         """Reparent the shared panel into this view."""
+        self._active = True
         self._panel_slot.layout().addWidget(self._panel)
         self._panel.canvas.set_interaction_mode("align")
         self._panel.canvas.clear_control_points()
@@ -158,7 +160,7 @@ class AlignView(QWidget):
     def deactivate(self) -> None:
         """Release any state set on the panel."""
         # Currently align installs no panel-level hooks, so nothing to clear.
-        pass
+        self._active = False
 
     # ------------------------------------------------------------------
     # External API used by MainWindow
@@ -179,6 +181,13 @@ class AlignView(QWidget):
     # ------------------------------------------------------------------
 
     def _on_section_loaded(self, section) -> None:
+        # The canvas panel is shared across views and emits section_loaded to
+        # every connected view.  Ignore it while another view owns the panel:
+        # reacting here would clobber this view's dirty flag / baseline with the
+        # currently-loaded section.  activate() re-syncs baseline + dirty state
+        # from the registry on entry.
+        if not self._active:
+            return
         self._navigator.set_stretch_enabled(section is not None)
         self._reset_undo()
         if section is None:

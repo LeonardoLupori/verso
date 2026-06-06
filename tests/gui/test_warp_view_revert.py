@@ -97,3 +97,46 @@ def test_clear_edits_discards_cps_after_navigating_away_and_back(_qapp):
     assert WarpView.revert(mock) is True
     assert section.warp.control_points == []
     assert mock._dirty is False
+
+
+def test_inactive_view_ignores_shared_panel_section_loaded(_qapp):
+    """A section_loaded for another slice must not clobber an inactive view.
+
+    The canvas panel is shared, so its section_loaded signal reaches every
+    view.  While Align (or Prep) owns the panel, the Warp view is inactive and
+    must keep its dirty flag / baseline untouched — otherwise navigating slices
+    or editing the alignment would silently disable Warp's "Clear edits".
+    """
+    section = _section()
+    other = Section(
+        id="s1",
+        slice_index=1,
+        original_path="s1.png",
+        thumbnail_path="thumbnails/s1.tif",
+        warp=WarpState(control_points=[]),
+    )
+    state = AppState()
+    state.load_project(
+        Project(
+            name="p",
+            atlas=AtlasRef(name="allen_mouse_25um"),
+            sections=[section, other],
+        )
+    )
+
+    mock = _make_warp_mock(section, state)
+
+    # Warp is dirty on `section`.
+    WarpView.activate(mock)
+    section.warp.control_points.append(ControlPoint(0.5, 0.5, 0.6, 0.6))
+    state.mark_dirty(section.id, "warp")
+    mock._set_dirty(True)
+    saved_baseline = mock._baseline_warp
+
+    # Leave Warp; another view now owns the panel and loads a different slice.
+    mock._active = False
+    WarpView._on_section_loaded(mock, other)
+
+    # The inactive Warp view must be untouched.
+    assert mock._dirty is True
+    assert mock._baseline_warp is saved_baseline
