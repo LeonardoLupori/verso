@@ -437,8 +437,12 @@ def save_quicknii_xml(
         path: Destination ``*.xml`` path.
         atlas_shape: ``(AP, DV, LR)`` voxel dimensions used for the
             ``target-resolution`` attribute and the DV-convention conversion.
-            If *None*, the DV conversion is skipped (non-standard output).
+            When *None*, inferred from the project atlas name using the built-in
+            lookup table (matching :func:`save_quicknii` / :func:`save_visualign`).
+            If it cannot be inferred, the axis conversion is skipped.
     """
+    if atlas_shape is None and project.atlas:
+        atlas_shape = _BG_ATLAS_SHAPE.get(project.atlas.name)
     lines: list[str] = ["<?xml version='1.0' encoding='UTF-8'?>"]
     res_attr = ""
     if atlas_shape is not None:

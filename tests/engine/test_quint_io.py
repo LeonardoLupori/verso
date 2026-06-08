@@ -16,9 +16,10 @@ from verso.engine.io.quint_io import (
     load_quicknii,
     load_visualign,
     save_quicknii,
+    save_quicknii_xml,
     save_visualign,
 )
-from verso.engine.model.alignment import AlignmentStatus, ControlPoint
+from verso.engine.model.alignment import Alignment, AlignmentStatus, ControlPoint
 from verso.engine.model.project import AtlasRef, Project, Section
 
 # Native QuickNII/VisuAlign format uses "slices" key.
@@ -301,6 +302,44 @@ def test_save_quicknii_writes_relative_thumbnail_path(tmp_path: Path):
     data = json.loads(dst.read_text())
     # Filename is always thumbnails/{stem}-thumb.png relative to export dir
     assert data["slices"][0]["filename"] == "thumbnails/section-thumb.png"
+
+
+def test_save_quicknii_xml_infers_atlas_shape(tmp_path: Path):
+    """save_quicknii_xml must self-infer atlas_shape (like save_quicknii / save_visualign).
+
+    Without inference, the XML anchoring is left in BrainGlobe convention (AP/DV
+    not flipped) and ``target-resolution`` is omitted — inconsistent with the
+    VisuAlign JSON, which does infer. The inferred output must be byte-identical
+    to passing the atlas_shape explicitly.
+    """
+    project = Project(
+        name="xmltest",
+        atlas=AtlasRef(name="allen_mouse_25um"),
+        sections=[
+            Section(
+                id="s001",
+                slice_index=1,
+                original_path="a.tif",
+                thumbnail_path="",
+                alignment=Alignment(
+                    anchoring=[10.0, 100.0, 40.0, 20.0, 3.0, 4.0, 5.0, 6.0, 7.0],
+                    status=AlignmentStatus.COMPLETE,
+                ),
+            )
+        ],
+    )
+
+    inferred_path = tmp_path / "inferred.xml"
+    explicit_path = tmp_path / "explicit.xml"
+    save_quicknii_xml(project, inferred_path)                                # infers
+    save_quicknii_xml(project, explicit_path, atlas_shape=(528, 320, 456))   # explicit
+
+    inferred = inferred_path.read_text(encoding="utf-8")
+    assert inferred == explicit_path.read_text(encoding="utf-8")
+    assert "target-resolution='528 320 456'" in inferred
+    # QuickNII convention applied: AP flips (528 - 100 = 428), DV flips (320 - 40 = 280).
+    assert "oy=428" in inferred
+    assert "oz=280" in inferred
 
 
 def test_quicknii_export_convention_flips_ap_and_dv_axes():
