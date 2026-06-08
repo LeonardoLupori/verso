@@ -17,7 +17,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 import numpy as np
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QLabel,
     QVBoxLayout,
@@ -38,6 +38,24 @@ _REGION_BAR_IDLE_QSS = (
     "background: #1a1a1a; color: #fff; font-size: 12px; font-weight: bold;"
     " border-top: 1px solid #333;"
 )
+
+# Filled overlays (annotation / reference) are sampled at a fixed cap and then
+# GPU-stretched to fill the section — fill quality is independent of the sample
+# resolution, so a small map is plenty and keeps the sampler cheap.
+_FILLED_MAX_SIDE = 512
+# The outline overlay is instead sampled at the on-screen size so its boundary
+# lines stay ~1 screen-pixel wide (VisuAlign parity). This cap bounds the
+# sampler cost on deep zoom-in: past it the line simply thickens (as VisuAlign's
+# does past native scale) rather than sampling the atlas ever finer.
+_OUTLINE_MAX_SIDE = 1280
+# While a control point is actively being dragged the outline is re-warped every
+# frame, so it is sampled at a lower cap to keep the drag responsive; it snaps
+# back to the full _OUTLINE_MAX_SIDE the moment the drag ends. Still well above
+# the old fixed 512, so the line stays thin during the drag.
+_OUTLINE_DRAG_MAX_SIDE = 820
+# Debounce (ms) for re-rendering the outline after a zoom/pan settles, so a
+# continuous wheel-zoom doesn't re-run the sampler on every step.
+_OUTLINE_REFRESH_MS = 70
 
 
 class SectionCanvasPanel(QWidget):
@@ -74,6 +92,16 @@ class SectionCanvasPanel(QWidget):
         self._channel_planes_key: tuple | None = None
         self._overlay_mode: str = "annotation"  # "annotation" | "outline" | "reference"
         self._outline_color: tuple[int, int, int] = (255, 255, 255)
+        # Cache of the *pre*-post-processing atlas slice, keyed by everything it
+        # depends on (mode, plane, colour, sample size). The atlas slice is
+        # invariant while only the warp control points move, so during a CP drag
+        # this lets update_overlay re-warp the cached slice instead of re-sampling
+        # the atlas every frame.
+        self._slice_cache: np.ndarray | None = None
+        self._slice_cache_key: tuple | None = None
+        # While True the outline is sampled at the cheaper drag cap (see
+        # set_overlay_fast) so per-frame re-warping stays responsive.
+        self._overlay_fast: bool = False
 
         # Hooks set by the active view
         self.overlay_post_processor: Callable[[np.ndarray], np.ndarray] | None = None
@@ -84,6 +112,16 @@ class SectionCanvasPanel(QWidget):
 
         self._build_ui()
         self._wire_canvas()
+
+        # The outline overlay is sampled at display resolution (see
+        # _outline_sample_size), so zoom/pan changes the resolution it should be
+        # rendered at. Re-render on a short debounce so dragging the wheel
+        # doesn't thrash the atlas sampler.
+        self._outline_refresh_timer = QTimer(self)
+        self._outline_refresh_timer.setSingleShot(True)
+        self._outline_refresh_timer.setInterval(_OUTLINE_REFRESH_MS)
+        self._outline_refresh_timer.timeout.connect(self._refresh_outline_overlay)
+        self.canvas.view_range_changed.connect(self._on_canvas_range_changed)
 
     # ------------------------------------------------------------------
     # UI
@@ -168,6 +206,8 @@ class SectionCanvasPanel(QWidget):
     def load_section(self, section: Section | None) -> None:
         self._section = section
         self._raw_image = None
+        self._slice_cache = None
+        self._slice_cache_key = None
         self.canvas.clear()
 
         if section is None:
@@ -239,6 +279,55 @@ class SectionCanvasPanel(QWidget):
     # Atlas overlay pipeline
     # ------------------------------------------------------------------
 
+    def _filled_sample_size(self, w_bg: int, h_bg: int) -> tuple[int, int]:
+        """Sample resolution for filled overlays (annotation / reference)."""
+        scale = min(1.0, _FILLED_MAX_SIDE / max(w_bg, h_bg))
+        return max(1, round(w_bg * scale)), max(1, round(h_bg * scale))
+
+    def _outline_sample_size(self, w_bg: int, h_bg: int) -> tuple[int, int]:
+        """Sample resolution that keeps the outline ~1 screen pixel wide.
+
+        Sized from the canvas' current image→screen scale, capped at
+        ``_OUTLINE_MAX_SIDE``. The atlas is sampled independently of the section
+        image, so this can exceed the working resolution — that's intentional:
+        even a low-res section gets crisp thin atlas lines. Falls back to the
+        filled cap before the view is laid out; the ``view_range_changed`` signal
+        re-renders at the right size once the canvas has fit the image.
+        """
+        px_per_img = self.canvas.image_to_screen_scale()
+        if px_per_img <= 0:
+            return self._filled_sample_size(w_bg, h_bg)
+        cap = _OUTLINE_DRAG_MAX_SIDE if self._overlay_fast else _OUTLINE_MAX_SIDE
+        long_side = max(w_bg, h_bg)
+        target_long = min(long_side * px_per_img, float(cap))
+        scale = target_long / long_side
+        return max(1, round(w_bg * scale)), max(1, round(h_bg * scale))
+
+    def set_overlay_fast(self, fast: bool) -> None:
+        """Toggle cheap interactive outline sampling for live re-warping.
+
+        Views that re-render the overlay every frame during a gesture (e.g. the
+        Warp view while a control point is being dragged) set this ``True`` so
+        the outline is sampled at ``_OUTLINE_DRAG_MAX_SIDE`` instead of full
+        display resolution. The caller must issue a final ``update_overlay`` with
+        it back to ``False`` so the overlay snaps to crisp resolution on release.
+        """
+        self._overlay_fast = bool(fast)
+
+    def _on_canvas_range_changed(self) -> None:
+        """Schedule an outline re-render when zoom/pan changes the display size."""
+        if (
+            self._overlay_mode == "outline"
+            and self._atlas is not None
+            and self._section is not None
+            and self._raw_image is not None
+        ):
+            self._outline_refresh_timer.start()
+
+    def _refresh_outline_overlay(self) -> None:
+        if self._overlay_mode == "outline":
+            self.update_overlay()
+
     def update_overlay(self) -> None:
         if self._atlas is None or self._section is None or self._raw_image is None:
             self.canvas.set_overlay(None)
@@ -255,27 +344,54 @@ class SectionCanvasPanel(QWidget):
             anchoring = self._atlas.default_anchoring(aspect_ratio=w / h)
 
         h_bg, w_bg = self._raw_image.shape[:2]
-        # Sample atlas at a capped resolution for speed; canvas stretches it to
-        # fill the background exactly via setRect (no visual quality loss).
-        ATLAS_MAX_SIDE = 512
-        scale = min(1.0, ATLAS_MAX_SIDE / max(w_bg, h_bg))
-        out_w = max(1, round(w_bg * scale))
-        out_h = max(1, round(h_bg * scale))
+        # The canvas stretches whatever we sample to fill the background exactly
+        # via setRect; the sample resolution only sets quality, not placement.
+        # Outline mode is sampled at *display* resolution so the boundary is
+        # ~1 screen-pixel wide regardless of the section's pixel size or how much
+        # of the frame the brain fills — matching VisuAlign, which traces edges in
+        # screen space. (Sampling at a fixed image-proportional cap and stretching
+        # makes the line width scale with image dimensions.)
+        if self._overlay_mode == "outline":
+            out_w, out_h = self._outline_sample_size(w_bg, h_bg)
+        else:
+            out_w, out_h = self._filled_sample_size(w_bg, h_bg)
 
-        try:
-            if self._overlay_mode == "outline":
-                rgba = self._atlas.slice_outline(anchoring, out_w, out_h, self._outline_color)
-            elif self._overlay_mode == "reference":
-                rgba = self._atlas.slice_reference_rgba(anchoring, out_w, out_h)
-            else:
-                rgba = self._atlas.slice_annotation(anchoring, out_w, out_h)
-        except Exception:
-            self.canvas.set_overlay(None)
-            self.overlay_updated.emit(list(anchoring), w_bg, h_bg)
-            return
+        # The atlas slice depends only on these inputs, not on the warp control
+        # points applied by the post-processor. Caching it means a CP drag (which
+        # re-runs this every frame) re-warps the cached slice instead of paying
+        # the full atlas-sampling cost each time.
+        slice_key = (
+            self._overlay_mode,
+            tuple(anchoring),
+            self._outline_color,
+            out_w,
+            out_h,
+            id(self._atlas),
+        )
+        if slice_key == self._slice_cache_key and self._slice_cache is not None:
+            rgba = self._slice_cache
+        else:
+            try:
+                if self._overlay_mode == "outline":
+                    rgba = self._atlas.slice_outline(anchoring, out_w, out_h, self._outline_color)
+                elif self._overlay_mode == "reference":
+                    rgba = self._atlas.slice_reference_rgba(anchoring, out_w, out_h)
+                else:
+                    rgba = self._atlas.slice_annotation(anchoring, out_w, out_h)
+            except Exception:
+                self._slice_cache = None
+                self._slice_cache_key = None
+                self.canvas.set_overlay(None)
+                self.overlay_updated.emit(list(anchoring), w_bg, h_bg)
+                return
+            self._slice_cache = rgba
+            self._slice_cache_key = slice_key
 
         if self.overlay_post_processor is not None:
             try:
+                # The post-processor (warp) must not mutate the cached slice; the
+                # engine's warp_overlay always returns a fresh array, so this is
+                # safe to feed the cached rgba directly.
                 rgba = self.overlay_post_processor(rgba)
             except Exception:
                 pass

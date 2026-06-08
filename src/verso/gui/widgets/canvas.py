@@ -215,6 +215,9 @@ class ImageCanvas(QWidget):
     canvas_drag_ended = pyqtSignal(float, float)
     # Alt+wheel over the canvas (raw Qt delta, ±120 per tick) for brush resize
     alt_wheel_scrolled = pyqtSignal(int)
+    # View range (zoom/pan) changed — lets listeners re-render display-resolution
+    # content (e.g. the atlas outline) so it stays ~1 screen-pixel wide.
+    view_range_changed = pyqtSignal()
 
     _InteractionMode = Literal["align", "warp", "prep", "view"]
 
@@ -386,6 +389,23 @@ class ImageCanvas(QWidget):
     def _on_view_range_changed(self, *_args: object) -> None:
         if self._brush_mode and self._interaction_mode == "prep" and self.view.underMouse():
             self._refresh_prep_cursor()
+        self.view_range_changed.emit()
+
+    def image_to_screen_scale(self) -> float:
+        """Return screen pixels per image pixel at the current zoom.
+
+        ``viewPixelSize()[0]`` is the size of one device pixel in image (view)
+        coordinates, so its reciprocal converts image px → screen px. Returns
+        ``0.0`` if the view has not been laid out / ranged yet, signalling
+        callers to fall back to a fixed sampling resolution.
+        """
+        try:
+            vps = float(self._vb.viewPixelSize()[0])
+        except Exception:
+            return 0.0
+        if vps <= 0:
+            return 0.0
+        return 1.0 / vps
 
     def _refresh_prep_cursor(self) -> None:
         if self._interaction_mode != "prep" or self._lr_draw_active:

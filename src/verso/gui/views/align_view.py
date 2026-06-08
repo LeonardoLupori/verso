@@ -254,6 +254,9 @@ class AlignView(QWidget):
         if not self._pan_run_active:
             self._push_undo()
             self._pan_run_active = True
+            # Pan re-renders the outline every move event; sample it cheaper for
+            # the duration of the gesture (restored in _end_pan_run).
+            self._panel.set_overlay_fast(True)
         self._pan_coalesce_timer.start()
         h_bg, w_bg = raw.shape[:2]
         o = np.array(anchoring[:3])
@@ -404,8 +407,14 @@ class AlignView(QWidget):
 
     def _end_pan_run(self) -> None:
         """Close the current pan gesture so the next drag starts a fresh undo step."""
+        was_active = self._pan_run_active
         self._pan_run_active = False
         self._pan_coalesce_timer.stop()
+        if was_active:
+            # Restore full display resolution now that the gesture has settled.
+            self._panel.set_overlay_fast(False)
+            if self._active:
+                self._panel.update_overlay()
 
     def _set_dirty(self, dirty: bool) -> None:
         if self._dirty == dirty:

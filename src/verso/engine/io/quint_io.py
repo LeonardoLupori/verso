@@ -581,7 +581,10 @@ def export_brainglobe_atlas_for_visualign(
     with gzip.open(cutlas_dir / "labels.nii.gz", 'wb', compresslevel=6) as f:
         f.write(bytes(hdr))
         f.write(b'\x00' * 4)                  # padding to reach byte offset 352
-        f.write(qn_volume.tobytes())
+        # NIfTI stores the first dimension (x = LR) varying fastest, i.e. Fortran
+        # order for our (LR, AP, DV) array. Writing C-order here would scramble
+        # the voxels and VisuAlign would fail to load the atlas.
+        f.write(qn_volume.tobytes(order='F'))
 
     # --- labels.txt ---
     txt_lines = [

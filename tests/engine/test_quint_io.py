@@ -417,10 +417,11 @@ def test_export_nifti_volume_transposition(tmp_path: Path):
 
     cutlas_dir = _run_export(ann, tmp_path)
 
-    # Read back raw voxel data
+    # Read back raw voxel data. NIfTI stores the first axis (x = LR) fastest, so
+    # the on-disk bytes are Fortran-ordered for our (LR, AP, DV) volume.
     with gzip.open(cutlas_dir / "labels.nii.gz", "rb") as f:
         raw = f.read()
-    vox_data = np.frombuffer(raw[352:], dtype=np.uint32).reshape(5, 4, 3)
+    vox_data = np.frombuffer(raw[352:], dtype=np.uint32).reshape(5, 4, 3, order="F")
 
     # After flip+transpose:
     #   NIfTI[lr, ap_qn, dv_qn] = BG[AP_max-1-ap_qn, DV_max-1-dv_qn, lr]

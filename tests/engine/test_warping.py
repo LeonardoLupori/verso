@@ -2,8 +2,107 @@
 
 import cv2
 import numpy as np
+from scipy.spatial import Delaunay
 
-from verso.engine.warping import build_backward_remap, warp_overlay, warp_points_atlas_to_section
+from verso.engine.warping import (
+    _CORNERS,
+    build_backward_remap,
+    find_atlas_position,
+    warp_overlay,
+    warp_points_atlas_to_section,
+)
+
+
+def _visualign_atlas_norm(s, t, src_norm, dst_norm, width, height):
+    """Reference VisuAlign warp: section (s, t) → atlas (u, v), both normalised.
+
+    Faithful port of ``data/Slice.java`` + ``nonlin/Triangle.java``: the
+    triangulation is built in raw section **pixel** space on the marker's
+    ``(nx, ny)`` (section) components with identity corner anchors 10% outside
+    the frame, and ``transform`` barycentrically interpolates the ``(ox, oy)``
+    (atlas) components. VERSO must reproduce this exactly inside the frame.
+    """
+    corners = np.array([[-0.1, -0.1], [1.1, -0.1], [-0.1, 1.1], [1.1, 1.1]])
+    dst_px = np.vstack([corners, dst_norm]) * [width, height]   # (nx, ny)
+    src_px = np.vstack([corners, src_norm]) * [width, height]   # (ox, oy)
+    tri = Delaunay(dst_px)
+    q = np.array([[s * width, t * height]])
+    si = int(tri.find_simplex(q)[0])
+    if si < 0:
+        return float(np.clip(s, 0, 1)), float(np.clip(t, 0, 1))
+    T = tri.transform[si, :2]
+    r = q[0] - tri.transform[si, 2]
+    b = T @ r
+    bary = np.array([b[0], b[1], 1.0 - b[0] - b[1]])
+    idx = tri.simplices[si]
+    u = float(np.clip((bary * src_px[idx, 0]).sum() / width, 0.0, 1.0))
+    v = float(np.clip((bary * src_px[idx, 1]).sum() / height, 0.0, 1.0))
+    return u, v
+
+
+def test_find_atlas_position_matches_visualign_when_aspect_set():
+    """With aspect = width/height the warp must equal VisuAlign pixel-for-pixel.
+
+    VisuAlign triangulates in section pixel space; VERSO normalises to [0,1]².
+    Delaunay is not invariant under the anisotropic x/W, y/H scaling, so the two
+    only agree when VERSO triangulates in the section's true aspect ratio.
+    """
+    width, height = 1140, 800   # aspect 1.425 — the case that exposed the bug
+    aspect = width / height
+    rng = np.random.default_rng(3)
+    src = rng.uniform(0.15, 0.85, (10, 2))
+    dst = src + rng.normal(0, 0.04, src.shape)
+    queries = rng.uniform(0.08, 0.92, (60, 2))
+
+    max_fixed = 0.0
+    max_unfixed = 0.0
+    for s, t in queries:
+        ref_u, ref_v = _visualign_atlas_norm(s, t, src, dst, width, height)
+        # Fixed path: aspect-correct triangulation must match VisuAlign exactly.
+        fu, fv = find_atlas_position(float(s), float(t), src, dst, aspect=aspect)
+        max_fixed = max(max_fixed, abs(fu - ref_u), abs(fv - ref_v))
+        # Unfixed path (aspect=1, the old behaviour) diverges from VisuAlign.
+        uu, uv = find_atlas_position(float(s), float(t), src, dst)
+        max_unfixed = max(max_unfixed, abs(uu - ref_u), abs(uv - ref_v))
+
+    assert max_fixed < 1e-9, f"aspect-correct warp must match VisuAlign (got {max_fixed})"
+    # Sanity: the old normalised triangulation really did differ (regression guard).
+    assert max_unfixed > 1e-3, "expected normalised-space warp to diverge from VisuAlign"
+
+
+def test_build_backward_remap_matches_visualign_when_aspect_set():
+    """The dense remap (display/export path) must also match VisuAlign per pixel."""
+    width, height = 1280, 720   # aspect 1.778
+    aspect = width / height
+    h, w = 72, 128              # overlay grid at the same aspect
+    rng = np.random.default_rng(7)
+    src = rng.uniform(0.2, 0.8, (8, 2))
+    dst = src + rng.normal(0, 0.05, src.shape)
+
+    map_x, map_y = build_backward_remap(h, w, src, dst, aspect=aspect)
+
+    # Spot-check pixel centres against the VisuAlign reference (atlas coords).
+    max_err = 0.0
+    for j in range(2, h, 11):
+        for i in range(2, w, 11):
+            s = (i + 0.5) / w
+            t = (j + 0.5) / h
+            ref_u, ref_v = _visualign_atlas_norm(s, t, src, dst, width, height)
+            max_err = max(max_err, abs(map_x[j, i] / w - ref_u), abs(map_y[j, i] / h - ref_v))
+    assert max_err < 1e-5, f"backward remap must match VisuAlign (got {max_err})"
+
+
+def test_corner_anchors_match_visualign_convention():
+    """Corner anchors must sit 10% outside the image, as VisuAlign does.
+
+    VisuAlign's ``data/Slice.java`` seeds its triangulation with identity
+    markers at (-0.1W, -0.1H), (1.1W, -0.1H), (-0.1W, 1.1H), (1.1W, 1.1H).
+    verso uses the same anchors (in normalised space) so warped exports
+    reproduce VisuAlign's deformation exactly inside the frame. Reverting to
+    image-corner anchors (0,0)…(1,1) reintroduces the border mismatch.
+    """
+    expected = np.array([[-0.1, -0.1], [1.1, -0.1], [-0.1, 1.1], [1.1, 1.1]])
+    np.testing.assert_allclose(_CORNERS, expected)
 
 
 def test_warp_overlay_identity_preserves_image():

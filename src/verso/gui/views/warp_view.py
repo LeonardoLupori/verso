@@ -195,7 +195,7 @@ class WarpView(QWidget):
         src = np.array([[cp.src_x, cp.src_y] for cp in cps])
         dst = np.array([[cp.dst_x, cp.dst_y] for cp in cps])
         try:
-            return warp_overlay(rgba, src, dst)
+            return warp_overlay(rgba, src, dst, aspect=self._section_aspect())
         except Exception:
             return rgba
 
@@ -207,7 +207,19 @@ class WarpView(QWidget):
         from verso.engine.warping import find_atlas_position
         src = np.array([[cp.src_x, cp.src_y] for cp in cps])
         dst = np.array([[cp.dst_x, cp.dst_y] for cp in cps])
-        return find_atlas_position(s, t, src, dst)
+        return find_atlas_position(s, t, src, dst, aspect=self._section_aspect())
+
+    def _section_aspect(self) -> float:
+        """Section working ``width / height`` for VisuAlign-parity triangulation.
+
+        Taken from the in-memory working image (same dimensions QuickNII/VisuAlign
+        read from the exported ``width``/``height``), so the warp triangulation
+        matches VisuAlign exactly.  Falls back to ``1.0`` before the image loads.
+        """
+        raw = self._panel.raw_image
+        if raw is None or raw.shape[0] == 0:
+            return 1.0
+        return raw.shape[1] / raw.shape[0]
 
     # ------------------------------------------------------------------
     # Panel events
@@ -372,6 +384,9 @@ class WarpView(QWidget):
             self._push_undo()
             cp = section.warp.control_points[self._cp_dragging]
             self._cp_drag_start_dst = (cp.dst_x, cp.dst_y)
+            # Sample the outline cheaper while re-warping every frame; drag_ended
+            # restores full resolution.
+            self._panel.set_overlay_fast(True)
 
     def _on_canvas_dragged(self, x: float, y: float) -> None:
         if self._cp_dragging < 0 or self._panel.section is None:
@@ -383,6 +398,7 @@ class WarpView(QWidget):
 
     def _on_canvas_drag_ended(self, x: float, y: float) -> None:
         self._warp_timer.stop()
+        self._panel.set_overlay_fast(False)
         if self._cp_dragging < 0 or self._panel.section is None:
             self._cp_dragging = -1
             return

@@ -107,29 +107,50 @@ VisuAlign extends QuickNII JSON by adding a `markers` array to each section:
   "width": 1000,
   "height": 750,
   "markers": [
-    {"x": 0.52, "y": 0.31, "dx": 0.02, "dy": -0.01},
-    {"x": 0.18, "y": 0.70, "dx": -0.01, "dy": 0.02}
+    [520.0, 232.5, 540.0, 220.0],
+    [180.0, 525.0, 170.0, 540.0]
   ]
 }
 ```
 
 ### Marker semantics
 
-Each marker is a control point (warp pin) stored in **normalised section coordinates** `[0, 1]`:
+Each marker is a control point (warp pin) stored as a **4-element array in
+section pixel coordinates** at the working resolution (`width`/`height` above).
+This is VisuAlign's native format — confirmed against its source
+(`data/Marker.java`: `marker(ox, oy, nx, ny)`):
 
-| Field | Meaning |
+```
+[ox, oy, nx, ny]  =  [atlas_x_px, atlas_y_px, section_x_px, section_y_px]
+```
+
+| Component | Meaning |
 |---|---|
-| `x`, `y` | Source position — where the pin is anchored in atlas space (normalised) |
-| `dx`, `dy` | Displacement — `dst - src` in normalised section coordinates |
+| `ox, oy` (0,1) | "original" — atlas-overlay position (the **src** pin location) |
+| `nx, ny` (2,3) | "new" — where it was dragged to on the section (the **dst**) |
 
-So the destination position is `(x + dx, y + dy)`.
+VisuAlign builds its Delaunay triangulation on `(nx, ny)` (section pixels) and
+`transform` interpolates `(ox, oy)` (atlas pixels) — i.e. a backward section→atlas
+map (`nonlin/Triangle.java`, `visualign/QNLController.java#sample`). VERSO's warp
+matches this direction (triangulate on dst, interpolate src). **For the interior
+warp to match VisuAlign, the triangulation must be done in section *pixel* space,
+not normalised `[0,1]²`** — see [warping.md](warping.md#triangulation-space--aspect-ratio-visualign-parity).
 
-VERSO stores control points internally as `ControlPoint(src_x, src_y, dst_x, dst_y)` in normalised `[0, 1]`. Conversion at the I/O boundary:
+VERSO stores control points internally as `ControlPoint(src_x, src_y, dst_x, dst_y)`
+in normalised `[0, 1]` (src = atlas, dst = section). Conversion at the I/O boundary
+(`width` `w`, `height` `h`):
 
-- **Load**: `dst_x = x + dx`, `dst_y = y + dy`
-- **Save**: `dx = dst_x - src_x`, `dy = dst_y - src_y`
+- **Load**: `src = (ox/w, oy/h)`, `dst = (nx/w, ny/h)`
+- **Save**: `[src_x·w, src_y·h, dst_x·w, dst_y·h]`
 
-This matches VisuAlign's internal representation exactly and is resolution-independent.
+A legacy normalised-dict form `{"x", "y", "dx", "dy"}` (where `dst = (x+dx, y+dy)`)
+is still accepted on load for backward compatibility with old VERSO exports, but
+is never written.
+
+> **Corner anchors are not exported.** Both tools synthesise four identity
+> anchors 10% outside the frame on load (`_CORNERS` / `Slice.triangulate()`), so
+> only real markers belong in the JSON. Do **not** inject image-corner markers
+> into exports — that double-anchors the border and breaks parity.
 
 ## DeepSlice output
 
@@ -157,8 +178,10 @@ These are exposed in the File menu (Import QuickNII, Open VisuAlign,
 Export QuickNII XML / JSON, Export VisuAlign JSON).
 
 Internal helpers:
-- `_markers_to_control_points(markers)` — `[{x, y, dx, dy}]` → `[ControlPoint]`.
-- `_control_points_to_markers(cps)` — `[ControlPoint]` → `[{x, y, dx, dy}]`.
+- `_markers_to_control_points(markers, width, height)` — `[[ox, oy, nx, ny]]`
+  pixel arrays (or legacy `{x, y, dx, dy}` dicts) → `[ControlPoint]` (normalised).
+- `_control_points_to_markers(cps, width, height)` — `[ControlPoint]` →
+  `[[src_x·w, src_y·h, dst_x·w, dst_y·h]]` pixel arrays.
 
 ### Round-trip guarantee
 
