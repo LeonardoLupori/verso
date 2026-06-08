@@ -47,10 +47,10 @@ QUICKNII_JSON = {
 
 # Anchoring after load (converted from QuickNII → BrainGlobe by _to_quicknii_convention):
 #   _to_quicknii_convention([0,160,228,456,0,0,0,320,0], (528,320,456))
-#   = [0, 528-160, 320-228, 456, -0, -0, 0, -320, -0]
-#   = [0, 368, 92, 456, 0, 0, 0, -320, 0]
-_LOADED_ANCHORING_0 = [0.0, 368.0, 92.0, 456.0, 0.0, 0.0, 0.0, -320.0, 0.0]
-_LOADED_ANCHORING_1 = [0.0, 368.0, 70.0, 456.0, 0.0, 0.0, 0.0, -320.0, 0.0]
+#   origin flips about N-1 (array reversal): 527-160, 319-228
+#   = [0, 367, 91, 456, -0, -0, 0, -320, -0]
+_LOADED_ANCHORING_0 = [0.0, 367.0, 91.0, 456.0, 0.0, 0.0, 0.0, -320.0, 0.0]
+_LOADED_ANCHORING_1 = [0.0, 367.0, 69.0, 456.0, 0.0, 0.0, 0.0, -320.0, 0.0]
 
 # VisuAlign native marker format: [src_x_px, src_y_px, dst_x_px, dst_y_px]
 VISUALIGN_JSON = {
@@ -337,9 +337,9 @@ def test_save_quicknii_xml_infers_atlas_shape(tmp_path: Path):
     inferred = inferred_path.read_text(encoding="utf-8")
     assert inferred == explicit_path.read_text(encoding="utf-8")
     assert "target-resolution='528 320 456'" in inferred
-    # QuickNII convention applied: AP flips (528 - 100 = 428), DV flips (320 - 40 = 280).
-    assert "oy=428" in inferred
-    assert "oz=280" in inferred
+    # QuickNII convention applied: AP flips (527 - 100 = 427), DV flips (319 - 40 = 279).
+    assert "oy=427" in inferred
+    assert "oz=279" in inferred
 
 
 def test_quicknii_export_convention_flips_ap_and_dv_axes():
@@ -351,8 +351,9 @@ def test_quicknii_export_convention_flips_ap_and_dv_axes():
 
     converted = _to_quicknii_convention(anchoring, atlas_shape=(528, 320, 456))
 
+    # Origin flips about N-1 (527 - 100 = 427, 319 - 40 = 279); vectors negate.
     assert converted == [
-        10.0, 428.0, 280.0,
+        10.0, 427.0, 279.0,
         20.0, -3.0, -4.0,
         5.0, -6.0, -7.0,
     ]

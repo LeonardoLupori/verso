@@ -77,8 +77,13 @@ but with the AP and DV axes inverted:
 - component 1: 0 = most anterior (opposite to QuickNII y)
 - component 2: 0 = most dorsal (opposite to QuickNII z)
 
-`_to_quicknii_convention()` converts between the two: `[LR, AP_bg, DV_bg] → [LR, AP_max−AP_bg, DV_max−DV_bg]`.
-The function is self-inverse so it also converts QuickNII → BrainGlobe.
+`_to_quicknii_convention()` converts between the two by mirroring the AP/DV origin
+and negating their vectors: `[LR, AP_bg, DV_bg] → [LR, (AP_max−1)−AP_bg, (DV_max−1)−DV_bg]`.
+The offset is `N−1`, not `N`, because the QuickNII/VisuAlign atlas volume is the
+BrainGlobe annotation with AP/DV *array-reversed* (`annotation[::-1, ::-1, :]`, index
+`i → N−1−i`); flipping the continuous origin about `N` shifts the sampled plane by one
+voxel (verified 100% vs the stock `.cutlas` with `N−1`, ~93.5% with `N`). The function
+is self-inverse so it also converts QuickNII → BrainGlobe.
 
 ### QuickNII interpolation (internal)
 

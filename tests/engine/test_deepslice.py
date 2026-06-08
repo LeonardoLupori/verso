@@ -139,8 +139,9 @@ def test_apply_deepslice_suggestions_matches_temporary_id_filename(tmp_path: Pat
 
 def test_apply_deepslice_suggestions_converts_quicknii_convention(tmp_path: Path):
     project = _make_project(tmp_path)
+    # QuickNII convention: origin flips about N-1 (527-100=427, 319-40=279).
     quicknii = [
-        10.0, 428.0, 280.0,
+        10.0, 427.0, 279.0,
         20.0, -3.0, -4.0,
         5.0, -6.0, -7.0,
     ]
@@ -184,7 +185,7 @@ def test_apply_deepslice_suggestions_does_not_mirror_for_reversed_section_order(
             DeepSliceSectionSuggestion(
                 filename="s001_s002.png",
                 slice_index=2,
-                anchoring=[10.0, 428.0, 280.0, 20.0, -3.0, -4.0, 5.0, -6.0, -7.0],
+                anchoring=[10.0, 427.0, 279.0, 20.0, -3.0, -4.0, 5.0, -6.0, -7.0],
             )
         ],
     )

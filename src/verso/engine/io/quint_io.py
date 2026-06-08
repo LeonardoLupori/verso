@@ -306,14 +306,22 @@ def _to_quicknii_convention(
     convention. LR is shared.
 
     The conventions are related by:
-        oy_qn  = ap_max - oy_bg
-        oz_qn  = dv_max - oz_bg
+        oy_qn  = (ap_max - 1) - oy_bg
+        oz_qn  = (dv_max - 1) - oz_bg
         uy_qn  = -uy_bg
         uz_qn  = -uz_bg
         vy_qn  = -vy_bg
         vz_qn  = -vz_bg
 
     This mirrors both the AP and DV axes while preserving LR.
+
+    The origin offset is ``ap_max - 1`` (not ``ap_max``): the QuickNII/VisuAlign
+    atlas volume is the BrainGlobe annotation with its AP/DV axes *array-reversed*
+    (``annotation[::-1, ::-1, :]``), i.e. index ``i`` maps to ``N - 1 - i``.
+    Flipping the continuous origin about ``N`` instead of ``N - 1`` shifts the
+    sampled plane by exactly one voxel in AP and DV — verified against the stock
+    ``ABA_Mouse_CCFv3_2017_25um.cutlas``: with ``N - 1`` the sampled labels match
+    VERSO's plane voxel-for-voxel (100%), with ``N`` they disagree (~6.5%).
 
     This function is its own inverse (applying it twice restores the original).
 
@@ -328,7 +336,7 @@ def _to_quicknii_convention(
     ox, oy, oz = anchoring[0], anchoring[1], anchoring[2]
     ux, uy, uz = anchoring[3], anchoring[4], anchoring[5]
     vx, vy, vz = anchoring[6], anchoring[7], anchoring[8]
-    return [ox, ap_max - oy, dv_max - oz, ux, -uy, -uz, vx, -vy, -vz]
+    return [ox, (ap_max - 1) - oy, (dv_max - 1) - oz, ux, -uy, -uz, vx, -vy, -vz]
 
 
 def _export_image_filename(section) -> str:
