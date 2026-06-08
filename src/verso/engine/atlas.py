@@ -1,7 +1,9 @@
 """Atlas volume loading, slicing, and color mapping via brainglobe-atlasapi.
 
 Coordinate mapping (QuickNII voxel → brainglobe Allen Mouse 25µm):
-  QuickNII  (x=LR, y=AP, z=DV)  →  annotation[round(y), round(z), round(x)]
+  QuickNII  (x=LR, y=AP, z=DV)  →  annotation[ceil(y), ceil(z), floor(x)]
+  Voxel selection matches VisuAlign/QUINT (floor in QuickNII convention); see
+  ``_quicknii_floor_indices`` for why AP/DV use ceil and LR uses floor.
   The annotation volume has shape (AP=528, DV=320, LR=456) for allen_mouse_25um.
 """
 
@@ -10,6 +12,30 @@ from __future__ import annotations
 import numpy as np
 
 from verso.engine.registration import make_atlas_sample_grid
+
+
+def _quicknii_floor_indices(
+    lr_c: np.ndarray, ap_c: np.ndarray, dv_c: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Voxel indices matching VisuAlign/QUINT (and PyNutil) sampling exactly.
+
+    VisuAlign's ``getInt32Slice`` truncates (``floor``) the voxel coordinate in
+    *QuickNII* convention.  AP and DV are array-reversed there relative to
+    BrainGlobe (see ``registration._to_quicknii_convention``), so flooring a
+    reversed axis is equivalent to taking the **ceil** of the BrainGlobe
+    coordinate::
+
+        ann_ap = (ap_max - 1) - floor((ap_max - 1) - ap_bg) = ceil(ap_bg)
+
+    LR is shared (not reversed), so it **floors** directly.  Sampling this way
+    makes the atlas labels the user aligns against in VERSO identical (verified
+    100% on the stock ABA cutlas) to what VisuAlign/PyNutil quantify, instead of
+    the ~0.5-voxel boundary offset a plain ``round`` introduces.
+
+    Returns the ``(lr, ap, dv)`` index arrays (still float; caller bounds-checks
+    and casts).
+    """
+    return np.floor(lr_c), np.ceil(ap_c), np.ceil(dv_c)
 
 
 class AtlasVolume:
@@ -46,10 +72,9 @@ class AtlasVolume:
             in_bounds: (H, W) bool   — True where the voxel is inside the atlas volume
         """
         grid = make_atlas_sample_grid(anchoring, out_w, out_h)  # (H, W, 3)
-        # Keep floats for bounds check — converting first can overflow int32 for extreme anchorings
-        ap_f = np.round(grid[:, :, 1])
-        dv_f = np.round(grid[:, :, 2])
-        lr_f = np.round(grid[:, :, 0])
+        # Keep floats for bounds check — converting first can overflow int32 for extreme anchorings.
+        # Use VisuAlign/QUINT-matching voxel selection (see _quicknii_floor_indices).
+        lr_f, ap_f, dv_f = _quicknii_floor_indices(grid[:, :, 0], grid[:, :, 1], grid[:, :, 2])
 
         ap_max, dv_max, lr_max = self._annotation.shape
         in_bounds: np.ndarray = (
@@ -164,9 +189,10 @@ class AtlasVolume:
         v = np.array(anchoring[6:9])
         voxel = o + s * u + t * v
 
-        ap = int(round(float(voxel[1])))
-        dv = int(round(float(voxel[2])))
-        lr = int(round(float(voxel[0])))
+        # Match VisuAlign/QUINT voxel selection (see _quicknii_floor_indices) so the
+        # region named under the cursor is the one VisuAlign/PyNutil would report.
+        lr_f, ap_f, dv_f = _quicknii_floor_indices(voxel[0], voxel[1], voxel[2])
+        ap, dv, lr = int(ap_f), int(dv_f), int(lr_f)
 
         ap_max, dv_max, lr_max = self._annotation.shape
         if not (0 <= ap < ap_max and 0 <= dv < dv_max and 0 <= lr < lr_max):
@@ -196,9 +222,10 @@ class AtlasVolume:
     ) -> np.ndarray:
         """Slice the MRI/Nissl reference volume → RGB uint8 (H, W, 3)."""
         grid = make_atlas_sample_grid(anchoring, out_w, out_h)
-        ap = np.clip(np.round(grid[:, :, 1]).astype(int), 0, self._reference.shape[0] - 1)
-        dv = np.clip(np.round(grid[:, :, 2]).astype(int), 0, self._reference.shape[1] - 1)
-        lr = np.clip(np.round(grid[:, :, 0]).astype(int), 0, self._reference.shape[2] - 1)
+        lr_f, ap_f, dv_f = _quicknii_floor_indices(grid[:, :, 0], grid[:, :, 1], grid[:, :, 2])
+        ap = np.clip(ap_f.astype(int), 0, self._reference.shape[0] - 1)
+        dv = np.clip(dv_f.astype(int), 0, self._reference.shape[1] - 1)
+        lr = np.clip(lr_f.astype(int), 0, self._reference.shape[2] - 1)
         gray = (
             (self._reference[ap, dv, lr].astype(np.float32) * self._reference_scale)
             .clip(0, 255)
@@ -217,9 +244,10 @@ class AtlasVolume:
         """
         labels, in_bounds = self._sample(anchoring, out_w, out_h)
         grid = make_atlas_sample_grid(anchoring, out_w, out_h)
-        ap = np.clip(np.round(grid[:, :, 1]).astype(int), 0, self._reference.shape[0] - 1)
-        dv = np.clip(np.round(grid[:, :, 2]).astype(int), 0, self._reference.shape[1] - 1)
-        lr = np.clip(np.round(grid[:, :, 0]).astype(int), 0, self._reference.shape[2] - 1)
+        lr_f, ap_f, dv_f = _quicknii_floor_indices(grid[:, :, 0], grid[:, :, 1], grid[:, :, 2])
+        ap = np.clip(ap_f.astype(int), 0, self._reference.shape[0] - 1)
+        dv = np.clip(dv_f.astype(int), 0, self._reference.shape[1] - 1)
+        lr = np.clip(lr_f.astype(int), 0, self._reference.shape[2] - 1)
         gray = (
             (self._reference[ap, dv, lr].astype(np.float32) * self._reference_scale)
             .clip(0, 255)
