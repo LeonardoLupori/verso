@@ -174,8 +174,8 @@ wheels = [
 
 [[package]]
 name = "deepslice"
-version = "1.2.7"
-source = { git = "https://github.com/PolarBean/DeepSlice?tag=1.2.7#ad1c366d964be854eb24da7d0d6e6f2bfe7320e2" }
+version = "1.2.8"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "h5py" },
     { name = "lxml" },
@@ -188,6 +188,10 @@ dependencies = [
     { name = "tensorflow" },
     { name = "typing" },
     { name = "urllib3" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a2/5b/5783da4cf10a6ab795128edeff1f10760bf3571b7c67dc904a99739eb354/deepslice-1.2.8.tar.gz", hash = "sha256:35fd51d5edc8326a37fa7fc0bf0fc467e06201fa813a3375993198b5b2048680", size = 28301226, upload-time = "2026-06-08T17:38:01.146Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/dc/c9/1720d847d830162982890ade7cb37b85b74c411b6e718f9bd979c1d98567/deepslice-1.2.8-py3-none-any.whl", hash = "sha256:6e962dd0d4ce8c3ba081fd053cdec1533f3556b3224de67b6b80df38d45a16ce", size = 24773, upload-time = "2026-06-08T17:37:59.756Z" },
 ]
 
 [[package]]
@@ -1545,7 +1549,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "brainglobe-atlasapi", specifier = ">=2.0" },
-    { name = "deepslice", marker = "extra == 'deepslice'", git = "https://github.com/PolarBean/DeepSlice?tag=1.2.7" },
+    { name = "deepslice", marker = "extra == 'deepslice'", specifier = "==1.2.8" },
     { name = "imagecodecs", specifier = ">=2026.3.6" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "opencv-python", specifier = ">=4.9" },

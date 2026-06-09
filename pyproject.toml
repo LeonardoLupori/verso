@@ -33,7 +33,7 @@ dev = [
     "ruff>=0.4",
 ]
 deepslice = [
-    "DeepSlice",
+    "DeepSlice==1.2.8",
 ]
 
 [dependency-groups]
@@ -42,9 +42,6 @@ dev = [
     "pytest-qt>=4.5.0",
     "ruff>=0.15.11",
 ]
-
-[tool.uv.sources]
-DeepSlice = { git = "https://github.com/PolarBean/DeepSlice", tag = "1.2.7" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
