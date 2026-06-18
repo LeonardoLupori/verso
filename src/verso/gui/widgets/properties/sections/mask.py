@@ -81,8 +81,8 @@ class MaskBox(QGroupBox):
             self,
             [("freehand", "Freehand"), ("brush", "Brush")],
             tooltips=[
-                "Freehand draw areas (hold shift to remove)",
-                "Paint pixels (hold shift to remove)",
+                "Freehand draw areas (F; hold shift to remove)",
+                "Paint pixels (B; hold shift to remove)",
             ],
             initial_key="freehand",
         )
@@ -155,6 +155,15 @@ class MaskBox(QGroupBox):
 
     def set_brush_size(self, size: int) -> None:
         self._brush_slider.setValue(size)
+
+    def set_draw_mode(self, mode: str) -> None:
+        """Sync the segmented Freehand/Brush buttons to *mode* without emitting.
+
+        Lets a keyboard shortcut drive the mode while keeping this panel as the
+        authoritative display of the current tool.
+        """
+        key = "brush" if mode == "brush" else "freehand"
+        self._draw_mode_btns[key].setChecked(True)
 
     def _emit_opacity(self) -> None:
         opacity = self._opacity_slider.value() / 100.0

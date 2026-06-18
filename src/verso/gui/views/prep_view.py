@@ -46,6 +46,7 @@ class PrepView(QWidget):
     mask_negative_changed = pyqtSignal(bool)
     mask_visibility_changed = pyqtSignal(bool)
     brush_size_changed = pyqtSignal(int)
+    draw_mode_changed = pyqtSignal(str)  # "freehand" | "brush"
     lr_status_changed = pyqtSignal()
     # Emitted when a prep save/clear flips the section and thereby invalidates
     # its alignment + warp, so MainWindow can clear their dirty flags + refresh.
@@ -142,6 +143,8 @@ class PrepView(QWidget):
             (Qt.Key.Key_N, lambda: self.set_mask_negative(not self._negative_mask)),
             (Qt.Key.Key_U, self.undo_mask_edit),
             (QKeySequence.StandardKey.Undo, self.undo_mask_edit),
+            (Qt.Key.Key_B, lambda: self._select_draw_mode("brush")),
+            (Qt.Key.Key_F, lambda: self._select_draw_mode("freehand")),
         ]
         for key, slot in shortcuts:
             shortcut = QShortcut(QKeySequence(key), self)
@@ -323,6 +326,14 @@ class PrepView(QWidget):
     def set_draw_mode(self, mode: str) -> None:
         self._draw_mode = "brush" if mode == "brush" else "freehand"
         self._canvas.set_brush_cursor(self._draw_mode == "brush", self._brush_radius)
+
+    def _select_draw_mode(self, mode: str) -> None:
+        """Switch draw mode from a shortcut and notify the mask panel to sync."""
+        mode = "brush" if mode == "brush" else "freehand"
+        if mode == self._draw_mode:
+            return
+        self.set_draw_mode(mode)
+        self.draw_mode_changed.emit(mode)
 
     def set_brush_size(self, size: int) -> None:
         self._brush_radius = max(int(size), 1)

@@ -466,6 +466,7 @@ class MainWindow(QMainWindow):
         mask.color_changed.connect(self._prep.set_mask_color)
         mask.negative_changed.connect(self._prep.set_mask_negative)
         mask.draw_mode_changed.connect(self._prep.set_draw_mode)
+        self._prep.draw_mode_changed.connect(mask.set_draw_mode)
         mask.brush_size_changed.connect(self._prep.set_brush_size)
         self._prep.brush_size_changed.connect(mask.set_brush_size)
         mask.autodetect_requested.connect(self._on_prep_autodetect_requested)
