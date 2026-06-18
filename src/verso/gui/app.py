@@ -2,6 +2,7 @@ import sys
 from pathlib import Path
 
 import pyqtgraph as pg
+from PyQt6.QtCore import QSize
 from PyQt6.QtGui import QColor, QIcon, QPalette
 from PyQt6.QtWidgets import QApplication
 
@@ -27,21 +28,18 @@ def _set_taskbar_identity() -> None:
 
 
 def _load_app_icon() -> QIcon:
-    """Build a QIcon with every size we can find on disk.
+    """Build a QIcon from ``verso.ico``, registering every embedded size.
 
-    Prefers a set of PNGs named ``verso-<N>.png`` (one per size) because PNG
-    works identically on every OS and lets the shell pick the size it wants.
-    Falls back to ``verso.ico`` for backwards compatibility.
+    A single ``addFile`` on a multi-size ``.ico`` does not reliably expose all
+    frames to Qt's native HICON conversion, so at non-100% DPI Windows can ask
+    for a size that comes back empty and the taskbar icon goes blank. Adding
+    each size explicitly guarantees the shell always finds a matching frame.
     """
     icon = QIcon()
-    pngs = sorted(_RESOURCES.glob("verso-*.png"))
-    if pngs:
-        for png in pngs:
-            icon.addFile(str(png))
-        return icon
     ico = _RESOURCES / "verso.ico"
     if ico.exists():
-        icon.addFile(str(ico))
+        for size in (16, 24, 32, 48, 64, 128, 256):
+            icon.addFile(str(ico), QSize(size, size))
     return icon
 
 
