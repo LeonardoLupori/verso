@@ -126,7 +126,7 @@ def run(project_path: Path | None = None) -> None:
         # which is why this only ever bites the first run.) Re-applying the icon
         # once the event loop is running issues a WM_SETICON after the taskbar
         # button exists, forcing it to refresh.
-        QTimer.singleShot(0, lambda: window.setWindowIcon(app_icon))
+        QTimer.singleShot(10, lambda: window.setWindowIcon(app_icon))
 
     if project_path is not None:
         window.open_project_path(project_path)
