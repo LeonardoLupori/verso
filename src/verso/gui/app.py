@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 
 import pyqtgraph as pg
-from PyQt6.QtCore import QSize
+from PyQt6.QtCore import QSize, QTimer
 from PyQt6.QtGui import QColor, QIcon, QPalette
 from PyQt6.QtWidgets import QApplication
 
@@ -117,6 +117,17 @@ def run(project_path: Path | None = None) -> None:
     window.setWindowIcon(app_icon)
     window.show()
     _center_on_screen(window)
+
+    if sys.platform == "win32":
+        # On a cold first launch Windows creates the taskbar button slightly
+        # after show() and reads its icon before Qt has finished converting the
+        # QIcon to a native HICON, so the button comes up blank. (Subsequent
+        # launches hit the shell's per-AppUserModelID icon cache and look fine,
+        # which is why this only ever bites the first run.) Re-applying the icon
+        # once the event loop is running issues a WM_SETICON after the taskbar
+        # button exists, forcing it to refresh.
+        QTimer.singleShot(0, lambda: window.setWindowIcon(app_icon))
+
     if project_path is not None:
         window.open_project_path(project_path)
     sys.exit(app.exec())
