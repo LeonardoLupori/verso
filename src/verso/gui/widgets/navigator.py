@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
-from PyQt6.QtCore import QPointF, QSize, Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, QPointF, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import (
     QColor,
     QIcon,
@@ -39,6 +39,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QStyle,
     QVBoxLayout,
     QWidget,
@@ -80,11 +81,30 @@ _CENTER_COLOR = QColor(255, 255, 0, 220)
 # Radius (px) within which a press counts as "near center" → translate mode
 _TRANSLATE_RADIUS = 14
 
+# A widget's own stylesheet governs its tooltip rendering, so any styled button
+# must carry this rule or its tooltip falls back to the stylesheet engine's
+# darker default (mismatching the palette-based tooltips elsewhere).
+_TOOLTIP_QSS = (
+    "QToolTip { background-color: #323232; color: #dcdcdc; border: 1px solid #555; }"
+)
+
 _NAV_BTN_QSS = (
     "QPushButton { border-radius: 3px; padding: 0px;"
     " background: #383838; border: 1px solid #555; }"
     "QPushButton:hover { background: #484848; }"
     "QPushButton:disabled { background: #2a2a2a; border-color: #333; }"
+    + _TOOLTIP_QSS
+)
+
+# View group box: blends into the dark atlas canvas (#1a1a1a) while keeping a
+# subtle frame + title so it still reads as a labelled container.  The
+# background override disables Fusion's default frame, so border/title are
+# redrawn here.
+_VIEW_GROUP_QSS = (
+    "QGroupBox { background-color: #1a1a1a; border: 1px solid #333;"
+    " border-radius: 4px; margin-top: 1.1em; }"
+    "QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left;"
+    " left: 8px; padding: 0 4px; color: #bbb; }"
 )
 
 
@@ -546,12 +566,21 @@ class NavigatorPanel(QWidget):
         super().__init__(parent)
         self._atlas: AtlasVolume | None = None
         self._anchoring: list[float] | None = None
-        # Reserve space for the vertical scrollbar so it never overlaps the
-        # rightmost ↑/↓ buttons when the panel becomes too short to fit all
-        # three slice views.
-        sb_extent = QApplication.style().pixelMetric(QStyle.PixelMetric.PM_ScrollBarExtent)
-        self.setFixedWidth(_VIEW_W + _SIDE_BTN_W + 8 + sb_extent)
-        self.setStyleSheet("background: #1a1a1a;")
+        # Width budget: the fixed-size _SliceView, plus the content-layout and
+        # group-box margins around it.  The vertical scrollbar's width is added
+        # only while the bar is actually visible (see eventFilter), so the panel
+        # widens by exactly the bar when it appears and reclaims that space when
+        # it doesn't — instead of permanently reserving an empty slot.
+        self._sb_extent = QApplication.style().pixelMetric(
+            QStyle.PixelMetric.PM_ScrollBarExtent
+        )
+        view_w = _VIEW_W + _SIDE_BTN_W + 4          # _SliceView total width
+        margins = (2 + 2) + (4 + 4) + 2             # content + group margins + frame
+        self._width_no_sb = view_w + margins
+        self.setFixedWidth(self._width_no_sb)
+        # Panel, scroll area and content inherit the app dark palette so the
+        # group boxes match the properties panel.  Only the atlas canvases and
+        # their immediate container (_SliceView) keep the darker #1a1a1a.
 
         # Outer layout holds a scroll area so the tall horizontal view is reachable
         outer = QVBoxLayout(self)
@@ -561,11 +590,14 @@ class NavigatorPanel(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("QScrollArea { border: none; background: #1a1a1a; }")
+        scroll.setStyleSheet("QScrollArea { border: none; }")
         outer.addWidget(scroll)
 
+        # Grow the panel by the scrollbar's width only while the bar is shown.
+        self._vbar = scroll.verticalScrollBar()
+        self._vbar.installEventFilter(self)
+
         content = QWidget()
-        content.setStyleSheet("background: #1a1a1a;")
         layout = QVBoxLayout(content)
         layout.setContentsMargins(2, 4, 2, 4)
         layout.setSpacing(4)
@@ -590,6 +622,10 @@ class NavigatorPanel(QWidget):
         for view, title in zip((self._sag, self._cor, self._hor), view_titles):
             view.anchoring_changed.connect(self._on_anchoring_changed)
             grp = QGroupBox(title)
+            grp.setStyleSheet(_VIEW_GROUP_QSS)
+            # Only take as much height as the canvas + buttons need; slack goes
+            # to the trailing stretch instead of inflating each group.
+            grp.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
             grp_layout = QVBoxLayout(grp)
             grp_layout.setContentsMargins(4, 4, 4, 4)
             grp_layout.setSpacing(0)
@@ -598,6 +634,17 @@ class NavigatorPanel(QWidget):
 
         layout.addStretch()
 
+    def eventFilter(self, obj, event) -> bool:
+        # Track the vertical scrollbar's visibility and resize the panel so its
+        # width only accounts for the bar while it's on screen.  Changing width
+        # never alters content height, so this can't oscillate.
+        if obj is self._vbar:
+            if event.type() == QEvent.Type.Show:
+                self.setFixedWidth(self._width_no_sb + self._sb_extent)
+            elif event.type() == QEvent.Type.Hide:
+                self.setFixedWidth(self._width_no_sb)
+        return super().eventFilter(obj, event)
+
     def _make_stretch_section(self) -> QGroupBox:
         # Match the navigator button style exactly, adding text colour
         btn_qss = (
@@ -605,8 +652,10 @@ class NavigatorPanel(QWidget):
             " background: #383838; border: 1px solid #555; }"
             "QPushButton:hover { background: #484848; }"
             "QPushButton:disabled { color: #555; background: #2a2a2a; border-color: #333; }"
+            + _TOOLTIP_QSS
         )
         group = QGroupBox("Atlas Stretch")
+        group.setStyleSheet(_VIEW_GROUP_QSS)
         vbox = QVBoxLayout(group)
         vbox.setContentsMargins(4, 6, 4, 6)
         vbox.setSpacing(4)
@@ -627,7 +676,8 @@ class NavigatorPanel(QWidget):
         ]
 
         for icon_name, specs in rows:
-            # Inner widget pinned to _VIEW_W so buttons centre under the atlas image
+            # Stretches on both ends centre the «−− − [icon] + ++» cluster
+            # horizontally across the full group width.
             inner = QHBoxLayout()
             inner.setContentsMargins(0, 0, 0, 0)
             inner.setSpacing(3)
@@ -635,7 +685,7 @@ class NavigatorPanel(QWidget):
 
             for sym, tip, su, sv in specs[:2]:
                 btn = QPushButton(sym)
-                btn.setFixedSize(_BOTTOM_BTN_W + 8, _BOTTOM_BTN_H + 4)
+                btn.setFixedSize(_BOTTOM_BTN_W + 6, _BOTTOM_BTN_H + 2)
                 btn.setToolTip(tip)
                 btn.setStyleSheet(btn_qss)
                 btn.setEnabled(False)
@@ -661,18 +711,8 @@ class NavigatorPanel(QWidget):
 
             inner.addStretch()
 
-            inner_w = QWidget()
-            inner_w.setFixedWidth(_VIEW_W)
-            inner_w.setLayout(inner)
-
-            outer_row = QHBoxLayout()
-            outer_row.setContentsMargins(0, 0, 0, 0)
-            outer_row.setSpacing(0)
-            outer_row.addWidget(inner_w)
-            outer_row.addStretch()
-
             row_w = QWidget()
-            row_w.setLayout(outer_row)
+            row_w.setLayout(inner)
             vbox.addWidget(row_w)
 
         return group

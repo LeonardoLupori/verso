@@ -112,6 +112,14 @@ def run(project_path: Path | None = None) -> None:
 
     app.setStyle("Fusion")
     app.setPalette(_build_dark_palette())
+    # Once a widget carries its own stylesheet, Qt renders that widget's
+    # tooltips with the stylesheet engine (a darker default) instead of the
+    # palette's ToolTipBase.  Pin every tooltip to the palette colours so styled
+    # widgets (e.g. the navigator buttons) match the rest of the app.
+    app.setStyleSheet(
+        "QToolTip { background-color: #323232; color: #dcdcdc;"
+        " border: 1px solid #555; }"
+    )
 
     window = MainWindow()
     window.setWindowIcon(app_icon)
