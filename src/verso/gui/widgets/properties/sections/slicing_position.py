@@ -23,7 +23,7 @@ class SlicingPositionBox(QGroupBox):
         pi = self._plot.getPlotItem()
         pi.hideAxis("top")
         pi.hideAxis("right")
-        pi.getAxis("bottom").setLabel("Section", color="#aaa")
+        pi.getAxis("bottom").setLabel("Slice index", color="#aaa")
         # Neutral until set_axis_name() supplies the project's slicing axis.
         pi.getAxis("left").setLabel("Position (mm)", color="#aaa")
         pi.getAxis("bottom").setTextPen(pg.mkPen("#aaa"))
@@ -53,19 +53,22 @@ class SlicingPositionBox(QGroupBox):
         x_progress, y_progress = [], []
         x_none, y_none = [], []
 
-        for i, section in enumerate(sections):
+        for section in sections:
             pos = section.alignment.position_mm
             if pos is None or all(v == 0.0 for v in (section.alignment.anchoring or [])):
                 continue
+            # X is the physical slice index so spacing matches how interpolation
+            # is parameterized (uneven gaps stay uneven), not the list rank.
+            x = section.slice_index
             s = section.alignment.status
             if s == AlignmentStatus.COMPLETE:
-                x_complete.append(i)
+                x_complete.append(x)
                 y_complete.append(pos)
             elif s == AlignmentStatus.IN_PROGRESS:
-                x_progress.append(i)
+                x_progress.append(x)
                 y_progress.append(pos)
             else:
-                x_none.append(i)
+                x_none.append(x)
                 y_none.append(pos)
 
         def _add_scatter(xs, ys, color, size=6) -> None:
@@ -92,7 +95,7 @@ class SlicingPositionBox(QGroupBox):
             if pos is not None and any(v != 0.0 for v in (section.alignment.anchoring or [])):
                 pi.addItem(
                     pg.ScatterPlotItem(
-                        x=[current_index],
+                        x=[section.slice_index],
                         y=[pos],
                         symbol="o",
                         size=11,
