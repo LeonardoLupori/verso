@@ -61,7 +61,7 @@ if TYPE_CHECKING:
     from verso.engine.atlas import AtlasVolume
 
 # Fixed display width for every mini-view (height is computed per-axis from dims)
-_VIEW_W = 170
+_VIEW_W = 150
 # Side ↑/↓ buttons: narrower than before, same height
 _SIDE_BTN_W = 18
 _SIDE_BTN_H = 22
@@ -219,13 +219,12 @@ class _SliceView(QWidget):
         side = QVBoxLayout()
         side.setContentsMargins(0, 0, 0, 0)
         side.setSpacing(2)
+        side.addStretch()
         side.addWidget(self._btn_up_fast)
-        side.addStretch()
         side.addWidget(self._btn_up)
-        side.addSpacing(3)
         side.addWidget(self._btn_down)
-        side.addStretch()
         side.addWidget(self._btn_down_fast)
+        side.addStretch()
         side_widget = QWidget()
         side_widget.setLayout(side)
         side_widget.setFixedWidth(_SIDE_BTN_W)
@@ -587,7 +586,7 @@ class NavigatorPanel(QWidget):
         self._cor = _SliceView(1, dims)
         self._hor = _SliceView(2, dims)
 
-        view_titles = ["Sagittal (LR)", "Coronal (AP)", "Horizontal (DV)"]
+        view_titles = ["Sagittal", "Coronal", "Horizontal"]
         for view, title in zip((self._sag, self._cor, self._hor), view_titles):
             view.anchoring_changed.connect(self._on_anchoring_changed)
             grp = QGroupBox(title)
