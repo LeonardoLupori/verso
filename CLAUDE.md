@@ -73,8 +73,9 @@ Control points and masks are defined in working-resolution space. The ratio `Pro
 **Delaunay triangulation (piecewise affine)**, matching VisuAlign's approach. Not TPS or RBF. See [.claude/warping.md](.claude/warping.md) for algorithm details and reference implementation.
 
 Key points:
-- Only the atlas overlay (~300×200) is warped per drag event, not the background
-- ~6ms total per drag event at 30 control points
+- Only the atlas overlay is warped per drag event, not the background
+- The outline overlay is sampled at **display resolution** so its lines stay ~1 screen pixel wide (VisuAlign parity), capped at `_OUTLINE_MAX_SIDE` (`_OUTLINE_DRAG_MAX_SIDE` while dragging)
+- The atlas slice is cached and only re-warped during a CP drag; `build_backward_remap` uses a per-triangle affine — together ~47 ms/tick (~21 fps) at the 820 px drag cap
 - Four invisible corner anchors (src=dst) ensure full overlay coverage (convex hull constraint)
 
 ### QuickNII/VisuAlign compatibility
