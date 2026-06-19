@@ -14,8 +14,9 @@ from PyQt6.QtWidgets import (
 
 from verso.engine.io.image_io import WORKING_SCALE
 
-_THUMB_SIZE = 100  # px long side
+_THUMB_SIZE = 80  # px long side
 _BORDER_W = 3
+_ROW_MARGIN = 4  # padding around the thumbnail row
 _DOT_DIAMETER = 10  # status dot in the top-right corner
 _DOT_MARGIN = 4
 
@@ -58,6 +59,16 @@ class _ThumbnailLoader(QObject):
             except Exception:
                 pass
         self.finished.emit()
+
+
+class _HScrollArea(QScrollArea):
+    """Scroll area whose mouse wheel scrolls horizontally, never vertically."""
+
+    def wheelEvent(self, event) -> None:  # noqa: ANN001
+        delta = event.angleDelta().y() or event.angleDelta().x()
+        bar = self.horizontalScrollBar()
+        bar.setValue(bar.value() - delta)
+        event.accept()
 
 
 class _ThumbButton(QLabel):
@@ -141,28 +152,32 @@ class Filmstrip(QWidget):
         self._build_ui()
 
     def _build_ui(self) -> None:
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
-        outer.addStretch()
-
-        scroll = QScrollArea()
+        scroll = _HScrollArea()
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setWidgetResizable(True)
-        scroll.setFixedHeight(_THUMB_SIZE + 2 * _BORDER_W + 16)  # thumb + border + scrollbar
         scroll.setStyleSheet("QScrollArea { border: none; background: #1e1e1e; }")
 
         self._container = QWidget()
         self._container.setStyleSheet("background: #1e1e1e;")
         self._row = QHBoxLayout(self._container)
-        self._row.setContentsMargins(4, 4, 4, 4)
+        self._row.setContentsMargins(_ROW_MARGIN, _ROW_MARGIN, _ROW_MARGIN, _ROW_MARGIN)
         self._row.setSpacing(4)
         self._row.addStretch()
 
+        # Height that exactly fits one row of thumbnails plus the horizontal
+        # scrollbar — derived from the real scrollbar extent so there is no
+        # vertical slop and the bottom dock has no resize handle.
+        scrollbar_h = scroll.horizontalScrollBar().sizeHint().height()
+        strip_height = _THUMB_SIZE + 2 * _BORDER_W + 2 * _ROW_MARGIN + scrollbar_h
+        self.setFixedHeight(strip_height)
+        scroll.setFixedHeight(strip_height)
+
         scroll.setWidget(self._container)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
         outer.addWidget(scroll)
-        outer.addStretch()
         self._scroll = scroll
 
     def populate(
