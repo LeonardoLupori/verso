@@ -3,34 +3,40 @@
 from __future__ import annotations
 
 import pyqtgraph as pg
+from PyQt6.QtGui import QPalette
 from PyQt6.QtWidgets import QGroupBox, QSizePolicy, QVBoxLayout
 
 
-class APPlotBox(QGroupBox):
+class SlicingPositionBox(QGroupBox):
     def __init__(self) -> None:
-        super().__init__("AP position")
+        super().__init__("Slicing position")
         layout = QVBoxLayout(self)
         layout.setSpacing(4)
 
-        self._axis_name = "AP"
-
-        self._plot = pg.PlotWidget(background="#1a1a1a")
+        # Blend the plot into the group box (and every other section), which
+        # paints with the app palette's Window color. pyqtgraph ignores the Qt
+        # palette, so we feed it that color explicitly rather than hardcoding.
+        bg = self.palette().color(QPalette.ColorRole.Window)
+        self._plot = pg.PlotWidget(background=bg)
         self._plot.setFixedHeight(200)
         self._plot.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         pi = self._plot.getPlotItem()
         pi.hideAxis("top")
         pi.hideAxis("right")
         pi.getAxis("bottom").setLabel("Section", color="#aaa")
-        pi.getAxis("left").setLabel(f"{self._axis_name} (mm)", color="#aaa")
+        # Neutral until set_axis_name() supplies the project's slicing axis.
+        pi.getAxis("left").setLabel("Position (mm)", color="#aaa")
         pi.getAxis("bottom").setTextPen(pg.mkPen("#aaa"))
         pi.getAxis("left").setTextPen(pg.mkPen("#aaa"))
         pi.setMenuEnabled(False)
         layout.addWidget(self._plot)
 
     def set_axis_name(self, name: str) -> None:
-        """Update axis label to match the project's slicing axis (AP / ML / DV)."""
-        self._axis_name = name
-        self.setTitle(f"{name} position")
+        """Update the y-axis label to match the project's slicing axis (AP / ML / DV).
+
+        The group box title stays axis-agnostic ("Slicing position"); only the
+        y-axis label reflects the actual interpolation axis and units.
+        """
         self._plot.getPlotItem().getAxis("left").setLabel(f"{name} (mm)", color="#aaa")
 
     def update_plot(self, sections: list, current_index: int) -> None:

@@ -84,7 +84,7 @@ with one page per mode:
 |---|---|---|
 | OverviewPage | `properties/overview_page.py` | overview-specific summary |
 | PrepPage     | `properties/prep_page.py`     | `FlipBox`, `MaskBox`, `HemisphereBox`, `SaveBarBox` |
-| AlignPage    | `properties/align_page.py`    | `OverlayBox`, `APPlotBox`, `SaveBarBox` |
+| AlignPage    | `properties/align_page.py`    | `OverlayBox`, `SlicingPositionBox`, `SaveBarBox` |
 | WarpPage     | `properties/warp_page.py`     | `OverlayBox`, `ControlPointsBox`, `SaveBarBox` |
 
 Each `*Box` lives in its own file under `widgets/properties/sections/`. The

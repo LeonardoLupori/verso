@@ -6,7 +6,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QScrollArea, QVBoxLayout, QWidget
 
 from verso.engine.model.project import Section
-from verso.gui.widgets.properties.sections import APPlotBox, OverlayBox, SaveBarBox
+from verso.gui.widgets.properties.sections import OverlayBox, SaveBarBox, SlicingPositionBox
 
 
 class AlignPage(QWidget):
@@ -29,10 +29,10 @@ class AlignPage(QWidget):
         scroll.setWidget(content)
 
         self.overlay = OverlayBox()
-        self.ap_plot = APPlotBox()
+        self.slicing_position = SlicingPositionBox()
 
         layout.addWidget(self.overlay)
-        layout.addWidget(self.ap_plot)
+        layout.addWidget(self.slicing_position)
         layout.addStretch()
 
         self.save_bar = SaveBarBox()

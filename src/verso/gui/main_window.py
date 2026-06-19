@@ -598,7 +598,7 @@ class MainWindow(QMainWindow):
                 # The AP plot is no longer refreshed on every section change
                 # (only while Align is visible), so refresh it on entry to pick
                 # up any section change made while Align was hidden.
-                self._update_ap_plot()
+                self._update_slicing_position()
             else:
                 self._warp.activate()
             # Push the working scale before load_section so any thumbnail
@@ -777,7 +777,7 @@ class MainWindow(QMainWindow):
         if self._current_mode in ("align", "warp"):
             self._panel.update_overlay()
         self._overview.refresh()
-        self._update_ap_plot()
+        self._update_slicing_position()
         self._refresh_reset_enabled()
         self._refresh_filmstrip_dots()
         return True
@@ -903,7 +903,7 @@ class MainWindow(QMainWindow):
         if self._state.project is not None and self._state.project_path is not None:
             self._write_project(self._state.project_path)
         self._overview.refresh()
-        self._update_ap_plot()
+        self._update_slicing_position()
         self._refresh_reset_enabled()
         self._refresh_filmstrip_dots()
 
@@ -914,7 +914,7 @@ class MainWindow(QMainWindow):
         the last-saved version — no write is needed.
         """
         self._overview.refresh()
-        self._update_ap_plot()
+        self._update_slicing_position()
         self._refresh_reset_enabled()
         self._refresh_filmstrip_dots()
 
@@ -1033,7 +1033,7 @@ class MainWindow(QMainWindow):
         self._reverse_axis_proposal = False
         self._align.set_reverse_axis(False)
         self._align.set_interpolation_axis(project.interpolation_axis_index)
-        self._props.align.ap_plot.set_axis_name(project.interpolation_axis)
+        self._props.align.slicing_position.set_axis_name(project.interpolation_axis)
 
         # QuickNII interpolation needs atlas dimensions for the no-anchor and
         # one-anchor endpoint controls. If the atlas is still loading,
@@ -1109,7 +1109,7 @@ class MainWindow(QMainWindow):
                 self._initialize_quicknii_anchorings(project.sections)
                 self._sync_position_mm(project.sections)
                 self._panel.update_overlay()
-                self._update_ap_plot()
+                self._update_slicing_position()
                 self._update_reverse_order_enabled()
                 self._update_deepslice_enabled()
 
@@ -1145,7 +1145,7 @@ class MainWindow(QMainWindow):
         # Align panel, so refresh it only when that view is visible (entering
         # Align refreshes it too — see _switch_view).
         if self._current_mode == "align":
-            self._update_ap_plot()
+            self._update_slicing_position()
 
     def _step_section(self, delta: int) -> None:
         if not self._section_shortcuts_enabled():
@@ -1246,7 +1246,7 @@ class MainWindow(QMainWindow):
         )
         self._filmstrip.set_current(self._state.section_index)
         self._overview.refresh()
-        self._update_ap_plot()
+        self._update_slicing_position()
 
         if self._state.project_path is not None:
             self._write_project(self._state.project_path)
@@ -1473,7 +1473,7 @@ class MainWindow(QMainWindow):
                 if section.alignment.status != AlignmentStatus.COMPLETE:
                     section.alignment.source = "manual"
         self._overview.refresh_row(self._state.section_index)
-        self._update_ap_plot()
+        self._update_slicing_position()
         self._refresh_properties()
 
     def _on_alignments_updated(self) -> None:
@@ -1486,7 +1486,7 @@ class MainWindow(QMainWindow):
         self._panel.update_overlay()
         for i in range(len(project.sections)):
             self._overview.refresh_row(i)
-        self._update_ap_plot()
+        self._update_slicing_position()
         self._update_reverse_order_enabled()
         self._update_deepslice_enabled()
         self._refresh_filmstrip_dots()
@@ -1528,7 +1528,7 @@ class MainWindow(QMainWindow):
 
         self._overview.refresh()
         self._on_section_changed(self._state.section_index)
-        self._update_ap_plot()
+        self._update_slicing_position()
         self._update_reverse_order_enabled()
         self._update_deepslice_enabled()
 
@@ -1749,7 +1749,7 @@ class MainWindow(QMainWindow):
         self._overview.refresh()
         self._panel.refresh_display()
         self._refresh_properties()
-        self._update_ap_plot()
+        self._update_slicing_position()
         self.statusBar().showMessage(f"Applied {applied} DeepSlice suggestions", 5000)
 
     def _on_deepslice_error(self, message: str) -> None:
@@ -1778,7 +1778,7 @@ class MainWindow(QMainWindow):
         self._sync_position_mm(project.sections)
         self._overview.refresh()
         self._on_section_changed(self._state.section_index)
-        self._update_ap_plot()
+        self._update_slicing_position()
         self.statusBar().showMessage(f"Restored {changed} default proposals", 3000)
 
     def _clear_all_alignments(self) -> None:
@@ -1915,17 +1915,17 @@ class MainWindow(QMainWindow):
         self._overview.refresh()
         self._refresh_properties()
         self._refresh_reset_enabled()
-        self._update_ap_plot()
+        self._update_slicing_position()
         self._update_reverse_order_enabled()
         self._update_deepslice_enabled()
         if self._state.project is not None and self._state.project_path is not None:
             self._write_project(self._state.project_path)
 
-    def _update_ap_plot(self) -> None:
+    def _update_slicing_position(self) -> None:
         project = self._state.project
         if project is None:
             return
-        self._props.align.ap_plot.update_plot(project.sections, self._state.section_index)
+        self._props.align.slicing_position.update_plot(project.sections, self._state.section_index)
 
     def _maybe_create_pngs(self, export_path: str) -> None:
         """Offer to create PNG copies if any are missing next to the export."""
