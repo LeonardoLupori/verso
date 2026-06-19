@@ -154,6 +154,7 @@ class MainWindow(QMainWindow):
         self._build_docks()
         self._connect_signals()
         self._build_shortcuts()
+        self._build_status_bar()
 
         self._switch_view(_VIEW_OVERVIEW)
 
@@ -439,6 +440,22 @@ class MainWindow(QMainWindow):
             shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
             shortcut.activated.connect(lambda d=delta: self._step_section(d))
             self._section_shortcuts.append(shortcut)
+
+    def _build_status_bar(self) -> None:
+        """Create the status bar up front and make it a touch shorter.
+
+        QMainWindow builds the status bar lazily, on the first ``showMessage``
+        call — so without this it appears to pop in below the filmstrip the
+        first time the user saves, shifting the whole layout.  Instantiating it
+        here reserves the space from launch so it is always visible.  The font
+        is shrunk a point and the size grip dropped to keep it compact.
+        """
+        bar = self.statusBar()
+        bar.setSizeGripEnabled(False)
+        font = bar.font()
+        font.setPointSizeF(max(1.0, font.pointSizeF() - 1.0))
+        bar.setFont(font)
+        bar.setMaximumHeight(bar.fontMetrics().height() + 4)
 
     def _connect_signals(self) -> None:
         # State → views

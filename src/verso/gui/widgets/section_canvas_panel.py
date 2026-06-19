@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 
 
 _REGION_BAR_IDLE_QSS = (
-    "background: #1a1a1a; color: #fff; font-size: 12px; font-weight: bold;"
+    "background: #1a1a1a; color: #fff; font-size: 10px; font-weight: bold;"
     " border-top: 1px solid #333;"
 )
 
@@ -136,7 +136,7 @@ class SectionCanvasPanel(QWidget):
         layout.addWidget(self.canvas, stretch=1)
 
         self._region_bar = QLabel("")
-        self._region_bar.setFixedHeight(38)
+        self._region_bar.setFixedHeight(20)
         self._region_bar.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._region_bar.setStyleSheet(_REGION_BAR_IDLE_QSS)
         layout.addWidget(self._region_bar)
@@ -427,7 +427,7 @@ class SectionCanvasPanel(QWidget):
         br, bg, bb = int(r * 0.55), int(g * 0.55), int(b * 0.55)
         self._region_bar.setText(name)
         self._region_bar.setStyleSheet(
-            f"background: rgb({br},{bg},{bb}); color: #fff; font-size: 20px;"
+            f"background: rgb({br},{bg},{bb}); color: #fff; font-size: 14px;"
             " font-weight: bold; border-top: 1px solid #333;"
         )
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QWidget
 
-_STATUS_BAR_HEIGHT = 36
+_STATUS_BAR_HEIGHT = 25
 _STATUS_BAR_STYLE = "background: #252525; border-bottom: 1px solid #333;"
 _STATUS_LABEL_STYLE = "color: #aaa; font-size: 11px;"
 
