@@ -79,6 +79,7 @@ class _ThumbButton(QLabel):
         self._index = index
         self._selected = False
         self._status_color: str | None = None
+        self._thumbnail: QPixmap | None = None  # original (unscaled) loaded tile
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFixedSize(_THUMB_SIZE + 2 * _BORDER_W, _THUMB_SIZE + 2 * _BORDER_W)
@@ -92,6 +93,7 @@ class _ThumbButton(QLabel):
         self.update()
 
     def set_thumbnail(self, pixmap: QPixmap) -> None:
+        self._thumbnail = pixmap
         scaled = pixmap.scaled(
             _THUMB_SIZE,
             _THUMB_SIZE,
@@ -100,6 +102,10 @@ class _ThumbButton(QLabel):
         )
         self.setPixmap(scaled)
         self._apply_border()
+
+    def thumbnail(self) -> QPixmap | None:
+        """Return the original loaded tile, or None if still a placeholder."""
+        return self._thumbnail
 
     def set_selected(self, selected: bool) -> None:
         self._selected = selected
@@ -138,6 +144,7 @@ class Filmstrip(QWidget):
     """Scrollable horizontal strip of section thumbnails."""
 
     section_selected = pyqtSignal(int)
+    thumbnail_loaded = pyqtSignal(int)  # a section's tile finished loading
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -248,6 +255,18 @@ class Filmstrip(QWidget):
         # Guard against stale signals arriving after a new populate() cleared the list.
         if 0 <= index < len(self._buttons):
             self._buttons[index].set_thumbnail(pixmap)
+            self.thumbnail_loaded.emit(index)
+
+    def thumbnail_pixmap(self, index: int) -> QPixmap | None:
+        """Return the already-loaded tile for a section, or None if not ready.
+
+        Reuses the pixmap held by the filmstrip button — no disk I/O or
+        recompositing — so callers (e.g. the Overview properties preview) get the
+        section image for free.
+        """
+        if 0 <= index < len(self._buttons):
+            return self._buttons[index].thumbnail()
+        return None
 
     def set_current(self, index: int) -> None:
         self._highlight(index)

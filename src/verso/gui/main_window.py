@@ -477,6 +477,7 @@ class MainWindow(QMainWindow):
 
         # Filmstrip
         self._filmstrip.section_selected.connect(self._state.set_section)
+        self._filmstrip.thumbnail_loaded.connect(self._on_thumbnail_loaded)
 
         # Properties
         flip = self._props.prep.flip
@@ -1425,12 +1426,22 @@ class MainWindow(QMainWindow):
 
     def _refresh_properties(self) -> None:
         self._props.update_section(self._state.current_section, self._current_mode)
+        if self._current_mode == "overview":
+            # Reuse the filmstrip's already-loaded tile — no extra I/O.
+            self._props.overview.set_preview(
+                self._filmstrip.thumbnail_pixmap(self._state.section_index)
+            )
         if self._current_mode == "prep":
             # Sync the draw button with PrepView's actual state — covers section
             # navigation, view switches, or anything else that may have torn the
             # editor down behind our back.
             self._props.prep.hemisphere.set_draw_active(self._prep.is_lr_draw_active())
             self._refresh_lr_status()
+
+    def _on_thumbnail_loaded(self, index: int) -> None:
+        """Fill the Overview preview once the current section's tile arrives."""
+        if self._current_mode == "overview" and index == self._state.section_index:
+            self._props.overview.set_preview(self._filmstrip.thumbnail_pixmap(index))
 
     # ------------------------------------------------------------------
     # Property change slots
