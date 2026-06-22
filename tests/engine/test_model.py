@@ -11,6 +11,7 @@ from verso.engine.model.project import AtlasRef, ChannelSpec, Preprocessing, Pro
 # ControlPoint
 # ---------------------------------------------------------------------------
 
+
 def test_control_point_round_trip():
     cp = ControlPoint(src_x=10.0, src_y=20.0, dst_x=15.0, dst_y=18.0)
     assert ControlPoint.from_dict(cp.to_dict()) == cp
@@ -19,6 +20,7 @@ def test_control_point_round_trip():
 # ---------------------------------------------------------------------------
 # Alignment
 # ---------------------------------------------------------------------------
+
 
 def test_alignment_defaults():
     a = Alignment()
@@ -41,11 +43,13 @@ def test_alignment_round_trip():
 
 
 def test_alignment_loads_legacy_dict_without_metadata():
-    a = Alignment.from_dict({
-        "anchoring": [1.0] * 9,
-        "ap_position_mm": 2.0,
-        "status": "in_progress",
-    })
+    a = Alignment.from_dict(
+        {
+            "anchoring": [1.0] * 9,
+            "ap_position_mm": 2.0,
+            "status": "in_progress",
+        }
+    )
     assert a.position_mm == 2.0
     assert a.source is None
     assert a.stored_anchoring is None
@@ -62,16 +66,19 @@ def test_alignment_writes_position_mm_not_ap_position_mm():
 
 
 def test_alignment_loads_legacy_complete_as_stored():
-    a = Alignment.from_dict({
-        "anchoring": [1.0] * 9,
-        "status": "complete",
-    })
+    a = Alignment.from_dict(
+        {
+            "anchoring": [1.0] * 9,
+            "status": "complete",
+        }
+    )
     assert a.stored_anchoring == [1.0] * 9
 
 
 # ---------------------------------------------------------------------------
 # WarpState
 # ---------------------------------------------------------------------------
+
 
 def test_warp_state_round_trip():
     cps = [
@@ -91,6 +98,7 @@ def test_warp_state_empty():
 # Mask
 # ---------------------------------------------------------------------------
 
+
 def test_mask_round_trip():
     m = Mask(path="masks/s001_slice.png", mask_type=MaskType.SLICE)
     assert Mask.from_dict(m.to_dict()) == m
@@ -99,6 +107,7 @@ def test_mask_round_trip():
 # ---------------------------------------------------------------------------
 # Preprocessing
 # ---------------------------------------------------------------------------
+
 
 def test_preprocessing_defaults_have_no_lr_line():
     pp = Preprocessing()
@@ -119,18 +128,21 @@ def test_preprocessing_lr_line_none_round_trip():
 
 
 def test_preprocessing_legacy_dict_without_lr_line():
-    pp = Preprocessing.from_dict({
-        "flip_horizontal": True,
-        "flip_vertical": False,
-        "slice_mask_path": "masks/s001-slice-mask.png",
-        "lr_mask_path": None,
-    })
+    pp = Preprocessing.from_dict(
+        {
+            "flip_horizontal": True,
+            "flip_vertical": False,
+            "slice_mask_path": "masks/s001-slice-mask.png",
+            "lr_mask_path": None,
+        }
+    )
     assert pp.lr_line is None
 
 
 # ---------------------------------------------------------------------------
 # Section
 # ---------------------------------------------------------------------------
+
 
 def _make_section() -> Section:
     return Section(
@@ -159,6 +171,7 @@ def test_section_round_trip():
 # Project — save / load from disk
 # ---------------------------------------------------------------------------
 
+
 def _make_project() -> Project:
     return Project(
         name="My Experiment",
@@ -175,6 +188,7 @@ def _make_project() -> Project:
 # ---------------------------------------------------------------------------
 # ChannelSpec
 # ---------------------------------------------------------------------------
+
 
 def test_channel_spec_round_trip():
     c = ChannelSpec(name="DAPI", color=(0, 100, 255), scale=0.6, visible=False)

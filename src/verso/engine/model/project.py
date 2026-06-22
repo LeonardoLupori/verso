@@ -23,9 +23,7 @@ SLICING_ORIENTATION_TO_AXIS: dict[str, str] = {
     "sagittal": "ML",
     "horizontal": "DV",
 }
-AXIS_TO_SLICING_ORIENTATION: dict[str, str] = {
-    v: k for k, v in SLICING_ORIENTATION_TO_AXIS.items()
-}
+AXIS_TO_SLICING_ORIENTATION: dict[str, str] = {v: k for k, v in SLICING_ORIENTATION_TO_AXIS.items()}
 
 
 @dataclass
@@ -91,9 +89,12 @@ class Preprocessing:
             "slice_mask_path": self.slice_mask_path,
             "lr_mask_path": self.lr_mask_path,
             "lr_line": (
-                [[float(self.lr_line[0][0]), float(self.lr_line[0][1])],
-                 [float(self.lr_line[1][0]), float(self.lr_line[1][1])]]
-                if self.lr_line is not None else None
+                [
+                    [float(self.lr_line[0][0]), float(self.lr_line[0][1])],
+                    [float(self.lr_line[1][0]), float(self.lr_line[1][1])],
+                ]
+                if self.lr_line is not None
+                else None
             ),
         }
 

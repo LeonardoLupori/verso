@@ -147,9 +147,7 @@ class AlignView(QWidget):
             if self._state.is_dirty(section.id, "align"):
                 stashed = self._state.get_baseline(section.id, "align")
                 self._baseline_alignment = (
-                    stashed
-                    if stashed is not None
-                    else copy.deepcopy(section.alignment)
+                    stashed if stashed is not None else copy.deepcopy(section.alignment)
                 )
                 self._set_dirty(True)
             else:
@@ -284,6 +282,7 @@ class AlignView(QWidget):
         self._end_pan_run()
         self._push_undo()
         from verso.engine.registration import scale_anchoring
+
         new_anchoring = scale_anchoring(anchoring, scale_u, scale_v)
         section.alignment.anchoring = new_anchoring
         self._sync_position_from_anchoring(new_anchoring)
@@ -314,9 +313,7 @@ class AlignView(QWidget):
             return False
         # If the user never touched the navigator but hits Save, seed a default
         # plane so there's something to store.
-        if not section.alignment.anchoring or all(
-            v == 0.0 for v in section.alignment.anchoring
-        ):
+        if not section.alignment.anchoring or all(v == 0.0 for v in section.alignment.anchoring):
             if raw is None:
                 return False
             h, w = raw.shape[:2]

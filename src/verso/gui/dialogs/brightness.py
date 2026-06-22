@@ -32,9 +32,7 @@ class BrightnessDialog(QDialog):
         # Tool window: floats above main, no taskbar entry, slim title bar,
         # does not steal focus from the canvas while the user edits.
         self.setWindowFlags(
-            Qt.WindowType.Tool
-            | Qt.WindowType.WindowCloseButtonHint
-            | Qt.WindowType.WindowTitleHint
+            Qt.WindowType.Tool | Qt.WindowType.WindowCloseButtonHint | Qt.WindowType.WindowTitleHint
         )
         self.setModal(False)
         self.setMinimumWidth(320)

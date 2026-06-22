@@ -24,6 +24,7 @@ class _AtlasLoader(QObject):
     def run(self) -> None:
         try:
             from verso.engine.atlas import AtlasVolume
+
             self.done.emit(AtlasVolume(self._name))
         except Exception as exc:
             self.error.emit(str(exc))
@@ -34,7 +35,7 @@ class AppState(QObject):
 
     project_changed = pyqtSignal()
     section_changed = pyqtSignal(int)
-    atlas_changed = pyqtSignal()        # emitted when atlas finishes loading
+    atlas_changed = pyqtSignal()  # emitted when atlas finishes loading
     atlas_error = pyqtSignal(str)
     dirty_changed = pyqtSignal(str, str)  # (section_id, step) — edit registry change
 
@@ -107,6 +108,18 @@ class AppState(QObject):
         self._dirty.clear()
         self._baselines.clear()
         self._prep_drafts.clear()
+
+    def forget_section(self, section_id: str) -> None:
+        """Drop all edit bookkeeping for a section being removed from the project.
+
+        Pops every ``_dirty``, ``_baselines`` and ``_prep_drafts`` entry keyed by
+        ``section_id`` so a removed section leaves no orphaned state behind.
+        """
+        for key in [k for k in self._dirty if k[0] == section_id]:
+            self.clear_dirty(*key)
+        for key in [k for k in self._baselines if k[0] == section_id]:
+            self._baselines.pop(key, None)
+        self._prep_drafts.pop(section_id, None)
 
     def dirty_sections(self) -> list[tuple[Section, set[str]]]:
         """Return (section, {dirty steps}) for every section with unsaved edits."""
@@ -204,7 +217,7 @@ class AppState(QObject):
         thread.finished.connect(loader.deleteLater)
 
         self._atlas_thread = thread
-        self._loader = loader   # keep reference alive
+        self._loader = loader  # keep reference alive
         thread.start()
 
     def _on_atlas_loaded(self, atlas: AtlasVolume) -> None:

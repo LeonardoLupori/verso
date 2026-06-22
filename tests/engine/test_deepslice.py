@@ -49,18 +49,20 @@ def test_run_deepslice_suggestions_reads_generated_json(tmp_path: Path, monkeypa
         assert copied[0].name == "001_s001.png"
         output = Path(payload["output_base"]).with_suffix(".json")
         output.write_text(
-            json.dumps({
-                "name": "out",
-                "target": "ABA_Mouse_CCFv3_2017_25um.cutlas",
-                "slices": [
-                    {
-                        "filename": copied[0].name,
-                        "nr": 1,
-                        "anchoring": [1, 2, 3, 4, 5, 6, 7, 8, 9],
-                        "confidence": 0.8,
-                    }
-                ],
-            })
+            json.dumps(
+                {
+                    "name": "out",
+                    "target": "ABA_Mouse_CCFv3_2017_25um.cutlas",
+                    "slices": [
+                        {
+                            "filename": copied[0].name,
+                            "nr": 1,
+                            "anchoring": [1, 2, 3, 4, 5, 6, 7, 8, 9],
+                            "confidence": 0.8,
+                        }
+                    ],
+                }
+            )
         )
         return subprocess.CompletedProcess(args, 0, stdout="ok", stderr="")
 
@@ -141,9 +143,15 @@ def test_apply_deepslice_suggestions_converts_quicknii_convention(tmp_path: Path
     project = _make_project(tmp_path)
     # QuickNII convention: origin flips about N-1 (527-100=427, 319-40=279).
     quicknii = [
-        10.0, 427.0, 279.0,
-        20.0, -3.0, -4.0,
-        5.0, -6.0, -7.0,
+        10.0,
+        427.0,
+        279.0,
+        20.0,
+        -3.0,
+        -4.0,
+        5.0,
+        -6.0,
+        -7.0,
     ]
     result = DeepSliceRunResult(
         run_id="run-1",
@@ -163,9 +171,15 @@ def test_apply_deepslice_suggestions_converts_quicknii_convention(tmp_path: Path
     )
 
     assert project.sections[0].alignment.anchoring == [
-        10.0, 100.0, 40.0,
-        20.0, 3.0, 4.0,
-        5.0, 6.0, 7.0,
+        10.0,
+        100.0,
+        40.0,
+        20.0,
+        3.0,
+        4.0,
+        5.0,
+        6.0,
+        7.0,
     ]
 
 
@@ -197,9 +211,15 @@ def test_apply_deepslice_suggestions_does_not_mirror_for_reversed_section_order(
     )
 
     assert project.sections[0].alignment.anchoring == [
-        10.0, 100.0, 40.0,
-        20.0, 3.0, 4.0,
-        5.0, 6.0, 7.0,
+        10.0,
+        100.0,
+        40.0,
+        20.0,
+        3.0,
+        4.0,
+        5.0,
+        6.0,
+        7.0,
     ]
 
 
@@ -212,14 +232,16 @@ def test_run_deepslice_can_reverse_temporary_section_numbers(tmp_path: Path, mon
         assert copied == ["001_s002.png", "002_s001.png"]
         output = Path(payload["output_base"]).with_suffix(".json")
         output.write_text(
-            json.dumps({
-                "name": "out",
-                "target": "ABA_Mouse_CCFv3_2017_25um.cutlas",
-                "slices": [
-                    {"filename": copied[0], "nr": 2, "anchoring": [1.0] * 9},
-                    {"filename": copied[1], "nr": 1, "anchoring": [2.0] * 9},
-                ],
-            })
+            json.dumps(
+                {
+                    "name": "out",
+                    "target": "ABA_Mouse_CCFv3_2017_25um.cutlas",
+                    "slices": [
+                        {"filename": copied[0], "nr": 2, "anchoring": [1.0] * 9},
+                        {"filename": copied[1], "nr": 1, "anchoring": [2.0] * 9},
+                    ],
+                }
+            )
         )
         return subprocess.CompletedProcess(args, 0, stdout="ok", stderr="")
 
@@ -260,14 +282,16 @@ def test_run_deepslice_reverses_section_numbers_by_reflection_preserving_gaps(
         assert copied == ["010_s040.png", "020_s030.png", "040_s010.png"]
         output = Path(payload["output_base"]).with_suffix(".json")
         output.write_text(
-            json.dumps({
-                "name": "out",
-                "target": "ABA_Mouse_CCFv3_2017_25um.cutlas",
-                "slices": [
-                    {"filename": name, "nr": i + 1, "anchoring": [1.0] * 9}
-                    for i, name in enumerate(copied)
-                ],
-            })
+            json.dumps(
+                {
+                    "name": "out",
+                    "target": "ABA_Mouse_CCFv3_2017_25um.cutlas",
+                    "slices": [
+                        {"filename": name, "nr": i + 1, "anchoring": [1.0] * 9}
+                        for i, name in enumerate(copied)
+                    ],
+                }
+            )
         )
         return subprocess.CompletedProcess(args, 0, stdout="ok", stderr="")
 
@@ -368,15 +392,17 @@ def test_run_deepslice_uses_user_serial_as_filename_prefix(tmp_path: Path, monke
         assert copied == ["010_s010.png", "030_s030.png", "050_s050.png"]
         output = Path(payload["output_base"]).with_suffix(".json")
         output.write_text(
-            json.dumps({
-                "name": "out",
-                "target": "ABA_Mouse_CCFv3_2017_25um.cutlas",
-                "slices": [
-                    {"filename": copied[0], "nr": 10, "anchoring": [1.0] * 9},
-                    {"filename": copied[1], "nr": 30, "anchoring": [2.0] * 9},
-                    {"filename": copied[2], "nr": 50, "anchoring": [3.0] * 9},
-                ],
-            })
+            json.dumps(
+                {
+                    "name": "out",
+                    "target": "ABA_Mouse_CCFv3_2017_25um.cutlas",
+                    "slices": [
+                        {"filename": copied[0], "nr": 10, "anchoring": [1.0] * 9},
+                        {"filename": copied[1], "nr": 30, "anchoring": [2.0] * 9},
+                        {"filename": copied[2], "nr": 50, "anchoring": [3.0] * 9},
+                    ],
+                }
+            )
         )
         return subprocess.CompletedProcess(args, 0, stdout="ok", stderr="")
 
@@ -418,15 +444,20 @@ def test_run_deepslice_reverse_visible_in_filenames_for_non_contiguous_serials(
         assert copied == ["010_s050.png", "030_s030.png", "050_s010.png"]
         output = Path(payload["output_base"]).with_suffix(".json")
         output.write_text(
-            json.dumps({
-                "name": "out",
-                "target": "ABA_Mouse_CCFv3_2017_25um.cutlas",
-                "slices": [
-                    {"filename": name, "nr": int(name.split("_s")[-1].split(".")[0]),
-                     "anchoring": [1.0] * 9}
-                    for name in copied
-                ],
-            })
+            json.dumps(
+                {
+                    "name": "out",
+                    "target": "ABA_Mouse_CCFv3_2017_25um.cutlas",
+                    "slices": [
+                        {
+                            "filename": name,
+                            "nr": int(name.split("_s")[-1].split(".")[0]),
+                            "anchoring": [1.0] * 9,
+                        }
+                        for name in copied
+                    ],
+                }
+            )
         )
         return subprocess.CompletedProcess(args, 0, stdout="ok", stderr="")
 
@@ -463,13 +494,13 @@ def test_run_deepslice_applies_gamma_to_staged_png(tmp_path: Path, monkeypatch):
             captured["mean"] = int(np.asarray(staged).mean())
         output = Path(payload["output_base"]).with_suffix(".json")
         output.write_text(
-            json.dumps({
-                "name": "out",
-                "target": "ABA_Mouse_CCFv3_2017_25um.cutlas",
-                "slices": [
-                    {"filename": copied[0].name, "nr": 1, "anchoring": [1.0] * 9}
-                ],
-            })
+            json.dumps(
+                {
+                    "name": "out",
+                    "target": "ABA_Mouse_CCFv3_2017_25um.cutlas",
+                    "slices": [{"filename": copied[0].name, "nr": 1, "anchoring": [1.0] * 9}],
+                }
+            )
         )
         return subprocess.CompletedProcess(args, 0, stdout="ok", stderr="")
 
@@ -507,13 +538,13 @@ def test_run_deepslice_uses_channel_composite_for_multichannel(tmp_path: Path, m
             captured["info"] = (staged.mode, staged.size)
         output = Path(payload["output_base"]).with_suffix(".json")
         output.write_text(
-            json.dumps({
-                "name": "out",
-                "target": "ABA_Mouse_CCFv3_2017_25um.cutlas",
-                "slices": [
-                    {"filename": copied[0].name, "nr": 1, "anchoring": [1.0] * 9}
-                ],
-            })
+            json.dumps(
+                {
+                    "name": "out",
+                    "target": "ABA_Mouse_CCFv3_2017_25um.cutlas",
+                    "slices": [{"filename": copied[0].name, "nr": 1, "anchoring": [1.0] * 9}],
+                }
+            )
         )
         return subprocess.CompletedProcess(args, 0, stdout="ok", stderr="")
 
@@ -557,13 +588,13 @@ def test_run_deepslice_stages_working_resolution_png_with_display_flips(
         assert staged_arr[-1, -1, 0] > staged_arr[0, 0, 0]
         output = Path(payload["output_base"]).with_suffix(".json")
         output.write_text(
-            json.dumps({
-                "name": "out",
-                "target": "ABA_Mouse_CCFv3_2017_25um.cutlas",
-                "slices": [
-                    {"filename": copied[0].name, "nr": 1, "anchoring": [1.0] * 9}
-                ],
-            })
+            json.dumps(
+                {
+                    "name": "out",
+                    "target": "ABA_Mouse_CCFv3_2017_25um.cutlas",
+                    "slices": [{"filename": copied[0].name, "nr": 1, "anchoring": [1.0] * 9}],
+                }
+            )
         )
         return subprocess.CompletedProcess(args, 0, stdout="ok", stderr="")
 
@@ -608,10 +639,17 @@ def test_reset_default_proposals_interpolates_flipped_keyframe_in_display_space(
 
     angle = math.radians(18.0)
     unpacked_left = [
-        228.0, 500.0, 160.0,
-        math.cos(angle), math.sin(angle), 0.0,
-        0.0, 0.0, 1.0,
-        0.456, 0.4,
+        228.0,
+        500.0,
+        160.0,
+        math.cos(angle),
+        math.sin(angle),
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.456,
+        0.4,
     ]
     unpacked_right = list(unpacked_left)
     unpacked_right[1] = 100.0

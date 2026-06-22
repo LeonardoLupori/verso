@@ -192,6 +192,7 @@ class WarpView(QWidget):
         if not cps:
             return rgba
         from verso.engine.warping import warp_overlay
+
         src = np.array([[cp.src_x, cp.src_y] for cp in cps])
         dst = np.array([[cp.dst_x, cp.dst_y] for cp in cps])
         try:
@@ -205,6 +206,7 @@ class WarpView(QWidget):
         if not cps:
             return s, t
         from verso.engine.warping import find_atlas_position
+
         src = np.array([[cp.src_x, cp.src_y] for cp in cps])
         dst = np.array([[cp.dst_x, cp.dst_y] for cp in cps])
         return find_atlas_position(s, t, src, dst, aspect=self._section_aspect())
@@ -247,9 +249,7 @@ class WarpView(QWidget):
         # from the stash rather than re-snapshotting the (dirty) section.
         if self._state.is_dirty(section.id, "warp"):
             stashed = self._state.get_baseline(section.id, "warp")
-            self._baseline_warp = (
-                stashed if stashed is not None else copy.deepcopy(section.warp)
-            )
+            self._baseline_warp = stashed if stashed is not None else copy.deepcopy(section.warp)
             self._set_dirty(True)
         else:
             self._baseline_warp = copy.deepcopy(section.warp)
@@ -526,8 +526,6 @@ class WarpView(QWidget):
         if dirty:
             section = self._panel.section
             if section is not None and self._baseline_warp is not None:
-                self._state.set_baseline(
-                    section.id, "warp", copy.deepcopy(self._baseline_warp)
-                )
+                self._state.set_baseline(section.id, "warp", copy.deepcopy(self._baseline_warp))
         self._dirty = dirty
         self.dirty_changed.emit(dirty)

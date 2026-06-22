@@ -80,6 +80,7 @@ def _visualign_target(atlas_name: str) -> tuple[str, list[float] | None]:
 # Low-level format helpers
 # ---------------------------------------------------------------------------
 
+
 def _parse_section_quicknii(raw: dict[str, Any]) -> dict[str, Any]:
     """Extract QuickNII fields from a raw section dict."""
     return {
@@ -147,12 +148,14 @@ def _control_points_to_markers(
     w, h = float(width), float(height)
     markers: list[list[float]] = []
     for cp in control_points:
-        markers.append([
-            round(cp.src_x * w, 6),
-            round(cp.src_y * h, 6),
-            round(cp.dst_x * w, 6),
-            round(cp.dst_y * h, 6),
-        ])
+        markers.append(
+            [
+                round(cp.src_x * w, 6),
+                round(cp.src_y * h, 6),
+                round(cp.dst_x * w, 6),
+                round(cp.dst_y * h, 6),
+            ]
+        )
     return markers
 
 
@@ -167,6 +170,7 @@ def _control_points_to_markers(
 # save → load is an identity round-trip regardless of a section's flip flag.
 # Horizontal/vertical flips are represented outside the alignment (e.g. baked
 # into the exported images), never by mirroring the saved coordinates.
+
 
 def load_quicknii(path: Path, atlas_name: str = "allen_mouse_25um") -> Project:
     """Load a QuickNII JSON file into a VERSO :class:`Project`.
@@ -199,11 +203,7 @@ def load_quicknii(path: Path, atlas_name: str = "allen_mouse_25um") -> Project:
         anchoring = parsed["anchoring"]
         if bg_shape is not None and any(anchoring):
             anchoring = _to_quicknii_convention(anchoring, bg_shape)
-        status = (
-            AlignmentStatus.COMPLETE
-            if any(anchoring)
-            else AlignmentStatus.NOT_STARTED
-        )
+        status = AlignmentStatus.COMPLETE if any(anchoring) else AlignmentStatus.NOT_STARTED
         alignment = Alignment(
             anchoring=anchoring,
             status=status,
@@ -282,6 +282,7 @@ def load_deepslice(path: Path, atlas_name: str = "allen_mouse_25um") -> Project:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _flip_anchoring(anchoring: list[float]) -> list[float]:
     """Convert anchoring from horizontally-flipped display space to original image space.
@@ -398,6 +399,7 @@ def _registration_dims(section) -> tuple[int, int]:
     """
     try:
         from verso.engine.io.image_io import registration_dimensions
+
         return registration_dimensions(section)
     except Exception:
         return 0, 0
@@ -406,6 +408,7 @@ def _registration_dims(section) -> tuple[int, int]:
 # ---------------------------------------------------------------------------
 # Public save functions
 # ---------------------------------------------------------------------------
+
 
 def _export_anchoring(
     anchoring: list[float],
@@ -460,15 +463,23 @@ def save_quicknii_xml(
     lines.append(f"<series name='{project.name}' target='{atlas_name}'{res_attr}>")
 
     from verso.engine.registration import _display_space_anchoring
-    prefixes = ["' anchoring='ox=", "&amp;oy=", "&amp;oz=", "&amp;ux=",
-                "&amp;uy=", "&amp;uz=", "&amp;vx=", "&amp;vy=", "&amp;vz="]
+
+    prefixes = [
+        "' anchoring='ox=",
+        "&amp;oy=",
+        "&amp;oz=",
+        "&amp;ux=",
+        "&amp;uy=",
+        "&amp;uz=",
+        "&amp;vx=",
+        "&amp;vy=",
+        "&amp;vz=",
+    ]
     for section in project.sections:
         w, h = _registration_dims(section)
         filename = _export_image_filename(section)
         line = (
-            f"    <slice filename='{filename}'"
-            f" nr='{section.slice_index}'"
-            f" width='{w}' height='{h}"
+            f"    <slice filename='{filename}' nr='{section.slice_index}' width='{w}' height='{h}"
         )
         if section.alignment.status == AlignmentStatus.COMPLETE:
             original = _display_space_anchoring(section)
@@ -502,6 +513,7 @@ def save_quicknii(
     if atlas_shape is None and project.atlas:
         atlas_shape = _BG_ATLAS_SHAPE.get(project.atlas.name)
     from verso.engine.registration import _display_space_anchoring
+
     slices_out: list[dict[str, Any]] = []
     for section in project.sections:
         w, h = _registration_dims(section)
@@ -562,8 +574,8 @@ def export_brainglobe_atlas_for_visualign(
 
     output_dir = Path(output_dir)
     bg = BrainGlobeAtlas(atlas_name, check_latest=False)
-    annotation = bg.annotation   # (AP, DV, LR) uint32
-    structures = bg.structures   # {id: {"name": ..., "rgb_triplet": [r, g, b], ...}}
+    annotation = bg.annotation  # (AP, DV, LR) uint32
+    structures = bg.structures  # {id: {"name": ..., "rgb_triplet": [r, g, b], ...}}
 
     # Flip AP (0→posterior) and DV (0→inferior); preserve LR direction
     # (0→right, matching BrainGlobe "asr" convention and VERSO's exported
@@ -580,23 +592,23 @@ def export_brainglobe_atlas_for_visualign(
     # --- labels.nii.gz ---
     x, y, z = qn_volume.shape
     hdr = bytearray(348)
-    struct.pack_into('<i', hdr, 0, 348)       # sizeof_hdr
-    struct.pack_into('<h', hdr, 40, 3)        # dim[0] = ndims
-    struct.pack_into('<h', hdr, 42, x)        # dim[1] = LR
-    struct.pack_into('<h', hdr, 44, y)        # dim[2] = AP
-    struct.pack_into('<h', hdr, 46, z)        # dim[3] = DV
-    struct.pack_into('<h', hdr, 70, 768)      # datatype = uint32
-    struct.pack_into('<h', hdr, 72, 32)       # bitpix
-    struct.pack_into('<f', hdr, 76, 1.0)      # pixdim[0]
-    struct.pack_into('<f', hdr, 108, 352.0)   # vox_offset (348 header + 4 pad)
-    hdr[344:348] = b'n+1\x00'                 # NIfTI-1 magic
-    with gzip.open(cutlas_dir / "labels.nii.gz", 'wb', compresslevel=6) as f:
+    struct.pack_into("<i", hdr, 0, 348)  # sizeof_hdr
+    struct.pack_into("<h", hdr, 40, 3)  # dim[0] = ndims
+    struct.pack_into("<h", hdr, 42, x)  # dim[1] = LR
+    struct.pack_into("<h", hdr, 44, y)  # dim[2] = AP
+    struct.pack_into("<h", hdr, 46, z)  # dim[3] = DV
+    struct.pack_into("<h", hdr, 70, 768)  # datatype = uint32
+    struct.pack_into("<h", hdr, 72, 32)  # bitpix
+    struct.pack_into("<f", hdr, 76, 1.0)  # pixdim[0]
+    struct.pack_into("<f", hdr, 108, 352.0)  # vox_offset (348 header + 4 pad)
+    hdr[344:348] = b"n+1\x00"  # NIfTI-1 magic
+    with gzip.open(cutlas_dir / "labels.nii.gz", "wb", compresslevel=6) as f:
         f.write(bytes(hdr))
-        f.write(b'\x00' * 4)                  # padding to reach byte offset 352
+        f.write(b"\x00" * 4)  # padding to reach byte offset 352
         # NIfTI stores the first dimension (x = LR) varying fastest, i.e. Fortran
         # order for our (LR, AP, DV) array. Writing C-order here would scramble
         # the voxels and VisuAlign would fail to load the atlas.
-        f.write(qn_volume.tobytes(order='F'))
+        f.write(qn_volume.tobytes(order="F"))
 
     # --- labels.txt ---
     txt_lines = [
@@ -637,6 +649,7 @@ def save_visualign(
     if atlas_shape is None and project.atlas:
         atlas_shape = _BG_ATLAS_SHAPE.get(project.atlas.name)
     from verso.engine.registration import _display_space_anchoring
+
     slices_out: list[dict[str, Any]] = []
     for section in project.sections:
         w, h = _registration_dims(section)
@@ -655,9 +668,7 @@ def save_visualign(
             # control points in — with no flip applied. Flips are represented
             # outside the alignment (e.g. baked into the exported images), never
             # by mirroring the saved coordinates.
-            entry["markers"] = _control_points_to_markers(
-                section.warp.control_points, w, h
-            )
+            entry["markers"] = _control_points_to_markers(section.warp.control_points, w, h)
         slices_out.append(entry)
 
     va_target, va_resolution = _visualign_target(project.atlas.name if project.atlas else "")

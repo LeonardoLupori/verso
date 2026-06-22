@@ -44,10 +44,7 @@ _MAX_PLAUSIBLE_CHANNELS = 8
 
 def _natural_key(stem: str) -> list[object]:
     """Sort key that orders embedded numbers numerically (``s2`` before ``s10``)."""
-    return [
-        int(chunk) if chunk.isdigit() else chunk
-        for chunk in re.split(r"(\d+)", stem)
-    ]
+    return [int(chunk) if chunk.isdigit() else chunk for chunk in re.split(r"(\d+)", stem)]
 
 
 def guess_slice_indices(paths: list[str | Path]) -> list[int]:
@@ -116,6 +113,7 @@ def thumbnail_filename(path: str | Path) -> str:
 # Low-level loaders
 # ---------------------------------------------------------------------------
 
+
 def load_image(path: str | Path) -> np.ndarray:
     """Read any supported image file as a numpy array (original dtype/shape).
 
@@ -125,8 +123,10 @@ def load_image(path: str | Path) -> np.ndarray:
     path = Path(path)
     if path.suffix.lower() in (".tif", ".tiff"):
         import tifffile
+
         return tifffile.imread(str(path))
     from PIL import Image
+
     return np.asarray(Image.open(str(path)))
 
 
@@ -136,6 +136,7 @@ def image_dimensions(path: str | Path) -> tuple[int, int]:
     if path.suffix.lower() in (".tif", ".tiff"):
         try:
             import tifffile
+
             with tifffile.TiffFile(str(path)) as tif:
                 series = tif.series[0]
                 shape = series.shape
@@ -150,13 +151,12 @@ def image_dimensions(path: str | Path) -> tuple[int, int]:
             pass
 
     from PIL import Image
+
     with Image.open(str(path)) as im:
         return im.size
 
 
-def compute_working_scale(
-    paths: list[str | Path], max_side: int = THUMBNAIL_MAX_SIDE
-) -> float:
+def compute_working_scale(paths: list[str | Path], max_side: int = THUMBNAIL_MAX_SIDE) -> float:
     """Compute a single working-copy scale factor for an import batch.
 
     Reads the dimensions of every image (without fully decoding them), finds the
@@ -196,6 +196,7 @@ def compute_working_scale(
 # ---------------------------------------------------------------------------
 # Layout + normalization
 # ---------------------------------------------------------------------------
+
 
 def _stretch_uint8(image: np.ndarray, low_pct: float = 1.0, high_pct: float = 99.8) -> np.ndarray:
     """Percentile contrast stretch to uint8."""
@@ -256,9 +257,8 @@ def to_multichannel(image: np.ndarray) -> np.ndarray:
 # Resize (multichannel-aware)
 # ---------------------------------------------------------------------------
 
-def _resize_multichannel(
-    image: np.ndarray, new_size: tuple[int, int]
-) -> np.ndarray:
+
+def _resize_multichannel(image: np.ndarray, new_size: tuple[int, int]) -> np.ndarray:
     """Lanczos-resize an ``(H, W)`` or ``(H, W, C)`` uint8 array.
 
     new_size is ``(new_w, new_h)`` to match PIL convention.
@@ -272,16 +272,12 @@ def _resize_multichannel(
     new_w, new_h = new_size
     out = np.empty((new_h, new_w, image.shape[2]), dtype=image.dtype)
     for c in range(image.shape[2]):
-        pil = PILImage.fromarray(image[:, :, c], mode="L").resize(
-            new_size, PILImage.LANCZOS
-        )
+        pil = PILImage.fromarray(image[:, :, c], mode="L").resize(new_size, PILImage.LANCZOS)
         out[:, :, c] = np.array(pil)
     return out
 
 
-def resize_to_max_side(
-    image: np.ndarray, max_side: int
-) -> tuple[np.ndarray, float]:
+def resize_to_max_side(image: np.ndarray, max_side: int) -> tuple[np.ndarray, float]:
     """Resize image so its longest side ≤ max_side. Multichannel-aware."""
     h, w = image.shape[:2]
     if max(h, w) <= max_side:
@@ -293,9 +289,7 @@ def resize_to_max_side(
     return _resize_multichannel(image, (new_w, new_h)), scale
 
 
-def resize_by_scale(
-    image: np.ndarray, scale: float
-) -> tuple[np.ndarray, float]:
+def resize_by_scale(image: np.ndarray, scale: float) -> tuple[np.ndarray, float]:
     """Resize image by a fixed scale factor. Multichannel-aware."""
     if scale == 1.0:
         return image, 1.0
@@ -309,6 +303,7 @@ def resize_by_scale(
 # ---------------------------------------------------------------------------
 # Working copy
 # ---------------------------------------------------------------------------
+
 
 def _canonical_thumbnail(section) -> Path:
     """Return the canonical OME-TIFF thumbnail path for *section*.
@@ -413,9 +408,7 @@ def _default_channel_names(n: int) -> list[str]:
     return [f"Ch {i}" for i in range(n)]
 
 
-def _save_ome_tiff(
-    image: np.ndarray, path: Path, channel_names: list[str]
-) -> None:
+def _save_ome_tiff(image: np.ndarray, path: Path, channel_names: list[str]) -> None:
     """Write an ``(H, W, C)`` uint8 array as a multichannel OME-TIFF.
 
     Channel names are stored in the OME XML metadata.
@@ -446,6 +439,7 @@ def probe_channels(path: str | Path) -> list[str]:
     if path.suffix.lower() in (".tif", ".tiff"):
         try:
             import tifffile
+
             with tifffile.TiffFile(str(path)) as tif:
                 ome_meta = getattr(tif, "ome_metadata", None)
                 if ome_meta:
@@ -475,6 +469,7 @@ def probe_channels(path: str | Path) -> list[str]:
     # PNG / JPG path
     try:
         from PIL import Image
+
         with Image.open(str(path)) as im:
             mode = im.mode
         if mode in ("L", "1", "I", "F"):

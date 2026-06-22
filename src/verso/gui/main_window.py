@@ -57,6 +57,8 @@ _VIEW_OVERVIEW = 0
 _VIEW_PREP = 1
 _VIEW_ALIGN = 2
 _VIEW_WARP = 3
+
+
 class _DeepSliceWorker(QObject):
     done = pyqtSignal(object)
     error = pyqtSignal(str)
@@ -245,6 +247,10 @@ class MainWindow(QMainWindow):
         act_reorder = QAction("Reorder slices based on &filename…", self)
         act_reorder.triggered.connect(self._reorder_by_filename)
         images_menu.addAction(act_reorder)
+        images_menu.addSeparator()
+        act_add_images = QAction("&Add images to project…", self)
+        act_add_images.triggered.connect(self._add_images_to_project)
+        images_menu.addAction(act_add_images)
 
         batch_menu = mb.addMenu("&Batch")
 
@@ -322,9 +328,7 @@ class MainWindow(QMainWindow):
         if self._brightness_dialog is None:
             self._brightness_dialog = BrightnessDialog(self)
             self._brightness_dialog.channels_changed.connect(self._on_channels_changed)
-            self._brightness_dialog.channels_committed.connect(
-                self._on_channels_committed
-            )
+            self._brightness_dialog.channels_committed.connect(self._on_channels_committed)
         project = self._state.project
         if project is not None:
             self._brightness_dialog.set_channels(project.channels)
@@ -387,10 +391,10 @@ class MainWindow(QMainWindow):
         self._align = AlignView(self._panel, self._state)
         self._warp = WarpView(self._panel, self._state)
 
-        self._stack.addWidget(self._overview)   # 0
-        self._stack.addWidget(self._prep)       # 1
-        self._stack.addWidget(self._align)      # 2
-        self._stack.addWidget(self._warp)       # 3
+        self._stack.addWidget(self._overview)  # 0
+        self._stack.addWidget(self._prep)  # 1
+        self._stack.addWidget(self._align)  # 2
+        self._stack.addWidget(self._warp)  # 3
 
         # Park the panel inside AlignView's slot immediately.  If we left it as
         # a free-floating child of MainWindow (the default when ``SectionCanvasPanel``
@@ -404,7 +408,7 @@ class MainWindow(QMainWindow):
         right_dock = QDockWidget("Properties", self)
         right_dock.setWidget(self._props)
         right_dock.setFeatures(QDockWidget.DockWidgetFeature.NoDockWidgetFeatures)
-        right_dock.setTitleBarWidget(QWidget())   # hide title bar
+        right_dock.setTitleBarWidget(QWidget())  # hide title bar
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, right_dock)
         self._right_dock = right_dock
 
@@ -469,6 +473,7 @@ class MainWindow(QMainWindow):
         self._overview.section_activated.connect(self._on_section_activated)
         self._overview.section_selected.connect(self._state.set_section)
         self._overview.sections_reordered.connect(self._on_sections_reordered)
+        self._overview.remove_requested.connect(self._remove_sections)
 
         # Filmstrip
         self._filmstrip.section_selected.connect(self._state.set_section)
@@ -523,23 +528,36 @@ class MainWindow(QMainWindow):
 
         # Local-changes bars (Save / Clear edits / Reset) and per-view dirty signals.
         view_bindings = (
-            ("prep", self._prep, self._props.prep,
-             self._on_prep_save_clicked, self._on_prep_revert_clicked,
-             self._on_prep_clear_clicked),
-            ("align", self._align, self._props.align,
-             self._on_align_save_clicked, self._on_align_revert_clicked,
-             self._on_align_clear_clicked),
-            ("warp", self._warp, self._props.warp,
-             self._on_warp_save_clicked, self._on_warp_revert_clicked,
-             self._on_warp_clear_clicked),
+            (
+                "prep",
+                self._prep,
+                self._props.prep,
+                self._on_prep_save_clicked,
+                self._on_prep_revert_clicked,
+                self._on_prep_clear_clicked,
+            ),
+            (
+                "align",
+                self._align,
+                self._props.align,
+                self._on_align_save_clicked,
+                self._on_align_revert_clicked,
+                self._on_align_clear_clicked,
+            ),
+            (
+                "warp",
+                self._warp,
+                self._props.warp,
+                self._on_warp_save_clicked,
+                self._on_warp_revert_clicked,
+                self._on_warp_clear_clicked,
+            ),
         )
         for step, view, page, on_save, on_revert, on_reset in view_bindings:
             view.dirty_changed.connect(page.save_bar.set_dirty)
             # Mirror the view's dirty state into the persistent edit registry for
             # the section currently loaded in that view.
-            view.dirty_changed.connect(
-                lambda dirty, s=step: self._on_view_dirty_changed(s, dirty)
-            )
+            view.dirty_changed.connect(lambda dirty, s=step: self._on_view_dirty_changed(s, dirty))
             page.save_bar.save_requested.connect(on_save)
             page.save_bar.revert_requested.connect(on_revert)
             page.save_bar.reset_requested.connect(on_reset)
@@ -705,18 +723,14 @@ class MainWindow(QMainWindow):
         self._prep.set_channels(project.channels)
         if self._brightness_dialog is not None:
             self._brightness_dialog.set_channels(project.channels)
-        self._filmstrip.populate(
-            project.sections, project.channels, project.working_scale
-        )
+        self._filmstrip.populate(project.sections, project.channels, project.working_scale)
         self._props.warp.cp.apply_style(project.cp_size, project.cp_shape, project.cp_color)
         self._warp.set_cp_style(project.cp_size, project.cp_shape, project.cp_color)
 
         if self._state.project_path is not None:
             self._write_project(self._state.project_path)
 
-        self.statusBar().showMessage(
-            f"Imported settings from {Path(path).name}", 3000
-        )
+        self.statusBar().showMessage(f"Imported settings from {Path(path).name}", 3000)
 
     def _save_all(self) -> bool:
         """Persist every unsaved edit across all slices/steps (Ctrl+S / menu).
@@ -787,9 +801,7 @@ class MainWindow(QMainWindow):
         if self._state.project is None:
             return
         current_path = self._state.project_path
-        suggested = (
-            str(current_path) if current_path is not None else DEFAULT_PROJECT_FILENAME
-        )
+        suggested = str(current_path) if current_path is not None else DEFAULT_PROJECT_FILENAME
         path, _ = QFileDialog.getSaveFileName(
             self, "Save Project As", suggested, "JSON files (*.json)"
         )
@@ -872,8 +884,7 @@ class MainWindow(QMainWindow):
         reply = QMessageBox.question(
             self,
             "Unsaved changes",
-            f"You have unsaved edits in {n} section(s). "
-            "Save them before continuing?",
+            f"You have unsaved edits in {n} section(s). Save them before continuing?",
             QMessageBox.StandardButton.Save
             | QMessageBox.StandardButton.Discard
             | QMessageBox.StandardButton.Cancel,
@@ -935,6 +946,7 @@ class MainWindow(QMainWindow):
         if project is None or step not in ("prep", "align", "warp"):
             return
         from verso.engine.model.status import section_step_color
+
         colors = [
             section_step_color(s, step, dirty=self._state.is_dirty(s.id, step))
             for s in project.sections
@@ -956,9 +968,8 @@ class MainWindow(QMainWindow):
         if section is None:
             return
         from verso.engine.model.status import section_step_color
-        color = section_step_color(
-            section, step, dirty=self._state.is_dirty(section.id, step)
-        )
+
+        color = section_step_color(section, step, dirty=self._state.is_dirty(section.id, step))
         self._filmstrip.set_status_color(self._state.section_index, color)
 
     def _on_dirty_changed(self, section_id: str, step: str) -> None:
@@ -967,6 +978,7 @@ class MainWindow(QMainWindow):
         if project is None or step != self._current_mode:
             return
         from verso.engine.model.status import section_step_color
+
         for i, section in enumerate(project.sections):
             if section.id == section_id:
                 color = section_step_color(
@@ -1058,9 +1070,7 @@ class MainWindow(QMainWindow):
             self._seed_channels_from_first_section(project)
 
         self._overview.load_project(project)
-        self._filmstrip.populate(
-            project.sections, project.channels, project.working_scale
-        )
+        self._filmstrip.populate(project.sections, project.channels, project.working_scale)
         self._prep.set_channels(project.channels)
         self._panel.set_channels(project.channels)
         self._panel.set_working_scale(project.working_scale)
@@ -1115,6 +1125,7 @@ class MainWindow(QMainWindow):
 
     def _on_atlas_error(self, message: str) -> None:
         from PyQt6.QtWidgets import QMessageBox
+
         self._update_deepslice_enabled()
         QMessageBox.warning(self, "Atlas load failed", message)
 
@@ -1202,18 +1213,14 @@ class MainWindow(QMainWindow):
 
         indices = guess_slice_indices([s.original_path for s in project.sections])
         keep_id = (
-            self._state.current_section.id
-            if self._state.current_section is not None
-            else None
+            self._state.current_section.id if self._state.current_section is not None else None
         )
         for section, index in zip(project.sections, indices):
             section.slice_index = index
         project.sort_sections()
 
         if keep_id is not None:
-            new_pos = next(
-                (i for i, s in enumerate(project.sections) if s.id == keep_id), None
-            )
+            new_pos = next((i for i, s in enumerate(project.sections) if s.id == keep_id), None)
             if new_pos is not None:
                 self._state.set_section(new_pos)
 
@@ -1241,15 +1248,180 @@ class MainWindow(QMainWindow):
             )
         self._sync_position_mm(project.sections)
 
-        self._filmstrip.populate(
-            project.sections, project.channels, project.working_scale
-        )
+        self._filmstrip.populate(project.sections, project.channels, project.working_scale)
         self._filmstrip.set_current(self._state.section_index)
         self._overview.refresh()
         self._update_slicing_position()
 
         if self._state.project_path is not None:
             self._write_project(self._state.project_path)
+
+    def _add_images_to_project(self) -> None:
+        """Add new section images to the current project (Image menu).
+
+        New images are appended after the current series with provisional slice
+        indices (``max + 1``…); the user corrects them in the Overview table.
+        ``working_scale`` is never recomputed — new thumbnails are generated at
+        the project's existing scale so all working-resolution geometry stays valid.
+        """
+        from verso.engine.sections import make_added_sections
+        from verso.gui.dialogs.new_project import _IMAGE_FILTER, generate_thumbnails
+
+        if self._state.project is None:
+            QMessageBox.information(self, "No project", "Open or create a project first.")
+            return
+        if self._state.project_path is None:
+            QMessageBox.information(
+                self,
+                "Save project first",
+                "Save the project before adding images so the new thumbnails have a home on disk.",
+            )
+            return
+        if not self._confirm_discard_active_draft():
+            return
+
+        # Re-fetch after the confirm gate: a "Discard" reloads the project object.
+        project = self._state.project
+        project_path = self._state.project_path
+        if project is None or project_path is None:
+            return
+
+        paths, _ = QFileDialog.getOpenFileNames(self, "Add Section Images", "", _IMAGE_FILTER)
+        if not paths:
+            return
+
+        thumbnails_dir = project_path.parent / "thumbnails"
+        thumbnails_dir.mkdir(parents=True, exist_ok=True)
+        new_sections, skipped = make_added_sections(project.sections, paths, thumbnails_dir)
+
+        if skipped:
+            names = "\n".join(f"  • {Path(p).name}" for p in skipped)
+            QMessageBox.warning(
+                self,
+                "Some images skipped",
+                f"{len(skipped)} image(s) were skipped because they are already in "
+                f"the project or share a filename with an existing image:\n\n{names}",
+            )
+        if not new_sections:
+            return
+
+        self._warn_channel_mismatch(new_sections, project)
+
+        keep = self._state.current_section
+        keep_id = keep.id if keep is not None else None
+
+        project.sections.extend(new_sections)
+        project.sort_sections()
+        generate_thumbnails(new_sections, project.working_scale, self, title="Add images")
+
+        if keep_id is not None:
+            pos = next((i for i, s in enumerate(project.sections) if s.id == keep_id), None)
+            if pos is not None:
+                self._state.set_section(pos)
+        self._on_sections_reordered()
+        self.statusBar().showMessage(f"Added {len(new_sections)} image(s) to the project", 3000)
+
+    def _warn_channel_mismatch(self, new_sections: list, project) -> None:
+        """Warn (do not block) if added images differ in channel count."""
+        from verso.engine.io.image_io import probe_channels
+
+        expected = len(project.channels)
+        if expected == 0:
+            return
+        mismatched: list[str] = []
+        for s in new_sections:
+            try:
+                n = len(probe_channels(s.original_path))
+            except Exception:
+                continue
+            if n != expected:
+                mismatched.append(f"  • {Path(s.original_path).name}: {n} channel(s)")
+        if mismatched:
+            lines = "\n".join(mismatched)
+            QMessageBox.warning(
+                self,
+                "Channel count differs",
+                f"The project expects {expected} channel(s), but some added images "
+                f"differ:\n\n{lines}\n\nThey may not display correctly.",
+            )
+
+    def _remove_sections(self, section_ids: list[str]) -> None:
+        """Remove sections from the project (Overview context menu).
+
+        Surviving ``slice_index`` values are left untouched. Each removed
+        section's generated thumbnail and masks are deleted (guarded against
+        files still referenced by a surviving section); originals are kept.
+        """
+        from verso.engine.sections import removed_section_artifacts
+
+        if self._state.project is None or not section_ids:
+            return
+
+        ids = set(section_ids)
+        surviving = [s for s in self._state.project.sections if s.id not in ids]
+        to_remove = [s for s in self._state.project.sections if s.id in ids]
+        if not to_remove:
+            return
+        if not surviving:
+            QMessageBox.information(
+                self,
+                "Cannot remove",
+                "A project must keep at least one image. Removing these would empty it.",
+            )
+            return
+
+        n = len(to_remove)
+        resp = QMessageBox.question(
+            self,
+            "Remove from project",
+            f"Remove {n} image{'s' if n != 1 else ''} from the project?\n\n"
+            "Their generated thumbnails and masks will be deleted. The original "
+            "image files are kept.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if resp != QMessageBox.StandardButton.Yes:
+            return
+        if not self._confirm_discard_active_draft():
+            return
+
+        # Re-fetch after the confirm gate: a "Discard" reloads the project object.
+        project = self._state.project
+        if project is None:
+            return
+        surviving = [s for s in project.sections if s.id not in ids]
+        to_remove = [s for s in project.sections if s.id in ids]
+        if not to_remove or not surviving:
+            return
+
+        keep = self._state.current_section
+        keep_id = keep.id if keep is not None else None
+        old_index = self._state.section_index
+
+        for section in to_remove:
+            for artifact in removed_section_artifacts(section, surviving):
+                try:
+                    artifact.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            self._state.forget_section(section.id)
+
+        project.sections = surviving
+
+        if keep_id is not None and any(s.id == keep_id for s in project.sections):
+            pos = next(i for i, s in enumerate(project.sections) if s.id == keep_id)
+        else:
+            pos = min(old_index, len(project.sections) - 1)
+        self._state.set_section(pos)
+
+        self._on_sections_reordered()
+        # If the index is unchanged but now points at a different section, force a
+        # reload of the active view and properties.
+        if pos == old_index:
+            self._state.section_changed.emit(pos)
+        self.statusBar().showMessage(
+            f"Removed {n} image{'s' if n != 1 else ''} from the project", 3000
+        )
 
     def _refresh_properties(self) -> None:
         self._props.update_section(self._state.current_section, self._current_mode)
@@ -1427,6 +1599,7 @@ class MainWindow(QMainWindow):
         project = self._state.project
         if worker is not None and project is not None:
             from verso.engine.drafts import PrepDraft
+
             by_id = {s.id: s for s in project.sections}
             for sid, mask in worker.results.items():
                 section = by_id.get(sid)
@@ -1498,8 +1671,7 @@ class MainWindow(QMainWindow):
             return
 
         has_stored_alignment = any(
-            section.alignment.status == AlignmentStatus.COMPLETE
-            for section in project.sections
+            section.alignment.status == AlignmentStatus.COMPLETE for section in project.sections
         )
         if has_stored_alignment:
             QMessageBox.information(
@@ -1538,13 +1710,10 @@ class MainWindow(QMainWindow):
             self._act_reverse_proposal.setEnabled(False)
             return
         has_stored_alignment = any(
-            section.alignment.status == AlignmentStatus.COMPLETE
-            for section in project.sections
+            section.alignment.status == AlignmentStatus.COMPLETE for section in project.sections
         )
         self._act_reverse_proposal.setEnabled(
-            self._state.atlas is not None
-            and len(project.sections) > 1
-            and not has_stored_alignment
+            self._state.atlas is not None and len(project.sections) > 1 and not has_stored_alignment
         )
 
     def _update_deepslice_enabled(self, running: bool = False) -> None:
@@ -1555,14 +1724,10 @@ class MainWindow(QMainWindow):
         is_coronal = project is not None and project.interpolation_axis == "AP"
         self._act_deepslice.setEnabled(atlas_ready and is_coronal and not running)
         if project is not None and not is_coronal:
-            self._act_deepslice.setToolTip(
-                "DeepSlice supports coronal projects only."
-            )
+            self._act_deepslice.setToolTip("DeepSlice supports coronal projects only.")
         else:
             self._act_deepslice.setToolTip("")
-        self._act_deepslice.setText(
-            "DeepSlice running…" if running else "Run &DeepSlice"
-        )
+        self._act_deepslice.setText("DeepSlice running…" if running else "Run &DeepSlice")
         self._act_default_proposal.setEnabled(atlas_ready and not running)
         self._act_clear_all_alignments.setEnabled(atlas_ready and not running)
         # Mask + warp wipes only need a project with sections; atlas not required.
@@ -1583,9 +1748,7 @@ class MainWindow(QMainWindow):
         if atlas is None:
             return
         for section in sections:
-            if section.alignment.anchoring and any(
-                v != 0.0 for v in section.alignment.anchoring
-            ):
+            if section.alignment.anchoring and any(v != 0.0 for v in section.alignment.anchoring):
                 section.alignment.position_mm = self._anchoring_position_mm(
                     section.alignment.anchoring
                 )
@@ -1623,12 +1786,8 @@ class MainWindow(QMainWindow):
 
         display_anchorings = []
         for section, _, _ in usable:
-            is_complete = (
-                section.alignment.status == AlignmentStatus.COMPLETE
-            )
-            display_anchorings.append(
-                _display_space_anchoring(section) if is_complete else None
-            )
+            is_complete = section.alignment.status == AlignmentStatus.COMPLETE
+            display_anchorings.append(_display_space_anchoring(section) if is_complete else None)
         propagated = quicknii_series_anchorings(
             image_sizes=[(w, h) for _, w, h in usable],
             slice_indices=[section.slice_index for section, _, _ in usable],
@@ -1645,9 +1804,7 @@ class MainWindow(QMainWindow):
             if anch is not None
         }
 
-        for (section, _, _), anchoring, anch in zip(
-            usable, propagated, display_anchorings
-        ):
+        for (section, _, _), anchoring, anch in zip(usable, propagated, display_anchorings):
             if anch is not None:
                 continue
             # Always sync sections that share a slice index with a stored
@@ -1843,9 +2000,7 @@ class MainWindow(QMainWindow):
                 removed += 1
             section.preprocessing.slice_mask_path = None
         self._after_batch_clear()
-        self.statusBar().showMessage(
-            f"Cleared {removed} slice masks", 5000
-        )
+        self.statusBar().showMessage(f"Cleared {removed} slice masks", 5000)
 
     def _clear_all_lr_masks(self) -> None:
         project = self._state.project
@@ -1875,9 +2030,7 @@ class MainWindow(QMainWindow):
             section.preprocessing.lr_mask_path = None
             section.preprocessing.lr_line = None
         self._after_batch_clear()
-        self.statusBar().showMessage(
-            f"Cleared {removed} L/R masks", 5000
-        )
+        self.statusBar().showMessage(f"Cleared {removed} L/R masks", 5000)
 
     def _clear_all_warps(self) -> None:
         project = self._state.project
@@ -1901,9 +2054,7 @@ class MainWindow(QMainWindow):
             section.warp.control_points.clear()
             section.warp.status = AlignmentStatus.NOT_STARTED
         self._after_batch_clear()
-        self.statusBar().showMessage(
-            f"Cleared warps on {cleared} sections", 5000
-        )
+        self.statusBar().showMessage(f"Cleared warps on {cleared} sections", 5000)
 
     def _after_batch_clear(self) -> None:
         """Refresh dependent UI + write project after a batch wipe."""
@@ -1934,9 +2085,9 @@ class MainWindow(QMainWindow):
             return
         out_dir = Path(export_path).resolve().parent
         from verso.engine.io.quint_io import _export_image_filename
+
         missing = [
-            s for s in project.sections
-            if not (out_dir / _export_image_filename(s)).exists()
+            s for s in project.sections if not (out_dir / _export_image_filename(s)).exists()
         ]
         if not missing:
             return
@@ -1951,6 +2102,7 @@ class MainWindow(QMainWindow):
         )
         if reply == QMessageBox.StandardButton.Yes:
             from verso.engine.io.quint_io import write_section_pngs
+
             write_section_pngs(project, out_dir)
 
     def _export_quicknii_xml(self) -> None:
@@ -1964,6 +2116,7 @@ class MainWindow(QMainWindow):
         )
         if path:
             from verso.engine.io.quint_io import save_quicknii_xml
+
             atlas_shape = self._state.atlas.shape if self._state.atlas else None
             save_quicknii_xml(self._state.project, Path(path), atlas_shape=atlas_shape)
             self._maybe_create_pngs(path)
@@ -1974,6 +2127,7 @@ class MainWindow(QMainWindow):
         if self._state.project is None:
             return
         from PyQt6.QtWidgets import QFileDialog
+
         name = self._state.project.name
         path, _ = QFileDialog.getSaveFileName(
             self, "Export QuickNII JSON", f"{name}-quicknii.json", "JSON files (*.json)"
@@ -1981,6 +2135,7 @@ class MainWindow(QMainWindow):
         if path:
             atlas_shape = self._state.atlas.shape if self._state.atlas else None
             from verso.engine.io.quint_io import save_quicknii
+
             save_quicknii(self._state.project, Path(path), atlas_shape=atlas_shape)
             self._maybe_create_pngs(path)
 
@@ -1990,6 +2145,7 @@ class MainWindow(QMainWindow):
         if self._state.project is None:
             return
         from PyQt6.QtWidgets import QFileDialog
+
         name = self._state.project.name
         path, _ = QFileDialog.getSaveFileName(
             self, "Export VisuAlign JSON", f"{name}-visualign.json", "JSON files (*.json)"
@@ -1997,6 +2153,7 @@ class MainWindow(QMainWindow):
         if path:
             atlas_shape = self._state.atlas.shape if self._state.atlas else None
             from verso.engine.io.quint_io import save_visualign
+
             save_visualign(self._state.project, Path(path), atlas_shape=atlas_shape)
             self._maybe_create_pngs(path)
 
@@ -2060,12 +2217,15 @@ class MainWindow(QMainWindow):
 
         ap, dv, lr = atlas._annotation.shape
         n_regions = len(atlas._color_dict) - 1  # exclude background (id 0)
-        self._show_info_dialog("Atlas info", [
-            ("Name", atlas.atlas_name),
-            ("Resolution", f"{atlas.resolution_um:.1f} µm"),
-            ("Volume shape", f"AP {ap}  ×  DV {dv}  ×  LR {lr}"),
-            ("Brain regions", str(n_regions)),
-        ])
+        self._show_info_dialog(
+            "Atlas info",
+            [
+                ("Name", atlas.atlas_name),
+                ("Resolution", f"{atlas.resolution_um:.1f} µm"),
+                ("Volume shape", f"AP {ap}  ×  DV {dv}  ×  LR {lr}"),
+                ("Brain regions", str(n_regions)),
+            ],
+        )
 
     def _show_project_info(self) -> None:
         project = self._state.project
@@ -2076,13 +2236,16 @@ class MainWindow(QMainWindow):
         path_str = str(self._state.project_path) if self._state.project_path else "(not saved)"
         atlas_name = project.atlas.name if project.atlas else "(none)"
         channels = ", ".join(ch.name for ch in project.channels) if project.channels else "(none)"
-        self._show_info_dialog("Project info", [
-            ("Name", project.name),
-            ("File", path_str),
-            ("Atlas", atlas_name),
-            ("Sections", str(len(project.sections))),
-            ("Channels", channels),
-        ])
+        self._show_info_dialog(
+            "Project info",
+            [
+                ("Name", project.name),
+                ("File", path_str),
+                ("Atlas", atlas_name),
+                ("Sections", str(len(project.sections))),
+                ("Channels", channels),
+            ],
+        )
 
     def _export_images_with_overlay(self) -> None:
         """Open the export dialog and write the requested PNGs to disk."""
@@ -2136,16 +2299,10 @@ class MainWindow(QMainWindow):
 
         options = dlg.options()
         timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-        out_dir = (
-            self._state.project_path.parent
-            / "exports"
-            / f"images_with_overlay_{timestamp}"
-        )
+        out_dir = self._state.project_path.parent / "exports" / f"images_with_overlay_{timestamp}"
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        progress = QProgressDialog(
-            "Exporting images...", "Cancel", 0, len(sections), self
-        )
+        progress = QProgressDialog("Exporting images...", "Cancel", 0, len(sections), self)
         progress.setWindowTitle("Export images with atlas overlay")
         progress.setMinimumDuration(0)
         progress.setAutoClose(False)

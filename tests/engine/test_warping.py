@@ -23,8 +23,8 @@ def _visualign_atlas_norm(s, t, src_norm, dst_norm, width, height):
     (atlas) components. VERSO must reproduce this exactly inside the frame.
     """
     corners = np.array([[-0.1, -0.1], [1.1, -0.1], [-0.1, 1.1], [1.1, 1.1]])
-    dst_px = np.vstack([corners, dst_norm]) * [width, height]   # (nx, ny)
-    src_px = np.vstack([corners, src_norm]) * [width, height]   # (ox, oy)
+    dst_px = np.vstack([corners, dst_norm]) * [width, height]  # (nx, ny)
+    src_px = np.vstack([corners, src_norm]) * [width, height]  # (ox, oy)
     tri = Delaunay(dst_px)
     q = np.array([[s * width, t * height]])
     si = int(tri.find_simplex(q)[0])
@@ -47,7 +47,7 @@ def test_find_atlas_position_matches_visualign_when_aspect_set():
     Delaunay is not invariant under the anisotropic x/W, y/H scaling, so the two
     only agree when VERSO triangulates in the section's true aspect ratio.
     """
-    width, height = 1140, 800   # aspect 1.425 — the case that exposed the bug
+    width, height = 1140, 800  # aspect 1.425 — the case that exposed the bug
     aspect = width / height
     rng = np.random.default_rng(3)
     src = rng.uniform(0.15, 0.85, (10, 2))
@@ -72,9 +72,9 @@ def test_find_atlas_position_matches_visualign_when_aspect_set():
 
 def test_build_backward_remap_matches_visualign_when_aspect_set():
     """The dense remap (display/export path) must also match VisuAlign per pixel."""
-    width, height = 1280, 720   # aspect 1.778
+    width, height = 1280, 720  # aspect 1.778
     aspect = width / height
-    h, w = 72, 128              # overlay grid at the same aspect
+    h, w = 72, 128  # overlay grid at the same aspect
     rng = np.random.default_rng(7)
     src = rng.uniform(0.2, 0.8, (8, 2))
     dst = src + rng.normal(0, 0.05, src.shape)

@@ -31,17 +31,24 @@ from verso.engine.registration import (
 # Represents a mid-brain coronal section.
 SAMPLE_ANCHORING = [
     # origin: left-top corner of the section in voxel space
-    0.0, 160.0, 228.0,
+    0.0,
+    160.0,
+    228.0,
     # u: 456 px wide section → moves 456 voxels along x
-    456.0, 0.0, 0.0,
+    456.0,
+    0.0,
+    0.0,
     # v: 320 px tall section → moves 320 voxels along y
-    0.0, 320.0, 0.0,
+    0.0,
+    320.0,
+    0.0,
 ]
 
 
 # ---------------------------------------------------------------------------
 # anchoring_to_vectors / vectors_to_anchoring
 # ---------------------------------------------------------------------------
+
 
 def test_anchoring_round_trip():
     o, u, v = anchoring_to_vectors(SAMPLE_ANCHORING)
@@ -57,6 +64,7 @@ def test_anchoring_to_vectors_wrong_length():
 # ---------------------------------------------------------------------------
 # normalized_to_atlas / atlas_to_normalized
 # ---------------------------------------------------------------------------
+
 
 def test_origin_maps_to_origin():
     xyz = normalized_to_atlas(0.0, 0.0, SAMPLE_ANCHORING)
@@ -81,6 +89,7 @@ def test_round_trip_normalized_atlas():
 # pixel_to_normalized / normalized_to_pixel
 # ---------------------------------------------------------------------------
 
+
 def test_pixel_normalized_round_trip():
     w, h = 456, 320
     for px, py in [(0, 0), (228, 160), (455, 319)]:
@@ -94,6 +103,7 @@ def test_pixel_normalized_round_trip():
 # set_position_along_axis
 # ---------------------------------------------------------------------------
 
+
 def test_set_position_along_axis_changes_only_origin_z():
     new_anch = set_position_along_axis(SAMPLE_ANCHORING, voxel=300.0, axis=2)
     o, u, v = anchoring_to_vectors(new_anch)
@@ -106,9 +116,15 @@ def test_set_position_along_axis_changes_only_origin_z():
 
 def test_set_center_position_along_axis_moves_midpoint_only():
     tilted = [
-        10.0, 20.0, 30.0,
-        100.0, 12.0, 0.0,
-        0.0, 18.0, 80.0,
+        10.0,
+        20.0,
+        30.0,
+        100.0,
+        12.0,
+        0.0,
+        0.0,
+        18.0,
+        80.0,
     ]
 
     new_anch = set_center_position_along_axis(tilted, voxel=75.0, axis=1)
@@ -125,6 +141,7 @@ def test_set_center_position_along_axis_moves_midpoint_only():
 # ---------------------------------------------------------------------------
 # rotate_anchoring
 # ---------------------------------------------------------------------------
+
 
 def test_rotate_180_inverts_uv():
     rotated = rotate_anchoring(SAMPLE_ANCHORING, math.pi)
@@ -150,6 +167,7 @@ def test_rotate_preserves_pivot_in_atlas_space():
 # ---------------------------------------------------------------------------
 # scale_anchoring
 # ---------------------------------------------------------------------------
+
 
 def test_scale_uniform_doubles_uv():
     scaled = scale_anchoring(SAMPLE_ANCHORING, 2.0)
@@ -188,6 +206,7 @@ def test_flip_anchoring_horizontal_is_involutive():
 # ---------------------------------------------------------------------------
 # quicknii_default_anchoring
 # ---------------------------------------------------------------------------
+
 
 def test_quicknii_default_anchoring_uses_series_stretch():
     anchoring = quicknii_default_anchoring(
@@ -341,19 +360,22 @@ def test_quicknii_coronal_series_centers_generated_proposals_from_off_center_key
     np.testing.assert_allclose(anchorings[2], off_center_right)
 
 
-
 def test_quicknii_coronal_series_proposals_are_upright_even_when_keyframe_is_rotated():
     """Interpolated proposals must have default (upright) rotation regardless of keyframes."""
     left_anchoring = quicknii_default_anchoring(
-        image_width=1000, image_height=800,
-        max_width=1000, max_height=800,
+        image_width=1000,
+        image_height=800,
+        max_width=1000,
+        max_height=800,
         atlas_shape=(528, 320, 456),
         interpolation_axis=1,
         voxel=400.0,
     )
     right_base = quicknii_default_anchoring(
-        image_width=1000, image_height=800,
-        max_width=1000, max_height=800,
+        image_width=1000,
+        image_height=800,
+        max_width=1000,
+        max_height=800,
         atlas_shape=(528, 320, 456),
         interpolation_axis=1,
         voxel=100.0,
@@ -371,12 +393,15 @@ def test_quicknii_coronal_series_proposals_are_upright_even_when_keyframe_is_rot
     mid_u = quicknii_unpack_anchoring(anchorings[1], 1000, 800)
     default_u = quicknii_unpack_anchoring(
         quicknii_default_anchoring(
-            image_width=1000, image_height=800,
-            max_width=1000, max_height=800,
+            image_width=1000,
+            image_height=800,
+            max_width=1000,
+            max_height=800,
             atlas_shape=(528, 320, 456),
             interpolation_axis=1,
         ),
-        1000, 800,
+        1000,
+        800,
     )
     # Rotation components of the proposal must equal the default upright orientation.
     np.testing.assert_allclose(mid_u[3:9], default_u[3:9], atol=1e-9)
@@ -488,10 +513,17 @@ def test_interpolate_anchorings_handles_horizontally_flipped_stored_keyframe(
 
     angle = math.radians(18.0)
     unpacked_left = [
-        228.0, 500.0, 160.0,
-        math.cos(angle), math.sin(angle), 0.0,
-        0.0, 0.0, 1.0,
-        0.456, 0.4,
+        228.0,
+        500.0,
+        160.0,
+        math.cos(angle),
+        math.sin(angle),
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.456,
+        0.4,
     ]
     unpacked_right = list(unpacked_left)
     unpacked_right[1] = 100.0
@@ -541,8 +573,10 @@ def test_interpolate_anchorings_duplicate_serial_strips_inplane_rotation_keeps_t
     atlas_shape = (528, 320, 456)
     # Stored section: upright coronal anchoring with an in-plane rotation applied.
     stored_base = quicknii_default_anchoring(
-        image_width=1000, image_height=800,
-        max_width=1000, max_height=800,
+        image_width=1000,
+        image_height=800,
+        max_width=1000,
+        max_height=800,
         atlas_shape=atlas_shape,
         interpolation_axis=1,
         voxel=300.0,
@@ -638,6 +672,7 @@ def test_interpolate_anchorings_without_atlas_shape_keeps_legacy_one_keyframe_no
 # make_atlas_sample_grid
 # ---------------------------------------------------------------------------
 
+
 def test_sample_grid_shape():
     grid = make_atlas_sample_grid(SAMPLE_ANCHORING, out_width=10, out_height=8)
     assert grid.shape == (8, 10, 3)
@@ -656,6 +691,7 @@ def test_sample_grid_corners():
 # ---------------------------------------------------------------------------
 # Non-coronal axes
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize(
     "axis, axis_dim_idx, u_axis, v_axis",
@@ -738,15 +774,19 @@ def test_interpolate_anchorings_sagittal_axis_strips_in_plane_rotation(tmp_path)
         paths.append(path)
 
     left = quicknii_default_anchoring(
-        image_width=1000, image_height=800,
-        max_width=1000, max_height=800,
+        image_width=1000,
+        image_height=800,
+        max_width=1000,
+        max_height=800,
         atlas_shape=atlas_shape,
         interpolation_axis=axis,
         voxel=400.0,
     )
     right_base = quicknii_default_anchoring(
-        image_width=1000, image_height=800,
-        max_width=1000, max_height=800,
+        image_width=1000,
+        image_height=800,
+        max_width=1000,
+        max_height=800,
         atlas_shape=atlas_shape,
         interpolation_axis=axis,
         voxel=50.0,

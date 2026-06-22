@@ -195,6 +195,45 @@ def _natural_name_key(path: str) -> list[object]:
     return [int(c) if c.isdigit() else c for c in re.split(r"(\d+)", stem)]
 
 
+def generate_thumbnails(
+    sections: list[Section],
+    scale: float,
+    parent: QWidget | None = None,
+    title: str = "VERSO",
+) -> None:
+    """Generate working-resolution OME-TIFF thumbnails for ``sections``.
+
+    Every section is downscaled by the project's single ``scale`` factor. Shown
+    behind a modal progress dialog; failures fall back to lazy generation on
+    first view. Shared by the New Project dialog and the Add-images action.
+    """
+    from PyQt6.QtWidgets import QApplication, QProgressDialog
+
+    from verso.engine.io.image_io import ensure_working_copy
+
+    n = len(sections)
+    progress = QProgressDialog("Generating thumbnails…", "Skip", 0, n, parent)
+    progress.setWindowTitle(title)
+    progress.setWindowModality(Qt.WindowModality.WindowModal)
+    progress.setMinimumDuration(0)
+    progress.setValue(0)
+
+    for i, section in enumerate(sections):
+        if progress.wasCanceled():
+            break
+        progress.setLabelText(
+            f"Generating thumbnails… ({i + 1}/{n})\n{os.path.basename(section.original_path)}"
+        )
+        progress.setValue(i)
+        QApplication.processEvents()
+        try:
+            ensure_working_copy(section, scale)
+        except Exception:
+            pass  # will be generated lazily on first view
+
+    progress.setValue(n)
+
+
 class NewProjectDialog(QDialog):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -470,36 +509,8 @@ class NewProjectDialog(QDialog):
         self.accept()
 
     def _generate_thumbnails(self, sections: list[Section], scale: float) -> None:
-        """Generate working-resolution OME-TIFF thumbnails for all sections.
-
-        Every section is downscaled by the project's single ``scale`` factor.
-        """
-        from PyQt6.QtCore import Qt
-        from PyQt6.QtWidgets import QApplication, QProgressDialog
-
-        from verso.engine.io.image_io import ensure_working_copy
-
-        n = len(sections)
-        progress = QProgressDialog("Generating thumbnails…", "Skip", 0, n, self)
-        progress.setWindowTitle("New Project")
-        progress.setWindowModality(Qt.WindowModality.WindowModal)
-        progress.setMinimumDuration(0)
-        progress.setValue(0)
-
-        for i, section in enumerate(sections):
-            if progress.wasCanceled():
-                break
-            progress.setLabelText(
-                f"Generating thumbnails… ({i + 1}/{n})\n{os.path.basename(section.original_path)}"
-            )
-            progress.setValue(i)
-            QApplication.processEvents()
-            try:
-                ensure_working_copy(section, scale)
-            except Exception:
-                pass  # will be generated lazily on first view
-
-        progress.setValue(n)
+        """Generate working-resolution OME-TIFF thumbnails for all sections."""
+        generate_thumbnails(sections, scale, self, title="New Project")
 
     # ------------------------------------------------------------------
     # Result

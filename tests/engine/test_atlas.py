@@ -14,9 +14,9 @@ def test_quicknii_floor_indices_ceils_ap_dv_and_floors_lr():
 
     lr_i, ap_i, dv_i = _quicknii_floor_indices(lr, ap, dv)
 
-    np.testing.assert_array_equal(lr_i, [3.0, 3.0, 3.0])     # floor (LR)
+    np.testing.assert_array_equal(lr_i, [3.0, 3.0, 3.0])  # floor (LR)
     np.testing.assert_array_equal(ap_i, [11.0, 10.0, 11.0])  # ceil (AP)
-    np.testing.assert_array_equal(dv_i, [6.0, 5.0, 6.0])     # ceil (DV)
+    np.testing.assert_array_equal(dv_i, [6.0, 5.0, 6.0])  # ceil (DV)
 
 
 def test_quicknii_floor_indices_scalar():

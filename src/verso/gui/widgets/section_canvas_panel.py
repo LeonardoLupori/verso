@@ -33,7 +33,6 @@ if TYPE_CHECKING:
     from verso.engine.atlas import AtlasVolume
 
 
-
 _REGION_BAR_IDLE_QSS = (
     "background: #1a1a1a; color: #fff; font-size: 10px; font-weight: bold;"
     " border-top: 1px solid #333;"
@@ -70,10 +69,10 @@ class SectionCanvasPanel(QWidget):
     overlay_panned = pyqtSignal(float, float)
 
     # Lifecycle / state-change notifications for the active view
-    section_loaded = pyqtSignal(object)            # Section | None
-    atlas_changed = pyqtSignal(object)             # AtlasVolume | None
-    overlay_updated = pyqtSignal(list, int, int)   # anchoring, display_w, display_h
-    overlay_mode_changed = pyqtSignal(str)         # "annotation" | "outline" | "reference"
+    section_loaded = pyqtSignal(object)  # Section | None
+    atlas_changed = pyqtSignal(object)  # AtlasVolume | None
+    overlay_updated = pyqtSignal(list, int, int)  # anchoring, display_w, display_h
+    overlay_mode_changed = pyqtSignal(str)  # "annotation" | "outline" | "reference"
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -224,6 +223,7 @@ class SectionCanvasPanel(QWidget):
         from PyQt6.QtWidgets import QMessageBox
 
         from verso.engine.io.image_io import ensure_working_copy
+
         try:
             self._raw_image = ensure_working_copy(section, self._working_scale)
         except RuntimeError as exc:

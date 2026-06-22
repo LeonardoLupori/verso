@@ -50,9 +50,7 @@ def _make_warp_mock(section: Section, state: AppState) -> SimpleNamespace:
     )
     mock = SimpleNamespace(
         _panel=panel,
-        _panel_slot=SimpleNamespace(
-            layout=lambda: SimpleNamespace(addWidget=lambda _w: None)
-        ),
+        _panel_slot=SimpleNamespace(layout=lambda: SimpleNamespace(addWidget=lambda _w: None)),
         _state=state,
         _active=False,
         _cp_hovered=-1,

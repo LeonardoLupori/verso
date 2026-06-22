@@ -352,9 +352,7 @@ class ImageCanvas(QWidget):
         # reports delta()==0 — which silently broke brush resizing while erasing
         # (Shift held). angleDelta() exposes both axes, so fall back to the
         # horizontal delta when the vertical one is zero.
-        if t == QEvent.Type.Wheel and (
-            event.modifiers() & Qt.KeyboardModifier.AltModifier
-        ):
+        if t == QEvent.Type.Wheel and (event.modifiers() & Qt.KeyboardModifier.AltModifier):
             ad = event.angleDelta()
             delta = ad.y() or ad.x()
             if delta:

@@ -51,9 +51,7 @@ class _ThumbnailLoader(QObject):
             if self._abort:
                 break
             try:
-                arr = load_filmstrip_thumbnail(
-                    section, self._working_scale, self._channels
-                )
+                arr = load_filmstrip_thumbnail(section, self._working_scale, self._channels)
                 if arr is not None:
                     self.thumbnail_ready.emit(i, ndarray_to_pixmap(arr))
             except Exception:
@@ -115,9 +113,7 @@ class _ThumbButton(QLabel):
 
     def _apply_border(self) -> None:
         colour = "#FFFFFF" if self._selected else "#555555"
-        self.setStyleSheet(
-            f"border: {_BORDER_W}px solid {colour}; background: transparent;"
-        )
+        self.setStyleSheet(f"border: {_BORDER_W}px solid {colour}; background: transparent;")
 
     def paintEvent(self, event) -> None:  # noqa: ANN001
         super().paintEvent(event)

@@ -106,9 +106,7 @@ def run_deepslice_suggestions(
         bad_filenames: list[str] = []
         if opts.bad_section_ids:
             bad_set = set(opts.bad_section_ids)
-            bad_filenames = [
-                dst.name for dst, sid in sorted_entries if sid in bad_set
-            ]
+            bad_filenames = [dst.name for dst, sid in sorted_entries if sid in bad_set]
 
         payload = {
             "folder": str(input_dir),
@@ -135,12 +133,8 @@ def run_deepslice_suggestions(
         if completed.returncode != 0:
             detail = completed.stderr.strip() or completed.stdout.strip()
             if "No module named" in detail and "DeepSlice" in detail:
-                raise DeepSliceError(
-                    "DeepSlice is not installed. Run: uv sync --extra deepslice"
-                )
-            raise DeepSliceError(
-                f"DeepSlice failed (exit {completed.returncode}):\n{detail}"
-            )
+                raise DeepSliceError("DeepSlice is not installed. Run: uv sync --extra deepslice")
+            raise DeepSliceError(f"DeepSlice failed (exit {completed.returncode}):\n{detail}")
 
         output_json = _find_deepslice_json(tmp_dir, output_base)
         suggestions = _load_suggestions(output_json)
@@ -329,10 +323,7 @@ def reset_in_progress_to_default_proposals(
 
     stored_anchorings = []
     for section, _, _ in usable:
-        is_stored = (
-            not include_complete
-            and section.alignment.status == AlignmentStatus.COMPLETE
-        )
+        is_stored = not include_complete and section.alignment.status == AlignmentStatus.COMPLETE
         if not is_stored:
             stored_anchorings.append(None)
             continue
@@ -421,10 +412,7 @@ def _copy_registration_images(
         #   suffix to ``min+max-index`` so the reflection is visible.
         dst = input_dir / f"{section.slice_index:03d}_s{deepslice_nr:03d}.png"
         if dst.exists():
-            dst = (
-                input_dir
-                / f"{section.slice_index:03d}-{len(copied)}_s{deepslice_nr:03d}.png"
-            )
+            dst = input_dir / f"{section.slice_index:03d}-{len(copied)}_s{deepslice_nr:03d}.png"
         Image.fromarray(img).save(dst)
         copied.append((dst, section.id))
 
@@ -473,6 +461,7 @@ def _format_deepslice_image(
     arr = np.asarray(image)
     if arr.ndim == 3 and channels:
         from verso.engine.preprocessing import composite_channels
+
         rgb = composite_channels(arr, channels)
     elif arr.ndim == 2:
         rgb = np.stack([arr, arr, arr], axis=2)

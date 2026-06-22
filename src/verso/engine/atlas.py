@@ -43,11 +43,12 @@ class AtlasVolume:
 
     def __init__(self, atlas_name: str) -> None:
         from brainglobe_atlasapi import BrainGlobeAtlas
+
         self._bg = BrainGlobeAtlas(atlas_name, check_latest=False)
         self.atlas_name = atlas_name
         self.resolution_um: float = float(self._bg.resolution[0])
         self._annotation: np.ndarray = self._bg.annotation  # (AP, DV, LR)
-        self._reference: np.ndarray = self._bg.reference    # (AP, DV, LR)
+        self._reference: np.ndarray = self._bg.reference  # (AP, DV, LR)
         ref_max = float(self._reference.max())
         self._reference_scale: float = 255.0 / ref_max if ref_max > 0 else 1.0
         self._color_dict: dict[int, tuple[int, int, int]] = self._build_color_dict()
@@ -78,9 +79,12 @@ class AtlasVolume:
 
         ap_max, dv_max, lr_max = self._annotation.shape
         in_bounds: np.ndarray = (
-            (ap_f >= 0) & (ap_f < ap_max) &
-            (dv_f >= 0) & (dv_f < dv_max) &
-            (lr_f >= 0) & (lr_f < lr_max)
+            (ap_f >= 0)
+            & (ap_f < ap_max)
+            & (dv_f >= 0)
+            & (dv_f < dv_max)
+            & (lr_f >= 0)
+            & (lr_f < lr_max)
         )
 
         # Now safe to clip and cast — all values are within [0, dim-1]
@@ -106,9 +110,7 @@ class AtlasVolume:
         """
         return self._sample(anchoring, out_w, out_h)
 
-    def slice_annotation(
-        self, anchoring: list[float], out_w: int, out_h: int
-    ) -> np.ndarray:
+    def slice_annotation(self, anchoring: list[float], out_w: int, out_h: int) -> np.ndarray:
         """Slice the annotation volume → RGBA uint8 (H, W, 4).
 
         Alpha is:
@@ -128,10 +130,7 @@ class AtlasVolume:
         # Give background-within-atlas pixels a neutral gray so they're visible
         rgb[in_bounds & (labels == 0)] = [80, 80, 80]
 
-        alpha = np.where(
-            ~in_bounds, 0,
-            np.where(labels == 0, 25, 255)
-        ).astype(np.uint8)
+        alpha = np.where(~in_bounds, 0, np.where(labels == 0, 25, 255)).astype(np.uint8)
 
         return np.dstack([rgb, alpha])
 
@@ -207,9 +206,7 @@ class AtlasVolume:
         color = self._color_dict.get(label, (128, 128, 128))
         return name, color
 
-    def get_region_name(
-        self, anchoring: list[float], s: float, t: float
-    ) -> str:
+    def get_region_name(self, anchoring: list[float], s: float, t: float) -> str:
         """Return the atlas region name at normalised section position (s, t)."""
         name, _ = self.get_region_info(anchoring, s, t)
         return name
@@ -217,9 +214,7 @@ class AtlasVolume:
     # ------------------------------------------------------------------
     # Reference slice (navigator views)
 
-    def slice_reference(
-        self, anchoring: list[float], out_w: int, out_h: int
-    ) -> np.ndarray:
+    def slice_reference(self, anchoring: list[float], out_w: int, out_h: int) -> np.ndarray:
         """Slice the MRI/Nissl reference volume → RGB uint8 (H, W, 3)."""
         grid = make_atlas_sample_grid(anchoring, out_w, out_h)
         lr_f, ap_f, dv_f = _quicknii_floor_indices(grid[:, :, 0], grid[:, :, 1], grid[:, :, 2])
@@ -233,9 +228,7 @@ class AtlasVolume:
         )
         return np.stack([gray, gray, gray], axis=-1)
 
-    def slice_reference_rgba(
-        self, anchoring: list[float], out_w: int, out_h: int
-    ) -> np.ndarray:
+    def slice_reference_rgba(self, anchoring: list[float], out_w: int, out_h: int) -> np.ndarray:
         """Slice the MRI/Nissl reference volume → RGBA uint8 (H, W, 4).
 
         Alpha is 255 within the atlas bounds and 0 outside — label-based

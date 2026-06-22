@@ -92,6 +92,7 @@ def test_thumbnail_filename_is_ome_tiff():
 # to_multichannel
 # ---------------------------------------------------------------------------
 
+
 def test_to_multichannel_2d_grayscale_becomes_single_plane():
     gray = np.array([[10, 20], [30, 40]], dtype=np.uint8)
     out = to_multichannel(gray)
@@ -126,6 +127,7 @@ def test_to_multichannel_channels_first_is_transposed():
 # OME-TIFF roundtrip
 # ---------------------------------------------------------------------------
 
+
 def test_save_and_load_ome_tiff_preserves_channels(tmp_path: Path):
     arr = np.zeros((50, 60, 3), dtype=np.uint8)
     arr[..., 0] = 100
@@ -150,6 +152,7 @@ def test_probe_channels_reads_ome_names(tmp_path: Path):
 def test_probe_channels_falls_back_to_generic_names(tmp_path: Path):
     # Plain TIFF without OME metadata.
     import tifffile
+
     arr = np.zeros((20, 30), dtype=np.uint8)
     path = tmp_path / "plain.tif"
     tifffile.imwrite(str(path), arr)

@@ -207,9 +207,7 @@ class PrepView(QWidget):
         from verso.engine.io.image_io import ensure_working_copy
 
         try:
-            self._raw_image = ensure_working_copy(
-                section, self._state.project.working_scale
-            )
+            self._raw_image = ensure_working_copy(section, self._state.project.working_scale)
         except RuntimeError as exc:
             QMessageBox.warning(self, "Cannot load image", str(exc))
             return
@@ -733,6 +731,7 @@ class PrepView(QWidget):
         if self._section is None:
             return
         from verso.engine.drafts import wipe_alignment_for_flip
+
         wipe_alignment_for_flip(self._section)
 
     def _set_dirty(self, dirty: bool) -> None:

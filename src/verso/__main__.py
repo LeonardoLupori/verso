@@ -20,6 +20,7 @@ def main() -> None:
     args = parser.parse_args()
 
     from verso.gui.app import run
+
     run(project_path=args.load_project)
 
 

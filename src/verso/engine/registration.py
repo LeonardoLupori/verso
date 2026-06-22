@@ -20,6 +20,7 @@ import numpy as np
 # Anchoring vector decomposition
 # ---------------------------------------------------------------------------
 
+
 def anchoring_to_vectors(
     anchoring: list[float],
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -37,9 +38,7 @@ def anchoring_to_vectors(
     return a[0:3], a[3:6], a[6:9]
 
 
-def vectors_to_anchoring(
-    o: np.ndarray, u: np.ndarray, v: np.ndarray
-) -> list[float]:
+def vectors_to_anchoring(o: np.ndarray, u: np.ndarray, v: np.ndarray) -> list[float]:
     """Pack origin and direction vectors back into a 9-element anchoring list."""
     return np.concatenate([o, u, v]).tolist()
 
@@ -47,6 +46,7 @@ def vectors_to_anchoring(
 # ---------------------------------------------------------------------------
 # Coordinate transforms
 # ---------------------------------------------------------------------------
+
 
 def normalized_to_atlas(s: float, t: float, anchoring: list[float]) -> np.ndarray:
     """Map normalized section coords (s, t) → atlas voxel coords (x, y, z).
@@ -88,6 +88,7 @@ def atlas_to_normalized(
 # ---------------------------------------------------------------------------
 # Anchoring manipulation
 # ---------------------------------------------------------------------------
+
 
 def set_position_along_axis(
     anchoring: list[float],
@@ -247,10 +248,10 @@ def _display_space_anchoring(section) -> list[float]:
     return list(section.alignment.anchoring)
 
 
-
 # ---------------------------------------------------------------------------
 # Pixel ↔ Normalised (convenience wrappers for the GUI)
 # ---------------------------------------------------------------------------
+
 
 def _in_plane_axes(interpolation_axis: int) -> tuple[int, int]:
     """Return ``(u_default, v_default)`` axis indices for the given slicing axis.
@@ -436,9 +437,7 @@ def quicknii_series_anchorings(
             atlas_shape=atlas_shape,
             interpolation_axis=k,
             stored_anchorings=(
-                [stored_anchorings[i] for i in order]
-                if stored_anchorings is not None
-                else None
+                [stored_anchorings[i] for i in order] if stored_anchorings is not None else None
             ),
             reverse_axis=reverse_axis,
             center_proposals=center_proposals,
@@ -459,7 +458,8 @@ def quicknii_series_anchorings(
 
     stored_anchorings = stored_anchorings or [None] * len(image_sizes)
     stored_indices = [
-        i for i, anchoring in enumerate(stored_anchorings)
+        i
+        for i, anchoring in enumerate(stored_anchorings)
         if anchoring is not None and any(val != 0.0 for val in anchoring)
     ]
 
@@ -559,10 +559,7 @@ def quicknii_series_anchorings(
             for i in range(left, right + 1):
                 denom = right_index - left_index
                 t = 0.0 if denom == 0 else (slice_indices[i] - left_index) / denom
-                propagated[i] = [
-                    a + t * (b - a)
-                    for a, b in zip(left_u, right_u)
-                ]
+                propagated[i] = [a + t * (b - a) for a, b in zip(left_u, right_u)]
 
     # Strip in-plane rotation (rotation around the slicing axis) from
     # proposals while preserving position along the slicing axis, physical
@@ -609,16 +606,12 @@ def _quicknii_regressed_unpacked(
     return out
 
 
-def pixel_to_normalized(
-    px: float, py: float, width: int, height: int
-) -> tuple[float, float]:
+def pixel_to_normalized(px: float, py: float, width: int, height: int) -> tuple[float, float]:
     """Convert working-resolution pixel coords to normalised section coords."""
     return px / width, py / height
 
 
-def normalized_to_pixel(
-    s: float, t: float, width: int, height: int
-) -> tuple[float, float]:
+def normalized_to_pixel(s: float, t: float, width: int, height: int) -> tuple[float, float]:
     """Convert normalised section coords to working-resolution pixel coords."""
     return s * width, t * height
 
@@ -626,6 +619,7 @@ def normalized_to_pixel(
 # ---------------------------------------------------------------------------
 # Anchoring interpolation
 # ---------------------------------------------------------------------------
+
 
 def interpolate_anchorings(
     sections: list,
@@ -733,10 +727,7 @@ def interpolate_anchorings(
         for idx in range(left, right + 1):
             denom = right_index - left_index
             t = 0.0 if denom == 0 else (slice_indices[idx] - left_index) / denom
-            propagated[idx] = [
-                a + t * (b - a)
-                for a, b in zip(left_unpacked, right_unpacked)
-            ]
+            propagated[idx] = [a + t * (b - a) for a, b in zip(left_unpacked, right_unpacked)]
 
     _stored_set_legacy = set(stored_indices)
     for idx, row in propagated.items():
@@ -761,6 +752,7 @@ def interpolate_anchorings(
 # ---------------------------------------------------------------------------
 # Atlas slice sampling grid
 # ---------------------------------------------------------------------------
+
 
 def make_atlas_sample_grid(
     anchoring: list[float],

@@ -20,6 +20,7 @@ import numpy as np
 # Full ↔ Working
 # ---------------------------------------------------------------------------
 
+
 def full_to_working(x: float, y: float, scale: float) -> tuple[float, float]:
     """Scale full-resolution pixel coords to working-resolution coords."""
     return x * scale, y * scale
@@ -33,6 +34,7 @@ def working_to_full(x: float, y: float, scale: float) -> tuple[float, float]:
 # ---------------------------------------------------------------------------
 # Working ↔ Normalized section coords
 # ---------------------------------------------------------------------------
+
 
 def pixel_to_normalized(px: float, py: float, width: int, height: int) -> tuple[float, float]:
     """Convert working-resolution pixel coords to normalized section coords [0, 1]²."""
@@ -48,6 +50,7 @@ def normalized_to_pixel(s: float, t: float, width: int, height: int) -> tuple[fl
 # Working / Normalized ↔ Atlas
 # ---------------------------------------------------------------------------
 
+
 def normalized_to_atlas(s: float, t: float, anchoring: list[float]) -> np.ndarray:
     """Map normalized section coords (s, t) → atlas voxel coords (x, y, z).
 
@@ -60,9 +63,7 @@ def normalized_to_atlas(s: float, t: float, anchoring: list[float]) -> np.ndarra
     return o + s * u + t * v
 
 
-def atlas_to_normalized(
-    xyz: np.ndarray, anchoring: list[float]
-) -> tuple[float, float]:
+def atlas_to_normalized(xyz: np.ndarray, anchoring: list[float]) -> tuple[float, float]:
     """Map atlas voxel coords → normalized section coords (s, t).
 
     Solves the least-squares system: xyz - o = s·u + t·v.

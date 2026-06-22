@@ -187,8 +187,6 @@ def test_detect_foreground_bright_tissue_on_dark_background() -> None:
     assert not mask[5, 5]
 
 
-
-
 # ---------------------------------------------------------------------------
 # L/R hemisphere masks
 # ---------------------------------------------------------------------------
@@ -578,6 +576,7 @@ def test_load_lr_mask_resizes_to_target_shape(tmp_path) -> None:
 def test_line_side_polygons_diagonal_areas_sum_to_rect() -> None:
     w, h = 100.0, 80.0
     left, right = line_side_polygons((0.0, 40.0), (100.0, 40.0), w, h)
+
     # Each half-rect is a triangle or quadrilateral — shoelace area check.
     def shoelace(poly: np.ndarray) -> float:
         x, y = poly[:, 0], poly[:, 1]

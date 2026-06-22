@@ -112,9 +112,7 @@ class MaskBox(QGroupBox):
         self._morph_spin.setValue(5)
         self._erode_btn = QPushButton("Erode")
         self._erode_btn.setToolTip("Erode the mask area by a set amount of pixels")
-        self._erode_btn.clicked.connect(
-            lambda: self.erode_requested.emit(self._morph_spin.value())
-        )
+        self._erode_btn.clicked.connect(lambda: self.erode_requested.emit(self._morph_spin.value()))
         self._expand_btn = QPushButton("Expand")
         self._expand_btn.setToolTip("Expand the mask area by a set amount of pixels")
         self._expand_btn.clicked.connect(

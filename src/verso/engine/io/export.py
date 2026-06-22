@@ -29,9 +29,7 @@ def export_region_csv(project: Project, out_path: Path) -> None:
     raise NotImplementedError
 
 
-def export_point_cloud(
-    points: np.ndarray, labels: np.ndarray, out_path: Path
-) -> None:
+def export_point_cloud(points: np.ndarray, labels: np.ndarray, out_path: Path) -> None:
     """Write an atlas-space point cloud to *out_path*.
 
     Args:

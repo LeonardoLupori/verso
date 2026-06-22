@@ -25,15 +25,13 @@ if TYPE_CHECKING:
 STATUS_COLOR: dict[AlignmentStatus, str] = {
     AlignmentStatus.NOT_STARTED: "#888888",  # gray
     AlignmentStatus.IN_PROGRESS: "#E6A817",  # yellow
-    AlignmentStatus.COMPLETE: "#4CAF50",     # green
+    AlignmentStatus.COMPLETE: "#4CAF50",  # green
 }
 
 STEPS = ("prep", "align", "warp")
 
 
-def section_step_status(
-    section: Section, step: str, *, dirty: bool
-) -> AlignmentStatus:
+def section_step_status(section: Section, step: str, *, dirty: bool) -> AlignmentStatus:
     """Return the traffic-light status of *section* for *step*.
 
     Args:
@@ -62,12 +60,7 @@ def section_step_status(
 
     if step == "prep":
         pp = section.preprocessing
-        done = bool(
-            pp.slice_mask_path
-            or pp.lr_mask_path
-            or pp.flip_horizontal
-            or pp.flip_vertical
-        )
+        done = bool(pp.slice_mask_path or pp.lr_mask_path or pp.flip_horizontal or pp.flip_vertical)
         return AlignmentStatus.COMPLETE if done else AlignmentStatus.NOT_STARTED
 
     if step == "align":

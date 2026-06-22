@@ -107,12 +107,12 @@ def find_atlas_position(
     if si[0] < 0:
         return float(np.clip(s, 0.0, 1.0)), float(np.clip(t, 0.0, 1.0))
 
-    T = tri.transform[si[0], :2]           # (2, 2)
-    r = pt[0] - tri.transform[si[0], 2]    # (2,)
-    b2 = T @ r                             # first two barycentric coords
+    T = tri.transform[si[0], :2]  # (2, 2)
+    r = pt[0] - tri.transform[si[0], 2]  # (2,)
+    b2 = T @ r  # first two barycentric coords
     bary = np.array([b2[0], b2[1], 1.0 - b2[0] - b2[1]])
 
-    idx = tri.simplices[si[0]]             # (3,) vertex indices
+    idx = tri.simplices[si[0]]  # (3,) vertex indices
     u = float(np.clip((bary * src_all[idx, 0]).sum(), 0.0, 1.0))
     v = float(np.clip((bary * src_all[idx, 1]).sum(), 0.0, 1.0))
     return u, v
@@ -216,14 +216,14 @@ def build_backward_remap(
     # instead of building (M,2,2) and (M,3) barycentric temporaries — the latter
     # dominated the cost during live warp drags.  Result is bit-identical to the
     # barycentric formulation.
-    bary_T = tri.transform[:, :2, :]            # (T, 2, 2) barycentric matrix
-    offset = tri.transform[:, 2, :]             # (T, 2) triangle origin (scaled space)
-    verts = tri.simplices                       # (T, 3) vertex indices
+    bary_T = tri.transform[:, :2, :]  # (T, 2, 2) barycentric matrix
+    offset = tri.transform[:, 2, :]  # (T, 2) triangle origin (scaled space)
+    verts = tri.simplices  # (T, 3) vertex indices
     s2 = src_all[verts[:, 2]]
-    edges = np.stack(                           # (T, 2, 2) src edge vectors
+    edges = np.stack(  # (T, 2, 2) src edge vectors
         [src_all[verts[:, 0]] - s2, src_all[verts[:, 1]] - s2], axis=2
     )
-    coef = edges @ bary_T                       # (T, 2, 2) maps scaled-pixel → atlas
+    coef = edges @ bary_T  # (T, 2, 2) maps scaled-pixel → atlas
     bias = s2 - np.einsum("tij,tj->ti", coef, offset)  # (T, 2)
     # Contiguous 1-D component arrays so the per-pixel gather stays cheap.
     a00 = np.ascontiguousarray(coef[:, 0, 0])
@@ -237,7 +237,7 @@ def build_backward_remap(
     ys = (np.arange(h, dtype=np.float64) + 0.5) / h
     grid_x, grid_y = np.meshgrid(xs, ys)  # (H, W) each
     pixels = np.column_stack([grid_x.ravel(), grid_y.ravel()])  # (H*W, 2) normalised
-    pixels_scaled = pixels * scale                              # triangulation space
+    pixels_scaled = pixels * scale  # triangulation space
 
     simplices = tri.find_simplex(pixels_scaled)
     valid = simplices >= 0
@@ -249,7 +249,7 @@ def build_backward_remap(
     s = simplices[valid]
     px = pixels_scaled[valid, 0]
     py = pixels_scaled[valid, 1]
-    atlas_x = a00[s] * px + a01[s] * py + b0[s]   # normalised [0, 1]
+    atlas_x = a00[s] * px + a01[s] * py + b0[s]  # normalised [0, 1]
     atlas_y = a10[s] * px + a11[s] * py + b1[s]
     map_x[valid] = (atlas_x * w).astype(np.float32)
     map_y[valid] = (atlas_y * h).astype(np.float32)
@@ -288,9 +288,7 @@ def warp_overlay(
     map_x, map_y = build_backward_remap(h, w, src_norm, dst_norm, aspect=aspect)
 
     interpolation = (
-        cv2.INTER_NEAREST
-        if overlay.ndim == 3 and overlay.shape[2] == 4
-        else cv2.INTER_LINEAR
+        cv2.INTER_NEAREST if overlay.ndim == 3 and overlay.shape[2] == 4 else cv2.INTER_LINEAR
     )
 
     return cv2.remap(

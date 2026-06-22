@@ -34,6 +34,7 @@ def _section(**kw) -> Section:
 # section_step_status
 # ---------------------------------------------------------------------------
 
+
 def test_dirty_is_in_progress_for_prep_and_align():
     section = _section()
     for step in ("prep", "align"):
@@ -86,6 +87,7 @@ def test_status_color_covers_all_states():
 # commit_alignment / commit_warp / wipe
 # ---------------------------------------------------------------------------
 
+
 def test_commit_alignment_promotes_to_stored_complete():
     section = _section(alignment=Alignment(anchoring=[1.0, 2.0] + [0.0] * 7))
     assert commit_alignment(section) is True
@@ -128,6 +130,7 @@ def test_wipe_alignment_for_flip_resets_everything():
 # ---------------------------------------------------------------------------
 # persist_prep_draft
 # ---------------------------------------------------------------------------
+
 
 def test_persist_prep_draft_writes_mask_and_sets_path(tmp_path):
     section = _section(

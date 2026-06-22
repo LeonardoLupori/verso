@@ -60,7 +60,7 @@ VISUALIGN_JSON = {
             **QUICKNII_JSON["slices"][0],
             "markers": [
                 [500.0, 240.0, 520.0, 232.0],
-                [100.0, 640.0,  50.0, 664.0],
+                [100.0, 640.0, 50.0, 664.0],
             ],
         },
         QUICKNII_JSON["slices"][1],
@@ -72,6 +72,7 @@ VISUALIGN_JSON = {
 # Marker ↔ ControlPoint conversion
 # ---------------------------------------------------------------------------
 
+
 def test_markers_to_control_points_pixel_array():
     """Native VisuAlign format: pixel-coordinate arrays."""
     markers = [[500.0, 200.0, 600.0, 180.0]]
@@ -79,10 +80,10 @@ def test_markers_to_control_points_pixel_array():
 
     assert len(cps) == 1
     cp = cps[0]
-    assert abs(cp.src_x - 0.5) < 1e-6     # 500 / 1000
-    assert abs(cp.src_y - 0.25) < 1e-6    # 200 / 800
-    assert abs(cp.dst_x - 0.6) < 1e-6     # 600 / 1000
-    assert abs(cp.dst_y - 0.225) < 1e-6   # 180 / 800
+    assert abs(cp.src_x - 0.5) < 1e-6  # 500 / 1000
+    assert abs(cp.src_y - 0.25) < 1e-6  # 200 / 800
+    assert abs(cp.dst_x - 0.6) < 1e-6  # 600 / 1000
+    assert abs(cp.dst_y - 0.225) < 1e-6  # 180 / 800
 
 
 def test_markers_to_control_points_legacy_dict():
@@ -106,10 +107,10 @@ def test_control_points_to_markers():
     assert len(markers) == 1
     m = markers[0]
     assert isinstance(m, list)
-    assert abs(m[0] - 500.0) < 1e-3   # src_x * 1000
-    assert abs(m[1] - 200.0) < 1e-3   # src_y * 800
-    assert abs(m[2] - 600.0) < 1e-3   # dst_x * 1000
-    assert abs(m[3] - 160.0) < 1e-3   # dst_y * 800
+    assert abs(m[0] - 500.0) < 1e-3  # src_x * 1000
+    assert abs(m[1] - 200.0) < 1e-3  # src_y * 800
+    assert abs(m[2] - 600.0) < 1e-3  # dst_x * 1000
+    assert abs(m[3] - 160.0) < 1e-3  # dst_y * 800
 
 
 def test_marker_control_point_round_trip():
@@ -117,7 +118,7 @@ def test_marker_control_point_round_trip():
     W, H = 1000, 800
     original = [
         [300.0, 480.0, 350.0, 464.0],
-        [800.0,  80.0, 770.0, 136.0],
+        [800.0, 80.0, 770.0, 136.0],
     ]
     cps = _markers_to_control_points(original, width=W, height=H)
     restored = _control_points_to_markers(cps, width=W, height=H)
@@ -130,6 +131,7 @@ def test_marker_control_point_round_trip():
 # ---------------------------------------------------------------------------
 # load_quicknii
 # ---------------------------------------------------------------------------
+
 
 def test_load_quicknii_section_count(tmp_path: Path):
     p = tmp_path / "qn.json"
@@ -181,6 +183,7 @@ def test_load_deepslice_marks_suggestions_in_progress(tmp_path: Path):
 # load_visualign
 # ---------------------------------------------------------------------------
 
+
 def test_load_visualign_control_points(tmp_path: Path):
     p = tmp_path / "va.json"
     p.write_text(json.dumps(VISUALIGN_JSON))
@@ -212,15 +215,16 @@ def test_load_visualign_marker_values(tmp_path: Path):
     cp0 = s0.warp.control_points[0]
 
     # First marker: [500, 240, 520, 232] at 1000×800
-    assert abs(cp0.src_x - 0.5) < 1e-5     # 500 / 1000
-    assert abs(cp0.src_y - 0.3) < 1e-5     # 240 / 800
-    assert abs(cp0.dst_x - 0.52) < 1e-5    # 520 / 1000
-    assert abs(cp0.dst_y - 0.29) < 1e-5    # 232 / 800
+    assert abs(cp0.src_x - 0.5) < 1e-5  # 500 / 1000
+    assert abs(cp0.src_y - 0.3) < 1e-5  # 240 / 800
+    assert abs(cp0.dst_x - 0.52) < 1e-5  # 520 / 1000
+    assert abs(cp0.dst_y - 0.29) < 1e-5  # 232 / 800
 
 
 # ---------------------------------------------------------------------------
 # save_quicknii / load_quicknii round-trip
 # ---------------------------------------------------------------------------
+
 
 def test_quicknii_save_load_round_trip(tmp_path: Path):
     src = tmp_path / "qn.json"
@@ -331,8 +335,8 @@ def test_save_quicknii_xml_infers_atlas_shape(tmp_path: Path):
 
     inferred_path = tmp_path / "inferred.xml"
     explicit_path = tmp_path / "explicit.xml"
-    save_quicknii_xml(project, inferred_path)                                # infers
-    save_quicknii_xml(project, explicit_path, atlas_shape=(528, 320, 456))   # explicit
+    save_quicknii_xml(project, inferred_path)  # infers
+    save_quicknii_xml(project, explicit_path, atlas_shape=(528, 320, 456))  # explicit
 
     inferred = inferred_path.read_text(encoding="utf-8")
     assert inferred == explicit_path.read_text(encoding="utf-8")
@@ -344,18 +348,30 @@ def test_save_quicknii_xml_infers_atlas_shape(tmp_path: Path):
 
 def test_quicknii_export_convention_flips_ap_and_dv_axes():
     anchoring = [
-        10.0, 100.0, 40.0,
-        20.0, 3.0, 4.0,
-        5.0, 6.0, 7.0,
+        10.0,
+        100.0,
+        40.0,
+        20.0,
+        3.0,
+        4.0,
+        5.0,
+        6.0,
+        7.0,
     ]
 
     converted = _to_quicknii_convention(anchoring, atlas_shape=(528, 320, 456))
 
     # Origin flips about N-1 (527 - 100 = 427, 319 - 40 = 279); vectors negate.
     assert converted == [
-        10.0, 427.0, 279.0,
-        20.0, -3.0, -4.0,
-        5.0, -6.0, -7.0,
+        10.0,
+        427.0,
+        279.0,
+        20.0,
+        -3.0,
+        -4.0,
+        5.0,
+        -6.0,
+        -7.0,
     ]
     assert _to_quicknii_convention(converted, atlas_shape=(528, 320, 456)) == anchoring
 
@@ -363,6 +379,7 @@ def test_quicknii_export_convention_flips_ap_and_dv_axes():
 # ---------------------------------------------------------------------------
 # save_visualign / load_visualign round-trip
 # ---------------------------------------------------------------------------
+
 
 def test_visualign_save_load_round_trip(tmp_path: Path):
     from PIL import Image
@@ -396,6 +413,7 @@ def test_visualign_save_load_round_trip(tmp_path: Path):
 # ---------------------------------------------------------------------------
 # export_brainglobe_atlas_for_visualign
 # ---------------------------------------------------------------------------
+
 
 class _MockBGAtlas:
     """Minimal BrainGlobeAtlas stand-in for testing the NIfTI writer."""
@@ -441,19 +459,19 @@ def test_export_nifti_header_shape(tmp_path: Path):
 
     ndims, x, y, z = struct.unpack_from("<4h", hdr, 40)
     assert ndims == 3
-    assert x == 5   # LR (was axis 2 of BG annotation)
-    assert y == 4   # AP (was axis 0)
-    assert z == 3   # DV (was axis 1)
+    assert x == 5  # LR (was axis 2 of BG annotation)
+    assert y == 4  # AP (was axis 0)
+    assert z == 3  # DV (was axis 1)
 
     datatype = struct.unpack_from("<h", hdr, 70)[0]
-    assert datatype == 768   # uint32
+    assert datatype == 768  # uint32
 
 
 def test_export_nifti_volume_transposition(tmp_path: Path):
     """Voxel at BG [ap, dv, lr] must appear at NIfTI [lr, ap_flipped, dv_flipped]."""
     # (AP=4, DV=3, LR=5) — place a sentinel value at a known position
     ann = np.zeros((4, 3, 5), dtype=np.uint32)
-    ann[1, 2, 4] = 999   # BG ap=1, dv=2, lr=4
+    ann[1, 2, 4] = 999  # BG ap=1, dv=2, lr=4
 
     cutlas_dir = _run_export(ann, tmp_path)
 
@@ -481,4 +499,4 @@ def test_export_labels_txt_format(tmp_path: Path):
     assert "ITK-SnAP" in text
     assert '"Clear Label"' in text
     assert '"root"' in text
-    assert "255  255  255" in text   # root RGB
+    assert "255  255  255" in text  # root RGB

@@ -26,12 +26,12 @@ if TYPE_CHECKING:
     from verso.gui.widgets.canvas import ImageCanvas
 
 
-_LEFT_COLOR = (220, 60, 60)   # red — matches lr_mask_to_rgba default
-_RIGHT_COLOR = (60, 130, 220) # blue — matches lr_mask_to_rgba default
+_LEFT_COLOR = (220, 60, 60)  # red — matches lr_mask_to_rgba default
+_RIGHT_COLOR = (60, 130, 220)  # blue — matches lr_mask_to_rgba default
 _LINE_COLOR = (255, 220, 60)  # yellow — visible against any tissue colour
-_BADGE_OFFSET_PX = 70         # perpendicular distance from line midpoint
+_BADGE_OFFSET_PX = 70  # perpendicular distance from line midpoint
 _BADGE_FONT_PT = 16
-_HOVER_TINT_ALPHA = 80       # 0–255 alpha for the hover-side polygon fill
+_HOVER_TINT_ALPHA = 80  # 0–255 alpha for the hover-side polygon fill
 
 
 class LRLineEditor(QObject):
@@ -139,9 +139,7 @@ class LRLineEditor(QObject):
             except (TypeError, RuntimeError):
                 pass
             try:
-                self._canvas.plot.scene().sigMouseMoved.disconnect(
-                    self._on_scene_mouse_moved
-                )
+                self._canvas.plot.scene().sigMouseMoved.disconnect(self._on_scene_mouse_moved)
             except (TypeError, RuntimeError):
                 pass
             self._canvas.plot.removeItem(self._roi)
@@ -220,9 +218,7 @@ class LRLineEditor(QObject):
             return
         qpoly = QPolygonF([QPointF(float(x), float(y)) for x, y in poly_arr])
         self._hover_poly.setPolygon(qpoly)
-        self._hover_poly.setBrush(
-            QBrush(QColor(color[0], color[1], color[2], _HOVER_TINT_ALPHA))
-        )
+        self._hover_poly.setBrush(QBrush(QColor(color[0], color[1], color[2], _HOVER_TINT_ALPHA)))
         self._hover_poly.setVisible(True)
 
     def _update_badges(

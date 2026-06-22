@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import QObject, QRectF, Qt, QThread, pyqtSignal
+from PyQt6.QtCore import QObject, QPoint, QRectF, Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QColor, QPainter, QPen
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QHeaderView,
     QLabel,
+    QMenu,
     QStyle,
     QStyledItemDelegate,
     QStyleOptionViewItem,
@@ -82,8 +83,7 @@ QTableCornerButton::section {
 """
 
 _SUMMARY_STYLE = (
-    "color: #888; padding: 10px 6px 2px 6px; font-size: 11px; "
-    "border-top: 1px solid #333;"
+    "color: #888; padding: 10px 6px 2px 6px; font-size: 11px; border-top: 1px solid #333;"
 )
 
 
@@ -104,9 +104,7 @@ class _SliceIndexDelegate(QStyledItemDelegate):
     _TEXT = QColor("#d6d6d6")
     _TEXT_HOVER = QColor("#9fd0f2")
 
-    def paint(
-        self, painter: QPainter, option: QStyleOptionViewItem, index
-    ) -> None:
+    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index) -> None:
         # Let the base style paint the cell background (alternating bands and,
         # when selected, the highlight).  On a selected row we stop there so the
         # chip never competes with the selection colour.
@@ -125,9 +123,7 @@ class _SliceIndexDelegate(QStyledItemDelegate):
         painter.drawRoundedRect(chip, 5, 5)
 
         painter.setPen(self._TEXT_HOVER if hovered else self._TEXT)
-        painter.drawText(
-            option.rect, Qt.AlignmentFlag.AlignCenter, index.data() or ""
-        )
+        painter.drawText(option.rect, Qt.AlignmentFlag.AlignCenter, index.data() or "")
         painter.restore()
 
 
@@ -166,9 +162,10 @@ class _DimensionLoader(QObject):
 class OverviewView(QWidget):
     """Table-based overview of all sections and their pipeline status."""
 
-    section_activated = pyqtSignal(int)   # double-click → open in Prep
-    section_selected = pyqtSignal(int)    # single click → update properties
-    sections_reordered = pyqtSignal()     # slice_index edited → re-sort + persist
+    section_activated = pyqtSignal(int)  # double-click → open in Prep
+    section_selected = pyqtSignal(int)  # single click → update properties
+    sections_reordered = pyqtSignal()  # slice_index edited → re-sort + persist
+    remove_requested = pyqtSignal(list)  # context menu → remove section ids
 
     def __init__(self, state: AppState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -192,7 +189,7 @@ class OverviewView(QWidget):
         lbl.setStyleSheet("font-size: 18px; color: #888;")
         lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         empty_layout.addWidget(lbl)
-        sub = QLabel('Use  File → Open QuickNII…  or  File → New Project  to get started.')
+        sub = QLabel("Use  File → Open QuickNII…  or  File → New Project  to get started.")
         sub.setStyleSheet("color: #666; font-size: 12px;")
         sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
         empty_layout.addWidget(sub)
@@ -213,19 +210,13 @@ class OverviewView(QWidget):
         t = self._table
         n_cols = _COL_STEPS_START + len(_STEPS)
         t.setColumnCount(n_cols)
-        axis_name = (
-            self._project.interpolation_axis if self._project is not None else "AP"
-        )
+        axis_name = self._project.interpolation_axis if self._project is not None else "AP"
         headers = ["Slice index", "File", "Dimensions", f"{axis_name} (mm)"] + list(_STEPS)
         t.setHorizontalHeaderLabels(headers)
 
-        t.horizontalHeader().setSectionResizeMode(
-            _COL_FILE, QHeaderView.ResizeMode.Stretch
-        )
+        t.horizontalHeader().setSectionResizeMode(_COL_FILE, QHeaderView.ResizeMode.Stretch)
         for col in [_COL_SERIAL, _COL_DIMS, _COL_AP] + list(range(_COL_STEPS_START, n_cols)):
-            t.horizontalHeader().setSectionResizeMode(
-                col, QHeaderView.ResizeMode.ResizeToContents
-            )
+            t.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
 
         t.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         t.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -254,6 +245,9 @@ class OverviewView(QWidget):
         t.cellDoubleClicked.connect(self._on_double_click)
         t.currentCellChanged.connect(self._on_selection_changed)
         t.cellChanged.connect(self._on_cell_changed)
+
+        t.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        t.customContextMenuRequested.connect(self._on_context_menu)
 
     @staticmethod
     def _make_cell(
@@ -338,6 +332,7 @@ class OverviewView(QWidget):
         t = self._table
 
         import os
+
         serial_cell = self._make_cell(str(section.slice_index))
         serial_cell.setFlags(serial_cell.flags() | Qt.ItemFlag.ItemIsEditable)
         serial_cell.setToolTip("Double-click to edit — rows re-sort by slice index")
@@ -408,12 +403,8 @@ class OverviewView(QWidget):
         dot_statuses = [
             prep_status(bool(section.preprocessing.slice_mask_path), mask_dirty),
             prep_status(bool(section.preprocessing.lr_mask_path), lr_dirty),
-            section_step_status(
-                section, "align", dirty=self._state.is_dirty(section.id, "align")
-            ),
-            section_step_status(
-                section, "warp", dirty=self._state.is_dirty(section.id, "warp")
-            ),
+            section_step_status(section, "align", dirty=self._state.is_dirty(section.id, "align")),
+            section_step_status(section, "warp", dirty=self._state.is_dirty(section.id, "warp")),
         ]
         for i, status in enumerate(dot_statuses):
             col = _COL_STEPS_START + 1 + i
@@ -439,10 +430,9 @@ class OverviewView(QWidget):
         # Single-row refresh: read dims synchronously (~5–20 ms, acceptable).
         try:
             from verso.engine.io.image_io import registration_dimensions
+
             w, h = registration_dimensions(section)
-            self._table.setItem(
-                section_index, _COL_DIMS, self._make_cell(f"{w} x {h}")
-            )
+            self._table.setItem(section_index, _COL_DIMS, self._make_cell(f"{w} x {h}"))
         except Exception:
             pass
 
@@ -455,6 +445,38 @@ class OverviewView(QWidget):
             return []
         rows = {idx.row() for idx in self._table.selectionModel().selectedRows()}
         return sorted(rows)
+
+    def _section_id_for_row(self, row: int) -> str | None:
+        """Return the section id stored on a row, or None."""
+        item = self._table.item(row, _COL_SERIAL)
+        return item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+
+    def _on_context_menu(self, pos: QPoint) -> None:
+        """Offer 'Remove from project' for the right-clicked / selected rows."""
+        if self._project is None or not self._project.sections:
+            return
+        clicked_row = self._table.rowAt(pos.y())
+        if clicked_row < 0:
+            return
+        # Right-clicking outside the current selection retargets to that row.
+        if clicked_row not in self.selected_rows():
+            self._table.selectRow(clicked_row)
+
+        ids = [
+            sid
+            for row in self.selected_rows()
+            if (sid := self._section_id_for_row(row)) is not None
+        ]
+        if not ids:
+            return
+
+        menu = QMenu(self._table)
+        n = len(ids)
+        label = "Remove from project" if n == 1 else f"Remove {n} from project"
+        act_remove = menu.addAction(label)
+        chosen = menu.exec(self._table.viewport().mapToGlobal(pos))
+        if chosen is act_remove:
+            self.remove_requested.emit(ids)
 
     def _on_double_click(self, row: int, col: int) -> None:
         # Double-click on the "#" column opens the inline editor instead of the
@@ -471,9 +493,7 @@ class OverviewView(QWidget):
         if item is None:
             return
         section_id = item.data(Qt.ItemDataRole.UserRole)
-        section = next(
-            (s for s in self._project.sections if s.id == section_id), None
-        )
+        section = next((s for s in self._project.sections if s.id == section_id), None)
         if section is None:
             return
 

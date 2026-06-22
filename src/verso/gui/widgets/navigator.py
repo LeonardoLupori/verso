@@ -58,6 +58,7 @@ def _white_icon(name: str) -> QIcon:
     pixmap.loadFromData(svg.encode())
     return QIcon(pixmap)
 
+
 if TYPE_CHECKING:
     from verso.engine.atlas import AtlasVolume
 
@@ -84,16 +85,13 @@ _TRANSLATE_RADIUS = 14
 # A widget's own stylesheet governs its tooltip rendering, so any styled button
 # must carry this rule or its tooltip falls back to the stylesheet engine's
 # darker default (mismatching the palette-based tooltips elsewhere).
-_TOOLTIP_QSS = (
-    "QToolTip { background-color: #323232; color: #dcdcdc; border: 1px solid #555; }"
-)
+_TOOLTIP_QSS = "QToolTip { background-color: #323232; color: #dcdcdc; border: 1px solid #555; }"
 
 _NAV_BTN_QSS = (
     "QPushButton { border-radius: 3px; padding: 0px;"
     " background: #383838; border: 1px solid #555; }"
     "QPushButton:hover { background: #484848; }"
-    "QPushButton:disabled { background: #2a2a2a; border-color: #333; }"
-    + _TOOLTIP_QSS
+    "QPushButton:disabled { background: #2a2a2a; border-color: #333; }" + _TOOLTIP_QSS
 )
 
 # View group box: blends into the dark atlas canvas (#1a1a1a) while keeping a
@@ -125,11 +123,11 @@ def _rot_around(vec: np.ndarray, axis: np.ndarray, deg: float) -> np.ndarray:
 def _view_height(axis: int, dims: tuple[int, int, int]) -> int:
     """Return the display height (px) that preserves atlas proportions."""
     ap_dim, dv_dim, lr_dim = dims
-    if axis == 0:    # sagittal:   cols = AP, rows = DV
+    if axis == 0:  # sagittal:   cols = AP, rows = DV
         h = _VIEW_W * dv_dim / ap_dim
     elif axis == 1:  # coronal:    cols = LR, rows = DV
         h = _VIEW_W * dv_dim / lr_dim
-    else:            # horizontal: cols = LR, rows = AP
+    else:  # horizontal: cols = LR, rows = AP
         h = _VIEW_W * ap_dim / lr_dim
     return max(40, round(h))
 
@@ -298,9 +296,7 @@ class _SliceView(QWidget):
         self._btn_right_fast.clicked.connect(
             lambda: self._translate_step(col_axis, +_MOVE_STEP_FAST)
         )
-        self._btn_up_fast.clicked.connect(
-            lambda: self._translate_step(row_axis, -_MOVE_STEP_FAST)
-        )
+        self._btn_up_fast.clicked.connect(lambda: self._translate_step(row_axis, -_MOVE_STEP_FAST))
         self._btn_up.clicked.connect(lambda: self._translate_step(row_axis, -_MOVE_STEP))
         self._btn_down.clicked.connect(lambda: self._translate_step(row_axis, +_MOVE_STEP))
         self._btn_down_fast.clicked.connect(
@@ -366,7 +362,8 @@ class _SliceView(QWidget):
     def set_image(self, rgb: np.ndarray) -> None:
         qimg = _ndarray_to_qimage(rgb)
         self._base_pixmap = QPixmap.fromImage(qimg).scaled(
-            _VIEW_W, self._view_h,
+            _VIEW_W,
+            self._view_h,
             Qt.AspectRatioMode.IgnoreAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
         )
@@ -517,13 +514,13 @@ class _SliceView(QWidget):
         cur_atlas = self._unproj_normalized(cx / _VIEW_W, cy / self._view_h)
 
         new_center = old_center.copy()
-        if self._axis == 0:       # sagittal: move AP and DV
+        if self._axis == 0:  # sagittal: move AP and DV
             new_center[1] = cur_atlas[1]
             new_center[2] = cur_atlas[2]
-        elif self._axis == 1:     # coronal: move LR and DV
+        elif self._axis == 1:  # coronal: move LR and DV
             new_center[0] = cur_atlas[0]
             new_center[2] = cur_atlas[2]
-        else:                     # horizontal: move LR and AP
+        else:  # horizontal: move LR and AP
             new_center[0] = cur_atlas[0]
             new_center[1] = cur_atlas[1]
 
@@ -571,11 +568,9 @@ class NavigatorPanel(QWidget):
         # only while the bar is actually visible (see eventFilter), so the panel
         # widens by exactly the bar when it appears and reclaims that space when
         # it doesn't — instead of permanently reserving an empty slot.
-        self._sb_extent = QApplication.style().pixelMetric(
-            QStyle.PixelMetric.PM_ScrollBarExtent
-        )
-        view_w = _VIEW_W + _SIDE_BTN_W + 4          # _SliceView total width
-        margins = (2 + 2) + (4 + 4) + 2             # content + group margins + frame
+        self._sb_extent = QApplication.style().pixelMetric(QStyle.PixelMetric.PM_ScrollBarExtent)
+        view_w = _VIEW_W + _SIDE_BTN_W + 4  # _SliceView total width
+        margins = (2 + 2) + (4 + 4) + 2  # content + group margins + frame
         self._width_no_sb = view_w + margins
         self.setFixedWidth(self._width_no_sb)
         # Panel, scroll area and content inherit the app dark palette so the
@@ -661,18 +656,24 @@ class NavigatorPanel(QWidget):
         vbox.setSpacing(4)
 
         rows = [
-            ("chevrons-left-right-ellipsis.svg", [
-                ("−−", "Narrower (10%)", _SCALE_STEP_FAST, 1.0),
-                ("−",  "Narrower (2%)",  _SCALE_STEP,      1.0),
-                ("+",  "Wider (2%)",     1.0 / _SCALE_STEP,      1.0),
-                ("++", "Wider (10%)",    1.0 / _SCALE_STEP_FAST, 1.0),
-            ]),
-            ("chevrons-up-down-ellipsis.svg", [
-                ("−−", "Shorter (10%)", 1.0, _SCALE_STEP_FAST),
-                ("−",  "Shorter (2%)",  1.0, _SCALE_STEP),
-                ("+",  "Taller (2%)",   1.0, 1.0 / _SCALE_STEP),
-                ("++", "Taller (10%)",  1.0, 1.0 / _SCALE_STEP_FAST),
-            ]),
+            (
+                "chevrons-left-right-ellipsis.svg",
+                [
+                    ("−−", "Narrower (10%)", _SCALE_STEP_FAST, 1.0),
+                    ("−", "Narrower (2%)", _SCALE_STEP, 1.0),
+                    ("+", "Wider (2%)", 1.0 / _SCALE_STEP, 1.0),
+                    ("++", "Wider (10%)", 1.0 / _SCALE_STEP_FAST, 1.0),
+                ],
+            ),
+            (
+                "chevrons-up-down-ellipsis.svg",
+                [
+                    ("−−", "Shorter (10%)", 1.0, _SCALE_STEP_FAST),
+                    ("−", "Shorter (2%)", 1.0, _SCALE_STEP),
+                    ("+", "Taller (2%)", 1.0, 1.0 / _SCALE_STEP),
+                    ("++", "Taller (10%)", 1.0, 1.0 / _SCALE_STEP_FAST),
+                ],
+            ),
         ]
 
         for icon_name, specs in rows:

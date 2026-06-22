@@ -61,6 +61,11 @@ from verso.engine.registration import (
     set_position_along_axis,
     vectors_to_anchoring,
 )
+from verso.engine.sections import (
+    make_added_sections,
+    next_section_ids,
+    removed_section_artifacts,
+)
 from verso.engine.warping import (
     find_atlas_position,
     warp_overlay,
@@ -111,6 +116,10 @@ __all__ = [
     "set_center_position_along_axis",
     "set_position_along_axis",
     "vectors_to_anchoring",
+    # Sections (add/remove)
+    "make_added_sections",
+    "next_section_ids",
+    "removed_section_artifacts",
     "apply_deepslice_suggestions",
     "apply_deepslice_suggestions_with_atlas",
     "reset_in_progress_to_default_proposals",
