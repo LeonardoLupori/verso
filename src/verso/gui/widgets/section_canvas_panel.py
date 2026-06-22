@@ -135,7 +135,7 @@ class SectionCanvasPanel(QWidget):
         layout.addWidget(self.canvas, stretch=1)
 
         self._region_bar = QLabel("")
-        self._region_bar.setFixedHeight(20)
+        self._region_bar.setFixedHeight(24)
         self._region_bar.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._region_bar.setStyleSheet(_REGION_BAR_IDLE_QSS)
         layout.addWidget(self._region_bar)
