@@ -2255,6 +2255,7 @@ class MainWindow(QMainWindow):
                 ("Atlas", atlas_name),
                 ("Sections", str(len(project.sections))),
                 ("Channels", channels),
+                ("Thumbnail scale", f"{project.working_scale:.2f}×"),
             ],
         )
 
