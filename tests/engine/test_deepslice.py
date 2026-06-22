@@ -367,6 +367,66 @@ def test_apply_deepslice_discards_bad_predictions_and_interpolates(tmp_path: Pat
     assert min(s1_ap, s3_ap) <= s2_ap <= max(s1_ap, s3_ap)
 
 
+def test_apply_deepslice_orients_series_to_verso_convention(tmp_path: Path):
+    """DeepSlice's AP order is realigned to VERSO's default-proposal direction.
+
+    DeepSlice 1.2.7 auto-detects indexing direction, so it can return a series
+    that scrolls opposite to VERSO's own QuickNII proposals.  Apply re-orients
+    it: with ``reverse_axis=False`` the AP centre must *decrease* with
+    ``slice_index`` (VERSO's default), and with ``reverse_axis=True`` it must
+    *increase* — regardless of how DeepSlice happened to order the input.
+    """
+    from verso.engine.registration import anchoring_center
+
+    def _build() -> Project:
+        paths = []
+        for i in range(3):
+            p = tmp_path / f"s{i + 1:03d}.png"
+            Image.new("RGB", (100, 80)).save(p)
+            paths.append(p)
+        return Project(
+            name="orient",
+            atlas=AtlasRef(name="allen_mouse_25um"),
+            sections=[
+                Section("s001", 1, str(paths[0]), str(paths[0])),
+                Section("s002", 2, str(paths[1]), str(paths[1])),
+                Section("s003", 3, str(paths[2]), str(paths[2])),
+            ],
+        )
+
+    # Raw QuickNII oy DECREASING with slice_index. After the QN→BG flip this
+    # yields BG AP INCREASING with slice_index — i.e. opposite to VERSO's
+    # default proposal direction, so reverse_axis=False must reorder it.
+    suggestions = [
+        DeepSliceSectionSuggestion(
+            filename=f"{i + 1:03d}_s{i + 1:03d}.png",
+            slice_index=i + 1,
+            anchoring=[10.0, 250.0 - 100.0 * i, 20.0, 100.0, 0.0, 0.0, 0.0, 0.0, 80.0],
+        )
+        for i in range(3)
+    ]
+    atlas_shape = (528, 320, 456)
+
+    forward = _build()
+    apply_deepslice_suggestions_with_atlas(
+        forward, DeepSliceRunResult("r", suggestions), atlas_shape, reverse_axis=False
+    )
+    reversed_ = _build()
+    apply_deepslice_suggestions_with_atlas(
+        reversed_, DeepSliceRunResult("r", suggestions), atlas_shape, reverse_axis=True
+    )
+
+    fwd_ap = [anchoring_center(s.alignment.anchoring)[1] for s in forward.sections]
+    rev_ap = [anchoring_center(s.alignment.anchoring)[1] for s in reversed_.sections]
+
+    # reverse_axis=False → AP decreases with slice_index (VERSO default).
+    assert fwd_ap[0] > fwd_ap[1] > fwd_ap[2]
+    # reverse_axis=True → AP increases with slice_index.
+    assert rev_ap[0] < rev_ap[1] < rev_ap[2]
+    # Same set of predicted planes, only the order differs.
+    assert sorted(fwd_ap) == sorted(rev_ap)
+
+
 def test_run_deepslice_uses_user_serial_as_filename_prefix(tmp_path: Path, monkeypatch):
     """Staged PNG names lead with the user's true serial number (which may be
     non-contiguous), not VERSO's internal sequential ``section.id``."""

@@ -163,6 +163,7 @@ def apply_deepslice_suggestions_with_atlas(
     project: Project,
     result: DeepSliceRunResult,
     atlas_shape: tuple[int, int, int] | None,
+    reverse_axis: bool = False,
 ) -> int:
     """Apply DeepSlice suggestions to project sections.
 
@@ -171,6 +172,15 @@ def apply_deepslice_suggestions_with_atlas(
     (which is self-inverse) is applied here to convert them to the BrainGlobe
     convention that VERSO uses internally.  Pass *atlas_shape* as
     ``(AP, DV, LR)`` voxel dimensions; if ``None`` no conversion is applied.
+
+    DeepSlice ≥1.2.7 auto-detects the indexing direction from image content
+    (``enforce_section_ordering``), so the staged-filename ``_s{nr}`` reflection
+    no longer controls anything and DeepSlice may order the AP series opposite
+    to VERSO's own QuickNII proposals.  After conversion the series is therefore
+    re-oriented to match VERSO's default-proposal direction for *reverse_axis*
+    (see :func:`_orient_series_to_convention`) — the same convention that drives
+    ``quicknii_series_anchorings`` — so DeepSlice and the built-in proposals
+    always scroll the same way.
 
     Sections listed in ``result.bad_section_ids`` get their DeepSlice
     prediction discarded.  Once the good predictions are in place, VERSO's
@@ -226,6 +236,11 @@ def apply_deepslice_suggestions_with_atlas(
         applied += 1
         applied_section_ids.add(section.id)
 
+    if atlas_shape is not None and applied_section_ids:
+        # Re-orient the series to VERSO's convention *before* the bad sections
+        # are interpolated, so they fill from correctly-oriented neighbours.
+        _orient_series_to_convention(project, applied_section_ids, reverse_axis)
+
     if atlas_shape is not None and bad_ids and applied_section_ids:
         applied += _interpolate_bad_sections(
             project,
@@ -236,6 +251,46 @@ def apply_deepslice_suggestions_with_atlas(
         )
 
     return applied
+
+
+def _orient_series_to_convention(
+    project: Project,
+    section_ids: set[str],
+    reverse_axis: bool,
+) -> None:
+    """Align DeepSlice's AP series direction with VERSO's default proposals.
+
+    DeepSlice is coronal-only, so the slicing axis is AP (QuickNII voxel
+    index 1).  ``quicknii_series_anchorings`` places the first section
+    (lowest ``slice_index``) at the *high* AP voxel and the last at AP 0 when
+    ``reverse_axis`` is False, and the reverse when True.  DeepSlice's own
+    ordering can come out either way, so if its AP trend across ``slice_index``
+    disagrees with that convention the assignment is reversed.  Each section
+    keeps its in-plane fit (tilt, stretch, ML/DV centre); only the AP centre is
+    swapped with its mirror partner.  The AP *positions* DeepSlice predicted are
+    preserved as a set — they are correct — only their order is corrected.
+    """
+    from verso.engine.registration import (
+        anchoring_center,
+        set_center_position_along_axis,
+    )
+
+    ap_axis = 1
+    good = sorted(
+        (s for s in project.sections if s.id in section_ids),
+        key=lambda s: s.slice_index,
+    )
+    if len(good) < 2:
+        return
+    ap_centers = [float(anchoring_center(s.alignment.anchoring)[ap_axis]) for s in good]
+    # VERSO convention: AP decreases with slice_index unless reverse_axis.
+    ascending = ap_centers[-1] > ap_centers[0]
+    if ascending == bool(reverse_axis):
+        return  # already matches the built-in proposal direction
+    for section, ap in zip(good, reversed(ap_centers)):
+        flipped = set_center_position_along_axis(section.alignment.anchoring, ap, ap_axis)
+        section.alignment.anchoring = flipped
+        section.alignment.proposal_anchoring = list(flipped)
 
 
 def _interpolate_bad_sections(

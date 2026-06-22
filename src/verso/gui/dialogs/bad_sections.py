@@ -46,7 +46,13 @@ class BadSectionsDialog(QDialog):
         layout = QVBoxLayout(self)
 
         # --- section order option ---
-        self._reverse_cb = QCheckBox("Sections are ordered posterior → anterior")
+        # Unticked is VERSO's default direction (posterior → anterior as
+        # slice_index increases); tick only when the series runs the other way.
+        self._reverse_cb = QCheckBox("Sections are ordered anterior → posterior")
+        self._reverse_cb.setToolTip(
+            "Leave unticked when slice_index increases posterior → anterior "
+            "(VERSO's default). Tick only if your series runs anterior → posterior."
+        )
         self._reverse_cb.setChecked(reverse_order)
         layout.addWidget(self._reverse_cb)
 

@@ -1901,22 +1901,40 @@ class MainWindow(QMainWindow):
         self._deepslice_progress = None
 
     def _on_deepslice_done(self, result) -> None:
+        import copy
+
         project = self._state.project
         atlas = self._state.atlas
         if project is None:
             return
         from verso.engine.deepslice import apply_deepslice_suggestions_with_atlas
 
+        # Snapshot last-saved alignments before applying so dirtied sections can
+        # revert to their genuine baseline via "Clear edits".
+        baselines = {s.id: copy.deepcopy(s.alignment) for s in project.sections}
+
         applied = apply_deepslice_suggestions_with_atlas(
             project,
             result,
             atlas.shape if atlas is not None else None,
+            reverse_axis=self._reverse_axis_proposal,
         )
         if atlas is not None:
             self._sync_position_mm(project.sections)
+
+        # DeepSlice proposals are unsaved edits: flag the sections it touched as
+        # dirty so the Overview table and filmstrip show them yellow until the
+        # user saves (mirroring the batch-mask flow).
+        for section in project.sections:
+            if section.alignment.proposal_run_id == result.run_id:
+                self._state.set_baseline(section.id, "align", baselines[section.id])
+                self._state.mark_dirty(section.id, "align")
+
         self._overview.refresh()
-        self._panel.refresh_display()
-        self._refresh_properties()
+        # Reload the current view so the align SaveBar reflects the new dirty
+        # state; this also re-renders the panel for the active section.
+        self._on_section_changed(self._state.section_index)
+        self._refresh_filmstrip_dots()
         self._update_slicing_position()
         self.statusBar().showMessage(f"Applied {applied} DeepSlice suggestions", 5000)
 
