@@ -83,6 +83,15 @@ def test_warp_auto_only_is_yellow():
     auto = _section(warp=WarpState(control_points=[ControlPoint(0, 0, 0, 0, auto=True)]))
     assert section_step_status(auto, "warp", dirty=False) == AlignmentStatus.IN_PROGRESS
 
+    # Saving accepts the proposal (status → COMPLETE) → green.
+    accepted = _section(
+        warp=WarpState(
+            control_points=[ControlPoint(0, 0, 0, 0, auto=True)],
+            status=AlignmentStatus.COMPLETE,
+        )
+    )
+    assert section_step_status(accepted, "warp", dirty=False) == AlignmentStatus.COMPLETE
+
     # One hand-placed point makes the warp user-owned → green when saved.
     mixed = _section(
         warp=WarpState(

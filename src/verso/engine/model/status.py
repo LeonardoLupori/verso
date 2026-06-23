@@ -5,7 +5,8 @@ traffic-light colour:
 
 - gray  — no saved state and no unsaved edits for this step
 - yellow — has unsaved edits (the section is dirty for this step), or a warp made
-  up only of auto-generated control points (an elastix proposal awaiting review)
+  up only of auto-generated control points that has not yet been saved/accepted
+  (an elastix proposal awaiting review)
 - green — saved/persisted state exists and no unsaved edits
 
 The ``dirty`` flag is supplied by the caller (the GUI's edit registry) so this
@@ -55,11 +56,11 @@ def section_step_status(section: Section, step: str, *, dirty: bool) -> Alignmen
             return AlignmentStatus.NOT_STARTED
         if dirty:
             return AlignmentStatus.IN_PROGRESS
-        # A purely auto-generated (elastix) warp is a proposal awaiting review,
-        # so it stays yellow until the user adds a manual control point. As soon
-        # as one hand-placed point exists the warp is treated as user-owned and
-        # goes green when saved.
-        if all(cp.auto for cp in cps):
+        # A purely auto-generated (elastix) warp is a proposal awaiting review:
+        # it stays yellow until the user accepts it by saving (which promotes
+        # ``warp.status`` to COMPLETE) or adds a manual control point. A warp
+        # with any hand-placed point is user-owned and goes green when saved.
+        if all(cp.auto for cp in cps) and section.warp.status != AlignmentStatus.COMPLETE:
             return AlignmentStatus.IN_PROGRESS
         return AlignmentStatus.COMPLETE
 
