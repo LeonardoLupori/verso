@@ -2299,7 +2299,7 @@ class MainWindow(QMainWindow):
     def _show_auto_cp_progress(self, message: str) -> None:
         progress = QProgressDialog(message, "", 0, 0, self)
         progress.setWindowTitle("Automatic control points")
-        progress.setMinimumWidth(480)
+        progress.setMinimumWidth(350)
         progress.setCancelButton(None)
         progress.setMinimumDuration(0)
         progress.setAutoClose(False)
