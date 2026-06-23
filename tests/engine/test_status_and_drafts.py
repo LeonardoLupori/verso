@@ -78,6 +78,23 @@ def test_warp_status_green_with_control_points():
     assert section_step_status(none, "warp", dirty=False) == AlignmentStatus.NOT_STARTED
 
 
+def test_warp_auto_only_is_yellow():
+    # A purely auto-generated (elastix) warp is a proposal awaiting review.
+    auto = _section(warp=WarpState(control_points=[ControlPoint(0, 0, 0, 0, auto=True)]))
+    assert section_step_status(auto, "warp", dirty=False) == AlignmentStatus.IN_PROGRESS
+
+    # One hand-placed point makes the warp user-owned → green when saved.
+    mixed = _section(
+        warp=WarpState(
+            control_points=[
+                ControlPoint(0, 0, 0, 0, auto=True),
+                ControlPoint(1, 1, 1, 1, auto=False),
+            ]
+        )
+    )
+    assert section_step_status(mixed, "warp", dirty=False) == AlignmentStatus.COMPLETE
+
+
 def test_status_color_covers_all_states():
     for status in AlignmentStatus:
         assert status in STATUS_COLOR

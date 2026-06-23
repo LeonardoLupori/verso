@@ -4,7 +4,8 @@ A "step" is one of ``"prep"``, ``"align"``, ``"warp"``.  Status maps to a
 traffic-light colour:
 
 - gray  — no saved state and no unsaved edits for this step
-- yellow — has unsaved edits (the section is dirty for this step)
+- yellow — has unsaved edits (the section is dirty for this step), or a warp made
+  up only of auto-generated control points (an elastix proposal awaiting review)
 - green — saved/persisted state exists and no unsaved edits
 
 The ``dirty`` flag is supplied by the caller (the GUI's edit registry) so this
@@ -49,9 +50,16 @@ def section_step_status(section: Section, step: str, *, dirty: bool) -> Alignmen
         # Warp is special: with no control points the step is empty (gray) even
         # mid-edit — e.g. right after the last CP was removed — so this check
         # takes precedence over the dirty flag.
-        if not section.warp.control_points:
+        cps = section.warp.control_points
+        if not cps:
             return AlignmentStatus.NOT_STARTED
         if dirty:
+            return AlignmentStatus.IN_PROGRESS
+        # A purely auto-generated (elastix) warp is a proposal awaiting review,
+        # so it stays yellow until the user adds a manual control point. As soon
+        # as one hand-placed point exists the warp is treated as user-owned and
+        # goes green when saved.
+        if all(cp.auto for cp in cps):
             return AlignmentStatus.IN_PROGRESS
         return AlignmentStatus.COMPLETE
 
