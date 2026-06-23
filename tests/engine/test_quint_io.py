@@ -376,6 +376,49 @@ def test_quicknii_export_convention_flips_ap_and_dv_axes():
     assert _to_quicknii_convention(converted, atlas_shape=(528, 320, 456)) == anchoring
 
 
+def test_sagittal_export_independent_of_slicing_direction(tmp_path: Path):
+    """Issue #16 regression: a stored section's exported QuickNII/VisuAlign
+    coordinates depend only on its stored anchoring, never on the project's
+    slicing axis or proposal direction. The slicing axis only affects *proposals*
+    for un-aligned sections, which are never written. The LR component (0) is
+    exported unflipped (the asymmetric ML axis is preserved); only AP/DV flip.
+    """
+    stored = [200.0, 100.0, 40.0, 20.0, 3.0, 4.0, 5.0, 6.0, 7.0]
+
+    def build(axis_name: str) -> Project:
+        return Project(
+            name="sag",
+            atlas=AtlasRef(name="allen_mouse_25um"),
+            interpolation_axis=axis_name,
+            sections=[
+                Section(
+                    id="s001",
+                    slice_index=1,
+                    original_path="a.tif",
+                    thumbnail_path="",
+                    alignment=Alignment(
+                        anchoring=list(stored),
+                        status=AlignmentStatus.COMPLETE,
+                    ),
+                )
+            ],
+        )
+
+    for save_fn, suffix in ((save_quicknii, "json"), (save_visualign, "va.json")):
+        sag = tmp_path / f"sagittal.{suffix}"
+        cor = tmp_path / f"coronal.{suffix}"
+        save_fn(build("ML"), sag)
+        save_fn(build("AP"), cor)
+        # Same stored alignment + same atlas → byte-identical export regardless
+        # of slicing direction.
+        assert sag.read_text(encoding="utf-8") == cor.read_text(encoding="utf-8")
+
+        exported = json.loads(sag.read_text(encoding="utf-8"))["slices"][0]["anchoring"]
+        assert exported[0] == 200.0  # LR preserved (no ML flip)
+        assert exported[1] == 527.0 - 100.0  # AP flips about N-1
+        assert exported[2] == 319.0 - 40.0  # DV flips about N-1
+
+
 # ---------------------------------------------------------------------------
 # save_visualign / load_visualign round-trip
 # ---------------------------------------------------------------------------
