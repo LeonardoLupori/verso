@@ -332,13 +332,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/e8/a7/e3a89b2c516eaca7446e8f1335daeec90764b50888af5e073a2b6a987fcf/imagecodecs-2026.3.6-cp311-abi3-win32.whl", hash = "sha256:c972a45dfee1befbac048ba3492607003e9a185811e8febdc1ed531d48c07e75", size = 15597722, upload-time = "2026-03-07T01:26:08.106Z" },
     { url = "https://files.pythonhosted.org/packages/22/c7/2b37a7fe9a2eb21011e50f046d62e68ac4e0f8d6ad94d7a10e9f8e8d685f/imagecodecs-2026.3.6-cp311-abi3-win_amd64.whl", hash = "sha256:e8fba5b9ac7be109ed35070208bc1683fa17cc381ed9535a4eae200c6d883bd8", size = 19177403, upload-time = "2026-03-07T01:26:11.718Z" },
     { url = "https://files.pythonhosted.org/packages/c0/c7/94e930cef9e0a29a2df5e3ba3bacd2c2f1e34ca373fe48624b64af8ae91c/imagecodecs-2026.3.6-cp311-abi3-win_arm64.whl", hash = "sha256:fc4856913be6c8b3861223158920d934a0ae203149a435f585622dbbff8ed696", size = 15193605, upload-time = "2026-03-07T01:26:15.016Z" },
-    { url = "https://files.pythonhosted.org/packages/a3/0b/ba7ca5a14cf2ff744c47898ab9e98b6b96b364bce1459afcab5f4e5ea2bb/imagecodecs-2026.3.6-cp314-cp314t-macosx_10_15_x86_64.whl", hash = "sha256:ea2cd774854a3bfe1dc9508f98907edc877c02a78642ab371adbdec65a8865cc", size = 14335958, upload-time = "2026-03-07T06:13:39.726Z" },
-    { url = "https://files.pythonhosted.org/packages/18/d9/4750fb9739d474e399fa566b3a5c7033f2c9c0078bc869473b23d3e0d4b7/imagecodecs-2026.3.6-cp314-cp314t-macosx_11_0_arm64.whl", hash = "sha256:6efa104ce600f61fef03a43daab34fe2953c8adb4e4ee6eb9544825f5361e5ab", size = 12021474, upload-time = "2026-03-07T01:26:18.008Z" },
-    { url = "https://files.pythonhosted.org/packages/29/d3/f0a71c797f836021241500d4a459b0f93317f2b5c9bcc39fb1eaa50e01ea/imagecodecs-2026.3.6-cp314-cp314t-manylinux_2_28_aarch64.whl", hash = "sha256:16fd83dd25d9c888317bc8cbbc5d7490b78c84c58275d80fb71ea7b28645276a", size = 29606531, upload-time = "2026-03-07T01:26:22.058Z" },
-    { url = "https://files.pythonhosted.org/packages/0c/8c/a1b433418306636fc22a94b669d7ebbbde8e3b26aef7d693c08f9f8a65af/imagecodecs-2026.3.6-cp314-cp314t-manylinux_2_28_x86_64.whl", hash = "sha256:39fcf671537cc92dd24ba4dcba257d8aa47e6f58018e839a5216c626f03d4126", size = 30039276, upload-time = "2026-03-07T01:26:26.718Z" },
-    { url = "https://files.pythonhosted.org/packages/ac/96/1474c0e242fb11d68304f858298971370fdfcecc404dbd9993a3ea449b4f/imagecodecs-2026.3.6-cp314-cp314t-win32.whl", hash = "sha256:65110ff30723a6e0b79c6c74ff52909a34b131366c4f76b1b68084cca5fcd982", size = 16345843, upload-time = "2026-03-07T01:26:30.498Z" },
-    { url = "https://files.pythonhosted.org/packages/d5/13/d0e09d8aaafe6fac1aa1bd8c0dcc0f024998ea4a23477128db14a085b4cf/imagecodecs-2026.3.6-cp314-cp314t-win_amd64.whl", hash = "sha256:1b810efeeb06bdcca07ae410a81bdb5eb9fb38f91689baf0f0b75783f5119a40", size = 20230890, upload-time = "2026-03-07T01:26:33.78Z" },
-    { url = "https://files.pythonhosted.org/packages/9c/06/3a5fe853e4df9a3655f8be81c1eb48013aab282c1557341b8634dd718e32/imagecodecs-2026.3.6-cp314-cp314t-win_arm64.whl", hash = "sha256:a2363c64e346cee4136f02a207b1b645729142f5260d122ddc3d5ff9e32ac6b1", size = 15911854, upload-time = "2026-03-07T01:26:38.072Z" },
 ]
 
 [[package]]
@@ -361,6 +354,131 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/72/34/14ca021ce8e5dfedc35312d08ba8bf51fdd999c576889fc2c24cb97f4f10/iniconfig-2.3.0.tar.gz", hash = "sha256:c76315c77db068650d49c5b56314774a7804df16fee4402c1f19d6d15d8c4730", size = 20503, upload-time = "2025-10-18T21:55:43.219Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/cb/b1/3846dd7f199d53cb17f49cba7e651e9ce294d8497c8c150530ed11865bb8/iniconfig-2.3.0-py3-none-any.whl", hash = "sha256:f631c04d2c48c52b84d0d0549c99ff3859c98df65b3101406327ecc7d53fbf12", size = 7484, upload-time = "2025-10-18T21:55:41.639Z" },
+]
+
+[[package]]
+name = "itk"
+version = "5.4.6"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "itk-core" },
+    { name = "itk-filtering" },
+    { name = "itk-io" },
+    { name = "itk-numerics" },
+    { name = "itk-registration" },
+    { name = "itk-segmentation" },
+    { name = "numpy" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e8/cc/f94aa5c011f3fe073bfc3827025cf1f42f08a57fc3f1b7de462ddf523da6/itk-5.4.6-cp311-abi3-macosx_10_9_x86_64.whl", hash = "sha256:7cfeb9e8205c71f3a8d1bcdf5b40364edf50ab5da83b1ab4aae1c4debed93c47", size = 16784, upload-time = "2026-04-23T01:27:15.771Z" },
+    { url = "https://files.pythonhosted.org/packages/19/c2/3d592b6936cd8c31a4e041172f9b26bbeeb3535d450053e385127a4d68d8/itk-5.4.6-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:02e8968d91d7290d2fc792d65678049f1cd3ab416d141de78a533036a79f6dfe", size = 16784, upload-time = "2026-04-23T01:27:16.575Z" },
+    { url = "https://files.pythonhosted.org/packages/f1/66/61077d2d2ac7d08d7aafb99494d5224aaa04b9cd18359c6b59468729f575/itk-5.4.6-cp311-abi3-manylinux2014_x86_64.whl", hash = "sha256:c850dd3677a35f5561a536b6a59e8511f87de63cc99eedb7e5c7547bdd119de6", size = 16797, upload-time = "2026-04-23T01:27:17.374Z" },
+    { url = "https://files.pythonhosted.org/packages/e3/0d/96a5d04a7705bb29b747216f177d9401c37a0048833349dcf419478bfcd0/itk-5.4.6-cp311-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:3fa6f536dad2975109f1ea0592b65c2b8f18bd6385e45f4bbc8c999c3ea93ea9", size = 16797, upload-time = "2026-04-23T01:27:18.539Z" },
+    { url = "https://files.pythonhosted.org/packages/b4/cf/67bda7684d810d6f942625a00d9c0b8020964647c6a3b1f075e4a66f44ca/itk-5.4.6-cp311-abi3-win_amd64.whl", hash = "sha256:400346915f140a5b5bd1c34867b1741f78b0d49b5e20abf92cc07177ad655344", size = 16780, upload-time = "2026-04-23T01:27:19.71Z" },
+]
+
+[[package]]
+name = "itk-core"
+version = "5.4.6"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d0/63/5c8fcfe61fcf33bff2707aae7d66100252fecead7ec6dd0a7a8765872d86/itk_core-5.4.6-cp311-abi3-macosx_10_9_x86_64.whl", hash = "sha256:9bff074d1f389e49d056871dc706959307808810240395514cd5d521a9f97217", size = 71044228, upload-time = "2026-04-23T01:27:44.876Z" },
+    { url = "https://files.pythonhosted.org/packages/60/b0/d4c4ff5146a45aad3eac7a231c75c3fe73823e1f4788f8224b46034c810f/itk_core-5.4.6-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:25cef58d04743cc0b6d5e8a8e806682ebc4b2280adba118e0179e2c1334d61c8", size = 60225194, upload-time = "2026-04-23T01:27:48.331Z" },
+    { url = "https://files.pythonhosted.org/packages/dd/03/2d3a45a2447cef0100a3a777d7a901828f90f043b6e81fafaa858b47b7f2/itk_core-5.4.6-cp311-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:5e8a70cd7ec1e6d3fe4a1726a0155fe40755bea05b44549ac106bfb669c53a8d", size = 83554408, upload-time = "2026-04-23T01:27:52.278Z" },
+    { url = "https://files.pythonhosted.org/packages/aa/57/0a3499479cb19d7e4b7fc38b2ba15c0ea20e1e88cb2b634b75dd3e9ff8b8/itk_core-5.4.6-cp311-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:aa4f10ff8e481f0fb44724dde29ec7bac691726e076494b1a660f0f9f8daa87b", size = 81433183, upload-time = "2026-04-23T01:27:57.018Z" },
+    { url = "https://files.pythonhosted.org/packages/c2/da/2e60b34dc3b35f7097ae32f7971f19eeb41e78803cdda4abb65107426372/itk_core-5.4.6-cp311-abi3-win_amd64.whl", hash = "sha256:65c11a8eeb2f516a14bccced09b5f675b641905d9e5bfd89f12ed5c0921799dd", size = 37559425, upload-time = "2026-04-23T01:28:01.072Z" },
+]
+
+[[package]]
+name = "itk-elastix"
+version = "0.25.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "itk" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5f/fb/8be6a13e22402d6fe34f3b11418e577ce642b1eec991b9ce555edb12679d/itk_elastix-0.25.3-cp311-abi3-macosx_15_0_arm64.whl", hash = "sha256:590dbcd9017cb3db6d0bc36ebde14acc03798168ba426dd2ecd3105be6c6c4f7", size = 11951663, upload-time = "2026-04-27T19:43:35.875Z" },
+    { url = "https://files.pythonhosted.org/packages/27/e6/368a563a1e67f207e7ea7b39970f1efaf2dadcfee2ae1994f2b8ed0db327/itk_elastix-0.25.3-cp311-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:8e8301a60050de03defb48aa22c601cb87740a93c71d944ac3846b80e1d6e726", size = 19739877, upload-time = "2026-04-27T19:43:38.135Z" },
+    { url = "https://files.pythonhosted.org/packages/0e/29/82ad11534282335e6b571b0c6f4edac9e8a636cd3c18496bd90831cac83f/itk_elastix-0.25.3-cp311-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:608cb722b980197002015b4cffd6e62ed81942b1023c15f73be4b3298a694f84", size = 21618730, upload-time = "2026-04-27T19:43:40.443Z" },
+    { url = "https://files.pythonhosted.org/packages/fe/39/81ea659911172953d9c7ddfe10ba342bfc33524b1c389ca2a0e1d002b293/itk_elastix-0.25.3-cp311-abi3-win_amd64.whl", hash = "sha256:722b1b473680f43efedb14b5d992a8e9e03a0b6b3b26f85fd07377303dfb5844", size = 7980956, upload-time = "2026-04-27T19:43:42.876Z" },
+]
+
+[[package]]
+name = "itk-filtering"
+version = "5.4.6"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "itk-numerics" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/25/89/9db957675018af16dfef13a2a4c5e10d5e8265c552613923be3307bebd47/itk_filtering-5.4.6-cp311-abi3-macosx_10_9_x86_64.whl", hash = "sha256:276e5b47ef79375344c72d5ad768faf75eac7580a600fafd4d39c783704abd09", size = 46752047, upload-time = "2026-04-23T01:28:47.185Z" },
+    { url = "https://files.pythonhosted.org/packages/42/b9/07024c25cdba3c810a2c95ef7de2814a16ea40fe7d49c86d56805dab5db4/itk_filtering-5.4.6-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:0517a0fee02d65023334483cb0cc141905ba54ec9e2fb4f4e08c06ea39fb0274", size = 38992843, upload-time = "2026-04-23T01:28:50.165Z" },
+    { url = "https://files.pythonhosted.org/packages/ea/af/28a66c1a68d35ea889e1cb53c80da09613f8b503220c4df3715deb27cacc/itk_filtering-5.4.6-cp311-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:e391be3000e33ee63b3b4bbefef3b373e1dd92f13eea08e1b1e09dce9ea5d9d0", size = 69480307, upload-time = "2026-04-23T01:28:53.557Z" },
+    { url = "https://files.pythonhosted.org/packages/76/7c/ecce86280d00ab2c9e35d89d65044397c12182f2d4b417935e553a5559e5/itk_filtering-5.4.6-cp311-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:50901cf93df92d9d6099767b6406fed427c00f8c93eb176395b9da65bf9c89d8", size = 67831733, upload-time = "2026-04-23T01:28:57.04Z" },
+    { url = "https://files.pythonhosted.org/packages/f9/f1/c6a5a1ab323856c7880a4d2e69a0387506f6056718b74838a3cd4efb4310/itk_filtering-5.4.6-cp311-abi3-win_amd64.whl", hash = "sha256:67e3944a85ef6a5c7eec3b8b5dbd099ad66196a29916a75e417b7168ab112c22", size = 23571251, upload-time = "2026-04-23T01:28:59.951Z" },
+]
+
+[[package]]
+name = "itk-io"
+version = "5.4.6"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "itk-core" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/cd/62/fd4a59567e76b3aef57c18bb1d5739803a9b9328222c2bd979f2c191871f/itk_io-5.4.6-cp311-abi3-macosx_10_9_x86_64.whl", hash = "sha256:bb9287da3814a8bb1fbda6e9e8e3a1bda115a58ab0db478797702f63d73957d4", size = 22350067, upload-time = "2026-04-23T01:29:31.913Z" },
+    { url = "https://files.pythonhosted.org/packages/84/88/7f30db9db2e9e3d9c1c4ffef7bbe0ce53eee4e66e597e1f56ecefff3973a/itk_io-5.4.6-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:84d36df7107ebe83ba57a45e6fef5c394bac68e12a38797cf7509c0600084b3b", size = 17785791, upload-time = "2026-04-23T01:29:34.407Z" },
+    { url = "https://files.pythonhosted.org/packages/d6/9b/cab6a7df18d960564bdd593305b28ddda5b16c8d2f1cb094c285d365673f/itk_io-5.4.6-cp311-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:721bc543a8525e96ade0095ee950e3188d69a2c0bec99f24398ef638a9c973c7", size = 27678614, upload-time = "2026-04-23T01:29:37.834Z" },
+    { url = "https://files.pythonhosted.org/packages/3e/02/85ef2211a1e9361efd249a9a3ba07ff09120ef555579b03a8c6ac3437a62/itk_io-5.4.6-cp311-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:9e31eab429a112ae1505e08f133341126a1a489feb0af1e0cdfdde0e9b4c9d62", size = 28011144, upload-time = "2026-04-23T01:41:20.138Z" },
+    { url = "https://files.pythonhosted.org/packages/52/5f/fae3287f34edfd7bf1c6881be1db5eb456459442cf887d7bfea236e29a22/itk_io-5.4.6-cp311-abi3-win_amd64.whl", hash = "sha256:5ca00186c20f777032722bbe3e4bcd2176e1e30d851a819781117d4e6f3367e6", size = 8680896, upload-time = "2026-04-23T01:41:22.489Z" },
+]
+
+[[package]]
+name = "itk-numerics"
+version = "5.4.6"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "itk-core" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/68/0d/a418a9cc68c00103b6821b5a4dc059b35f93dde71db412f5521f5d0fa9ae/itk_numerics-5.4.6-cp311-abi3-macosx_10_9_x86_64.whl", hash = "sha256:d87fdcca3c5717afbb04ba1ab47f17ab0ba009c261cbe741dcb392a665f2a155", size = 35826667, upload-time = "2026-04-23T01:41:54.762Z" },
+    { url = "https://files.pythonhosted.org/packages/bd/e4/d5c2dea8ee845bffe8c3342f05a21578d5e8c4c8f886f7f98a992086ccef/itk_numerics-5.4.6-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:1a6c8172d019116379ba603a4c0db8039b6c952aa0b8ba7b8c6d613e49062bd4", size = 30873456, upload-time = "2026-04-23T01:41:57.791Z" },
+    { url = "https://files.pythonhosted.org/packages/0a/e1/572e6b2b44393ce09c0f3f2fea194036015f9194a8530a5dff883f8b1e97/itk_numerics-5.4.6-cp311-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:f4f1d63f6568133dfe103ae43dfb7caace25de93601cc1cb6d64c9e9091b8057", size = 58139999, upload-time = "2026-04-23T01:42:00.668Z" },
+    { url = "https://files.pythonhosted.org/packages/4f/11/a5f16a9c649a2ff9cb612a7473f4a9732a52774ef20c345f126418ace397/itk_numerics-5.4.6-cp311-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:8c61e40c2b1990851c978ca0515d1e36c5a8f34dbb85ba5d4e35569906fb0628", size = 57196801, upload-time = "2026-04-23T01:42:04.291Z" },
+    { url = "https://files.pythonhosted.org/packages/64/33/29c2c2a258f2a5884bc5cb4a17bf628511a19e841ddec0da6c93719b32be/itk_numerics-5.4.6-cp311-abi3-win_amd64.whl", hash = "sha256:210bc33aeba0d1c6d05dc9adf628e27e7d5ca51acd5244c92a7b6ae05089149c", size = 19725678, upload-time = "2026-04-23T01:42:07.933Z" },
+]
+
+[[package]]
+name = "itk-registration"
+version = "5.4.6"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "itk-filtering" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/11/49/21a9a803f8345009ac3cd1272bb32dece0ea36a99194e8e1c6dbdb126e17/itk_registration-5.4.6-cp311-abi3-macosx_10_9_x86_64.whl", hash = "sha256:7038711ba906b8d390c211d2fd1a16a90e20ca9b78fd137d0969343785900880", size = 22013045, upload-time = "2026-04-23T01:42:40.362Z" },
+    { url = "https://files.pythonhosted.org/packages/83/12/c1945c6fa4eba9870b4cab17790a74492c3d9f47ae75a344ed50dfe50571/itk_registration-5.4.6-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:6f8cf2009bf056721ec251e5fa38609fb51e1ca15d1a29fd165766d879995b56", size = 17848602, upload-time = "2026-04-23T01:42:43.004Z" },
+    { url = "https://files.pythonhosted.org/packages/98/37/854f9cb2f9337acc08a398c2dc82b8e44680c0315d0e3c4f04fc0c2e541f/itk_registration-5.4.6-cp311-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:b3accc1b031ba2494092d7b5d39a5b5142418b2bfe73fb528301bdd16074c519", size = 29007216, upload-time = "2026-04-23T01:42:45.358Z" },
+    { url = "https://files.pythonhosted.org/packages/aa/47/5771b359183185e314a38b6144daaf77ba1577014100916e75b0d5e194a9/itk_registration-5.4.6-cp311-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:e8ec1f67c925503c9bf5b4f0e1134d6debb2f0adb9a3fd144b96d72309775e12", size = 28539736, upload-time = "2026-04-23T01:42:48.533Z" },
+    { url = "https://files.pythonhosted.org/packages/bf/ca/bd0d3dda0e82410c6e554a36b12a92c2906384bbab26c43050b850ae94bc/itk_registration-5.4.6-cp311-abi3-win_amd64.whl", hash = "sha256:b560fabf1c9663b22cd960ae5fa077953e13be06406a2d0f9d9f2e5a70e3ab5f", size = 9527127, upload-time = "2026-04-23T01:42:51.273Z" },
+]
+
+[[package]]
+name = "itk-segmentation"
+version = "5.4.6"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "itk-filtering" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/26/87/85c1bb73358cb72ab26cde074803115474d54798856ffafdee581d09cc00/itk_segmentation-5.4.6-cp311-abi3-macosx_10_9_x86_64.whl", hash = "sha256:46ef607f2bca7fba9f2eeee1620ca0f9f44f574e7d759c74153014d6a51fb46d", size = 13067904, upload-time = "2026-04-23T01:43:17.36Z" },
+    { url = "https://files.pythonhosted.org/packages/ba/a8/043766aa4b0d6ab765c7753b6a45a3cdb0bc388471ba8014d9a186e9af1f/itk_segmentation-5.4.6-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:087277335ca18a8116fabd1ccd0321072e4230faa474e25ae2b546cecb7186b3", size = 11040200, upload-time = "2026-04-23T01:43:19.992Z" },
+    { url = "https://files.pythonhosted.org/packages/b1/84/6577b06aa28146820ac8139d3db842b0840a52792c4529a4d96396029153/itk_segmentation-5.4.6-cp311-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:6b520618860f4f05b6c30c29e89fea3194f2fe4e4d20a5073fafeb3d82ed0d50", size = 16466550, upload-time = "2026-04-23T01:43:22.273Z" },
+    { url = "https://files.pythonhosted.org/packages/0f/b6/6c4c3ee9bf0215ba00d986a9c136c3f521f38c1a135875888001303ae071/itk_segmentation-5.4.6-cp311-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:eb7dbe21fe52d624dc089bffb6e8336390aa59bacb675ed1a09ba752175b619c", size = 15895889, upload-time = "2026-04-23T01:43:25.597Z" },
+    { url = "https://files.pythonhosted.org/packages/e5/99/88651df552c2dace67ad142dddd9e92dbeeafdea469258fa225b591aca04/itk_segmentation-5.4.6-cp311-abi3-win_amd64.whl", hash = "sha256:e5dc4c2b68b7400ab3bde3d811e525392d6998127049dfcfc772f52fd38021ae", size = 5034082, upload-time = "2026-04-23T01:43:27.663Z" },
 ]
 
 [[package]]
@@ -1520,6 +1638,7 @@ source = { editable = "." }
 dependencies = [
     { name = "brainglobe-atlasapi" },
     { name = "imagecodecs" },
+    { name = "itk-elastix" },
     { name = "numpy" },
     { name = "opencv-python" },
     { name = "pyqt6" },
@@ -1551,6 +1670,7 @@ requires-dist = [
     { name = "brainglobe-atlasapi", specifier = ">=2.0" },
     { name = "deepslice", marker = "extra == 'deepslice'", specifier = "==1.2.8" },
     { name = "imagecodecs", specifier = ">=2026.3.6" },
+    { name = "itk-elastix", specifier = ">=0.13" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "opencv-python", specifier = ">=4.9" },
     { name = "pyqt6", specifier = ">=6.7.0" },

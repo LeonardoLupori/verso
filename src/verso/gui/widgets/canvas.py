@@ -541,6 +541,9 @@ class ImageCanvas(QWidget):
         "White": (255, 255, 255),
         "Magenta": (255, 0, 255),
     }
+    # Fixed, contrasting colour for automatically-generated control points so
+    # they stand apart from the user's manual ones regardless of the CP palette.
+    _AUTO_CP_COLOR_RGB: tuple[int, int, int] = (0, 200, 255)
 
     def set_control_points(
         self,
@@ -552,6 +555,7 @@ class ImageCanvas(QWidget):
         cp_shape: str = "Circle",
         cp_color: str = "Orange",
         src_pts: list[tuple[float, float]] | None = None,
+        auto_flags: list[bool] | None = None,
     ) -> None:
         """Draw warp control points and their displacement vectors.
 
@@ -565,6 +569,8 @@ class ImageCanvas(QWidget):
             src_pts: Atlas-space normalised origins for each CP. When provided,
                 a dashed line is drawn from each src to its dst (the displacement
                 vector, matching VisuAlign's pin rendering).
+            auto_flags: Per-point flags; points marked True are drawn in the
+                automatic-CP colour to distinguish them from manual points.
         """
         if not dst_pts:
             self.cp_item.clear()
@@ -592,16 +598,19 @@ class ImageCanvas(QWidget):
             self.disp_halo_item.clear()
             self.disp_item.clear()
 
+        ar, ag, ab = self._AUTO_CP_COLOR_RGB
         spots = []
         for i, (s, t) in enumerate(dst_pts):
             px, py = s * display_w, t * display_h
+            is_auto = bool(auto_flags[i]) if auto_flags and i < len(auto_flags) else False
+            br, bg, bb = (ar, ag, ab) if is_auto else (r, g, b)
             if i == hovered_idx:
                 spots.append(
                     {
                         "pos": (px, py),
                         "size": hov_size,
                         "symbol": symbol,
-                        "brush": pg.mkBrush(r, g, b, 255),
+                        "brush": pg.mkBrush(br, bg, bb, 255),
                         "pen": pg.mkPen(255, 255, 255, 255, width=2.5),
                     }
                 )
@@ -611,7 +620,7 @@ class ImageCanvas(QWidget):
                         "pos": (px, py),
                         "size": cp_size,
                         "symbol": symbol,
-                        "brush": pg.mkBrush(r, g, b, 255),
+                        "brush": pg.mkBrush(br, bg, bb, 255),
                         "pen": pg.mkPen(0, 0, 0, 240, width=1.5),
                     }
                 )

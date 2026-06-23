@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from verso.engine.model.alignment import Alignment, WarpState
+from verso.engine.model.elastix import ElastixParams
 
 DEFAULT_PROJECT_FILENAME = "project-verso.json"
 
@@ -182,6 +183,9 @@ class Project:
     # Derived once at import from the largest image (see compute_working_scale);
     # full-resolution export scales back up by this factor.
     working_scale: float = 0.2
+    # Per-project parameters for automatic elastix control-point generation.
+    # None means "use the built-in ElastixParams defaults" until edited.
+    elastix_params: ElastixParams | None = None
     version: str = "1.1"
 
     @property
@@ -200,6 +204,9 @@ class Project:
             "cp_shape": self.cp_shape,
             "cp_color": self.cp_color,
             "working_scale": self.working_scale,
+            "elastix_params": (
+                self.elastix_params.to_dict() if self.elastix_params is not None else None
+            ),
             "sections": [s.to_dict() for s in self.sections],
         }
 
@@ -224,6 +231,8 @@ class Project:
         )
         raw_axis = str(d.get("interpolation_axis", "AP")).upper()
         interpolation_axis = raw_axis if raw_axis in AXIS_NAME_TO_INDEX else "AP"
+        raw_elastix = d.get("elastix_params")
+        elastix_params = ElastixParams.from_dict(raw_elastix) if raw_elastix else None
         project = cls(
             name=d["name"],
             atlas=AtlasRef.from_dict(d["atlas"]),
@@ -234,6 +243,7 @@ class Project:
             cp_color=cp_color,
             interpolation_axis=interpolation_axis,
             working_scale=float(d.get("working_scale", 0.2)),
+            elastix_params=elastix_params,
             version="1.1",
         )
         project.sort_sections()

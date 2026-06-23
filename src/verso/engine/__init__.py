@@ -17,6 +17,12 @@ from verso.engine.deepslice import (
     reset_in_progress_to_default_proposals,
     run_deepslice_suggestions,
 )
+from verso.engine.elastix import (
+    anchor_source_points,
+    auto_control_points,
+    is_supported_atlas,
+    load_anchor_lines,
+)
 from verso.engine.io.export_images import (
     ExportOptions,
     export_section,
@@ -41,6 +47,7 @@ from verso.engine.io.quint_io import (
     save_visualign,
 )
 from verso.engine.model.alignment import Alignment, AlignmentStatus, ControlPoint, WarpState
+from verso.engine.model.elastix import ElastixParams
 from verso.engine.model.mask import Mask, MaskType
 from verso.engine.model.project import AtlasRef, ChannelSpec, Preprocessing, Project, Section
 from verso.engine.registration import (
@@ -75,6 +82,12 @@ from verso.engine.warping import (
 __all__ = [
     # Atlas
     "AtlasVolume",
+    # Elastix auto control points
+    "ElastixParams",
+    "anchor_source_points",
+    "auto_control_points",
+    "is_supported_atlas",
+    "load_anchor_lines",
     "DeepSliceError",
     "DeepSliceOptions",
     "DeepSliceRunResult",

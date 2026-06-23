@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
     QAbstractSlider,
     QAbstractSpinBox,
     QComboBox,
+    QDialog,
     QDockWidget,
     QFileDialog,
     QLabel,
@@ -39,10 +40,13 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from verso.engine.elastix import ElastixWorker
 from verso.engine.io.quint_io import load_quicknii, load_visualign
 from verso.engine.model.alignment import AlignmentStatus
+from verso.engine.model.elastix import ElastixParams
 from verso.engine.model.project import DEFAULT_PROJECT_FILENAME, Project
 from verso.gui.dialogs.brightness import BrightnessDialog
+from verso.gui.dialogs.elastix_params import ElastixParamsDialog
 from verso.gui.dialogs.new_project import NewProjectDialog
 from verso.gui.state import AppState
 from verso.gui.views.align_view import AlignView
@@ -124,6 +128,51 @@ class _BatchMaskWorker(QObject):
         self.done.emit(completed, errors)
 
 
+class _AutoCPWorker(QObject):
+    """Drive elastix control-point generation off the UI thread.
+
+    Loads images and slices the atlas template here (safe in a thread), then
+    hands the prepared arrays to a persistent warm child process
+    (:class:`ElastixWorker`) that runs the native registration. Passing arrays
+    means the child never reloads the atlas, and keeping it warm means only the
+    first run pays the optimizer's cold-start cost.
+    """
+
+    done = pyqtSignal(int, list)
+
+    def __init__(
+        self,
+        worker: ElastixWorker,
+        sections: list,
+        atlas,
+        working_scale: float,
+        params: ElastixParams,
+    ) -> None:
+        super().__init__()
+        self._worker = worker
+        self._sections = sections
+        self._atlas = atlas
+        self._working_scale = working_scale
+        self._params = params
+        # section.id -> list[ControlPoint], drained by the main thread on completion.
+        self.results: dict[str, object] = {}
+
+    def run(self) -> None:
+        from verso.engine.elastix import prepare_registration_inputs
+
+        try:
+            inputs, errors = prepare_registration_inputs(
+                self._sections, self._atlas, self._working_scale
+            )
+            if inputs:
+                results, gen_errors = self._worker.generate(inputs, self._atlas.shape, self._params)
+                self.results = results
+                errors = errors + gen_errors
+            self.done.emit(len(self.results), errors)
+        except Exception as exc:
+            self.done.emit(0, [str(exc)])
+
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -139,6 +188,12 @@ class MainWindow(QMainWindow):
         self._batch_mask_thread: QThread | None = None
         self._batch_mask_worker: _BatchMaskWorker | None = None
         self._batch_mask_progress: QProgressDialog | None = None
+        self._auto_cp_thread: QThread | None = None
+        self._auto_cp_worker: _AutoCPWorker | None = None
+        self._auto_cp_progress: QProgressDialog | None = None
+        self._auto_cp_batch = False
+        # Persistent warm child process for elastix registrations (see ElastixWorker).
+        self._elastix_worker = ElastixWorker()
         self._brightness_dialog: BrightnessDialog | None = None
 
         # Coalesce rapid brightness-slider ticks into one redraw per event-loop
@@ -180,6 +235,7 @@ class MainWindow(QMainWindow):
         if not self._confirm_discard_active_draft():
             event.ignore()
             return
+        self._elastix_worker.shutdown()
         self._filmstrip.shutdown()
         self._overview.shutdown()
         self._state.shutdown()
@@ -291,6 +347,11 @@ class MainWindow(QMainWindow):
         align_menu.addAction(self._act_clear_all_alignments)
 
         warp_menu = batch_menu.addMenu("&Warp")
+        self._act_batch_auto_cp = QAction("&Auto-generate control points for all slices…", self)
+        self._act_batch_auto_cp.setEnabled(False)
+        self._act_batch_auto_cp.triggered.connect(self._batch_auto_generate_warps)
+        warp_menu.addAction(self._act_batch_auto_cp)
+        warp_menu.addSeparator()
         self._act_clear_all_warps = QAction("&Clear all warps…", self)
         self._act_clear_all_warps.setEnabled(False)
         self._act_clear_all_warps.triggered.connect(self._clear_all_warps)
@@ -526,6 +587,8 @@ class MainWindow(QMainWindow):
         self._align.anchoring_changed.connect(self._on_anchoring_changed)
         self._align.alignments_updated.connect(self._on_alignments_updated)
         self._props.warp.cp.style_changed.connect(self._on_cp_style_changed)
+        self._props.warp.cp.autogen_requested.connect(self._auto_generate_warp_cps)
+        self._props.warp.cp.edit_params_requested.connect(self._edit_elastix_params)
 
         # Local-changes bars (Save / Clear edits / Reset) and per-view dirty signals.
         view_bindings = (
@@ -620,6 +683,11 @@ class MainWindow(QMainWindow):
                 self._update_slicing_position()
             else:
                 self._warp.activate()
+                # Spawn + warm the elastix child process now so the first
+                # "Auto-generate" click hits a warm optimizer instead of paying
+                # the ~15 s cold-start cost interactively.
+                if self._is_auto_cp_atlas():
+                    self._elastix_worker.start()
             # Push the working scale before load_section so any thumbnail
             # regeneration uses the project's scale, not the panel default.
             if project is not None:
@@ -1745,6 +1813,12 @@ class MainWindow(QMainWindow):
         self._act_clear_all_slice_masks.setEnabled(has_sections and not running)
         self._act_clear_all_lr_masks.setEnabled(has_sections and not running)
         self._act_clear_all_warps.setEnabled(has_sections and not running)
+        # Automatic control points need the atlas loaded and an Allen mouse atlas
+        # (the curated anchor points were traced in Allen CCF space).
+        auto_cp_ok = atlas_ready and not running and self._is_auto_cp_atlas()
+        auto_cp_busy = self._auto_cp_thread is not None
+        self._act_batch_auto_cp.setEnabled(auto_cp_ok and not auto_cp_busy)
+        self._props.warp.cp.set_autogen_enabled(auto_cp_ok and not auto_cp_busy)
 
     def _interpolation_axis(self) -> int:
         """Return the QuickNII voxel axis index for the current project."""
@@ -2100,6 +2174,200 @@ class MainWindow(QMainWindow):
         self._update_deepslice_enabled()
         if self._state.project is not None and self._state.project_path is not None:
             self._write_project(self._state.project_path)
+
+    # ------------------------------------------------------------------
+    # Automatic (elastix) control points
+    # ------------------------------------------------------------------
+
+    def _is_auto_cp_atlas(self) -> bool:
+        from verso.engine.elastix import is_supported_atlas
+
+        project = self._state.project
+        return project is not None and is_supported_atlas(project.atlas.name)
+
+    def _resolve_elastix_params(self) -> ElastixParams:
+        project = self._state.project
+        if project is not None and project.elastix_params is not None:
+            return project.elastix_params
+        return ElastixParams()
+
+    def _edit_elastix_params(self) -> None:
+        project = self._state.project
+        if project is None:
+            return
+        dialog = ElastixParamsDialog(self._resolve_elastix_params(), self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            project.elastix_params = dialog.get_params()
+            if self._state.project_path is not None:
+                self._write_project(self._state.project_path)
+            self.statusBar().showMessage("Saved automatic registration parameters", 4000)
+
+    def _auto_generate_warp_cps(self) -> None:
+        """Generate control points for the current section (Warp view button)."""
+        project = self._state.project
+        section = self._state.current_section
+        atlas = self._state.atlas
+        if project is None or section is None or atlas is None:
+            return
+        if not self._is_auto_cp_atlas():
+            QMessageBox.information(
+                self,
+                "Atlas not supported",
+                "Automatic control points are only available for Allen mouse atlases.",
+            )
+            return
+        anchoring = section.alignment.anchoring
+        if not anchoring or all(v == 0.0 for v in anchoring):
+            QMessageBox.information(
+                self,
+                "No alignment",
+                "Align this section before generating control points.",
+            )
+            return
+        self._auto_cp_batch = False
+        self._run_auto_cp([section], "Generating control points…", self._on_single_auto_cp_done)
+
+    def _batch_auto_generate_warps(self) -> None:
+        """Generate control points for every aligned section (Batch menu)."""
+        project = self._state.project
+        atlas = self._state.atlas
+        if project is None or not project.sections or atlas is None:
+            return
+        if not self._is_auto_cp_atlas():
+            QMessageBox.information(
+                self,
+                "Atlas not supported",
+                "Automatic control points are only available for Allen mouse atlases.",
+            )
+            return
+        aligned = [
+            s
+            for s in project.sections
+            if s.alignment.anchoring and any(v != 0.0 for v in s.alignment.anchoring)
+        ]
+        if not aligned:
+            QMessageBox.information(
+                self,
+                "No aligned sections",
+                "Align sections before generating control points.",
+            )
+            return
+        reply = QMessageBox.question(
+            self,
+            "Auto-generate control points",
+            f"Generate control points for {len(aligned)} aligned section(s)? "
+            "Existing automatic control points will be replaced; manual points are kept.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        if not self._confirm_discard_active_draft():
+            return
+        self._auto_cp_batch = True
+        self._run_auto_cp(
+            aligned,
+            "Generating control points for all slices…",
+            self._on_batch_auto_cp_done,
+        )
+
+    def _run_auto_cp(self, sections: list, message: str, on_done) -> None:
+        project = self._state.project
+        atlas = self._state.atlas
+        if project is None or atlas is None:
+            return
+        self._show_auto_cp_progress(message)
+        thread = QThread(self)
+        worker = _AutoCPWorker(
+            self._elastix_worker,
+            list(sections),
+            atlas,
+            project.working_scale,
+            self._resolve_elastix_params(),
+        )
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.done.connect(on_done)
+        worker.done.connect(thread.quit)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(self._on_auto_cp_finished)
+        self._auto_cp_thread = thread
+        self._auto_cp_worker = worker
+        self._update_deepslice_enabled()  # disable triggers while running
+        thread.start()
+
+    def _show_auto_cp_progress(self, message: str) -> None:
+        progress = QProgressDialog(message, "", 0, 0, self)
+        progress.setWindowTitle("Automatic control points")
+        progress.setMinimumWidth(480)
+        progress.setCancelButton(None)
+        progress.setMinimumDuration(0)
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+        progress.setModal(True)
+        progress.show()
+        self._auto_cp_progress = progress
+
+    def _hide_auto_cp_progress(self) -> None:
+        if self._auto_cp_progress is None:
+            return
+        self._auto_cp_progress.close()
+        self._auto_cp_progress.deleteLater()
+        self._auto_cp_progress = None
+
+    def _on_single_auto_cp_done(self, completed: int, errors: list[str]) -> None:
+        worker = self._auto_cp_worker
+        section = self._state.current_section
+        n = 0
+        if worker is not None and section is not None:
+            cps = worker.results.get(section.id)
+            if cps is not None:
+                n = len(cps)
+                self._warp.apply_auto_control_points(cps)
+        self._refresh_current_step_dot()
+        self.statusBar().showMessage(f"Generated {n} control points", 5000)
+        self._report_auto_cp_errors(errors)
+
+    def _on_batch_auto_cp_done(self, completed: int, errors: list[str]) -> None:
+        worker = self._auto_cp_worker
+        project = self._state.project
+        total = 0
+        if worker is not None and project is not None:
+            by_id = {s.id: s for s in project.sections}
+            for sid, cps in worker.results.items():
+                section = by_id.get(sid)
+                if section is None:
+                    continue
+                manual = [cp for cp in section.warp.control_points if not cp.auto]
+                section.warp.control_points = manual + list(cps)
+                section.warp.status = (
+                    AlignmentStatus.COMPLETE
+                    if section.warp.control_points
+                    else AlignmentStatus.NOT_STARTED
+                )
+                total += len(cps)
+        self._after_batch_clear()  # refresh dependent UI + persist project
+        self.statusBar().showMessage(
+            f"Generated {total} control points across {completed} sections", 6000
+        )
+        self._report_auto_cp_errors(errors)
+
+    def _on_auto_cp_finished(self) -> None:
+        self._hide_auto_cp_progress()
+        self._auto_cp_thread = None
+        self._auto_cp_worker = None
+        self._update_deepslice_enabled()
+
+    def _report_auto_cp_errors(self, errors: list[str]) -> None:
+        if not errors:
+            return
+        preview = "\n".join(errors[:8])
+        suffix = "" if len(errors) <= 8 else f"\n...and {len(errors) - 8} more"
+        QMessageBox.warning(
+            self,
+            "Some sections failed",
+            f"{len(errors)} sections could not be processed:\n\n{preview}{suffix}",
+        )
 
     def _update_slicing_position(self) -> None:
         project = self._state.project

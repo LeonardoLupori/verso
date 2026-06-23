@@ -21,6 +21,8 @@ _CP_SHAPES = ["Circle", "Cross", "Square", "Diamond"]
 
 class ControlPointsBox(QGroupBox):
     style_changed = pyqtSignal(int, str, str)  # size, shape, color
+    autogen_requested = pyqtSignal()  # "Auto-generate" clicked
+    edit_params_requested = pyqtSignal()  # "Parameters…" clicked
 
     def __init__(self) -> None:
         super().__init__("Control points")
@@ -53,8 +55,25 @@ class ControlPointsBox(QGroupBox):
         layout.addWidget(self._color_btn, 0, 3, alignment=Qt.AlignmentFlag.AlignLeft)
         layout.addWidget(QLabel("Shape:"), 1, 0, alignment=right_label)
         layout.addWidget(self._shape_combo, 1, 1, 1, 3)
+
+        self._autogen_btn = QPushButton("Auto-generate")
+        self._autogen_btn.setToolTip(
+            "Automatically place control points by registering the atlas template "
+            "to this section (elastix)."
+        )
+        self._autogen_btn.clicked.connect(self.autogen_requested)
+        self._params_btn = QPushButton("Parameters…")
+        self._params_btn.setToolTip("Edit the automatic registration parameters.")
+        self._params_btn.clicked.connect(self.edit_params_requested)
+        layout.addWidget(self._autogen_btn, 2, 0, 1, 3)
+        layout.addWidget(self._params_btn, 2, 3)
+
         layout.setColumnStretch(1, 1)
         layout.setColumnStretch(3, 1)
+
+    def set_autogen_enabled(self, enabled: bool) -> None:
+        """Enable/disable the automatic control-point generation button."""
+        self._autogen_btn.setEnabled(enabled)
 
     def apply_style(self, size: int, shape: str, color: str) -> None:
         """Set CP style widgets silently (no signal emitted)."""

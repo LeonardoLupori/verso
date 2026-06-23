@@ -180,6 +180,25 @@ class WarpView(QWidget):
         if self._active:
             self._draw_control_points()
 
+    def apply_auto_control_points(self, cps: list[ControlPoint]) -> None:
+        """Replace this slice's auto-generated control points with ``cps``.
+
+        Manual control points are preserved; only ``auto=True`` points are
+        discarded and replaced. Leaves the result as an unsaved draft.
+        """
+        section = self._panel.section
+        if section is None:
+            return
+        self._push_undo()
+        manual = [cp for cp in section.warp.control_points if not cp.auto]
+        section.warp.control_points = manual + list(cps)
+        self._cp_hovered = -1
+        self._cp_dragging = -1
+        if self._active:
+            self._panel.update_overlay()
+        self._set_dirty(True)
+        self.cp_changed.emit()
+
     # ------------------------------------------------------------------
     # Hook implementations
     # ------------------------------------------------------------------
@@ -292,6 +311,7 @@ class WarpView(QWidget):
             cp_shape=self._cp_shape,
             cp_color=self._cp_color,
             src_pts=[(cp.src_x, cp.src_y) for cp in cps],
+            auto_flags=[cp.auto for cp in cps],
         )
 
     # ------------------------------------------------------------------
