@@ -15,6 +15,10 @@
 
 VERSO is a desktop application for registering serial histological brain sections to 3D reference atlases.
 
+<div align="center">
+<img src="docs/screen_1.png" alt="mainGUI" width="512">
+</div>
+
 ## What it does
 
 Histological brain sections imaged at high resolution need to be mapped onto a 3D reference atlas (such as the Allen Mouse Brain Atlas) before cell counts or signal measurements can be assigned to brain regions. This process traditionally requires several separate tools and manual file handoffs between them.
@@ -27,7 +31,7 @@ VERSO handles the entire workflow in one place:
 - **Warp** the atlas overlay onto curved or distorted sections using nonlinear control points (Delaunay triangulation, matching VisuAlign's algorithm)
 - **Export** warped images, region-annotated data, and point clouds for downstream quantification
 
-## Semiautomatic registration
+## Save time, be in control
 
 VERSO's guiding philosophy is simple: **save you as much time as possible without ever becoming a black box.** Every automatic step produces an ordinary, fully editable result that you can inspect, accept, or override. Nothing is hidden, the automation gives you a strong starting point, and you keep complete manual control over the final data. This matters most on out-of-distribution datasets, where automatic tools were never tested and a human eye is essential.
 
