@@ -13,3 +13,4 @@ Visualign-master*
 # Packaged data assets that must ship with the package (override the blanket
 # *.json ignore above).
 !src/verso/resources/anchor_points.json
+!docs/*.png
