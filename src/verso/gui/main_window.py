@@ -352,10 +352,14 @@ class MainWindow(QMainWindow):
         self._act_batch_auto_cp.triggered.connect(self._batch_auto_generate_warps)
         warp_menu.addAction(self._act_batch_auto_cp)
         warp_menu.addSeparator()
-        self._act_clear_all_warps = QAction("&Clear all warps…", self)
-        self._act_clear_all_warps.setEnabled(False)
-        self._act_clear_all_warps.triggered.connect(self._clear_all_warps)
-        warp_menu.addAction(self._act_clear_all_warps)
+        self._act_clear_manual_cps = QAction("Clear all &manual control points…", self)
+        self._act_clear_manual_cps.setEnabled(False)
+        self._act_clear_manual_cps.triggered.connect(self._clear_all_manual_cps)
+        warp_menu.addAction(self._act_clear_manual_cps)
+        self._act_clear_auto_cps = QAction("Clear all a&utomatic control points…", self)
+        self._act_clear_auto_cps.setEnabled(False)
+        self._act_clear_auto_cps.triggered.connect(self._clear_all_auto_cps)
+        warp_menu.addAction(self._act_clear_auto_cps)
 
         export_menu = mb.addMenu("&Export")
         act_export_images = QAction("Export images with atlas &overlay…", self)
@@ -1812,7 +1816,15 @@ class MainWindow(QMainWindow):
         # Mask + warp wipes only need a project with sections; atlas not required.
         self._act_clear_all_slice_masks.setEnabled(has_sections and not running)
         self._act_clear_all_lr_masks.setEnabled(has_sections and not running)
-        self._act_clear_all_warps.setEnabled(has_sections and not running)
+        # Clearing manual / automatic control points is only offered when points
+        # of that kind actually exist somewhere in the project.
+        sections = project.sections if project is not None else []
+        has_manual_cps = any(
+            cp for s in sections for cp in s.warp.control_points if not cp.auto
+        )
+        has_auto_cps = any(cp for s in sections for cp in s.warp.control_points if cp.auto)
+        self._act_clear_manual_cps.setEnabled(has_manual_cps and not running)
+        self._act_clear_auto_cps.setEnabled(has_auto_cps and not running)
         # Automatic control points need the atlas loaded and an Allen mouse atlas
         # (the curated anchor points were traced in Allen CCF space).
         auto_cp_ok = atlas_ready and not running and self._is_auto_cp_atlas()
@@ -2135,14 +2147,24 @@ class MainWindow(QMainWindow):
         self._after_batch_clear()
         self.statusBar().showMessage(f"Cleared {removed} L/R masks", 5000)
 
-    def _clear_all_warps(self) -> None:
+    def _clear_all_manual_cps(self) -> None:
+        """Batch: drop every hand-placed control point, keeping auto ones."""
+        self._clear_all_cps(auto=False)
+
+    def _clear_all_auto_cps(self) -> None:
+        """Batch: drop every auto-generated control point, keeping manual ones."""
+        self._clear_all_cps(auto=True)
+
+    def _clear_all_cps(self, *, auto: bool) -> None:
         project = self._state.project
         if project is None or not project.sections:
             return
+        kind = "automatic" if auto else "manual"
         reply = QMessageBox.question(
             self,
-            "Clear all warps",
-            f"Remove every warp control point from all {len(project.sections)} sections?",
+            f"Clear all {kind} control points",
+            f"Remove every {kind} warp control point from all "
+            f"{len(project.sections)} sections?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -2152,12 +2174,21 @@ class MainWindow(QMainWindow):
             return
         cleared = 0
         for section in project.sections:
-            if section.warp.control_points:
+            cps = section.warp.control_points
+            kept = [cp for cp in cps if cp.auto != auto]
+            if len(kept) != len(cps):
                 cleared += 1
-            section.warp.control_points.clear()
-            section.warp.status = AlignmentStatus.NOT_STARTED
+            section.warp.control_points = kept
+            if not kept:
+                section.warp.status = AlignmentStatus.NOT_STARTED
+            elif any(not cp.auto for cp in kept):
+                section.warp.status = AlignmentStatus.COMPLETE
+            else:
+                section.warp.status = AlignmentStatus.IN_PROGRESS
         self._after_batch_clear()
-        self.statusBar().showMessage(f"Cleared warps on {cleared} sections", 5000)
+        self.statusBar().showMessage(
+            f"Cleared {kind} control points on {cleared} sections", 5000
+        )
 
     def _after_batch_clear(self) -> None:
         """Refresh dependent UI + write project after a batch wipe."""
@@ -2340,11 +2371,13 @@ class MainWindow(QMainWindow):
                     continue
                 manual = [cp for cp in section.warp.control_points if not cp.auto]
                 section.warp.control_points = manual + list(cps)
-                section.warp.status = (
-                    AlignmentStatus.COMPLETE
-                    if section.warp.control_points
-                    else AlignmentStatus.NOT_STARTED
-                )
+                if not section.warp.control_points:
+                    section.warp.status = AlignmentStatus.NOT_STARTED
+                elif manual:
+                    section.warp.status = AlignmentStatus.COMPLETE
+                else:
+                    # Auto-only warp: a proposal awaiting review → yellow.
+                    section.warp.status = AlignmentStatus.IN_PROGRESS
                 total += len(cps)
         self._after_batch_clear()  # refresh dependent UI + persist project
         self.statusBar().showMessage(

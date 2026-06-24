@@ -459,10 +459,20 @@ class WarpView(QWidget):
         return bool(baseline.control_points)
 
     def save(self) -> bool:
-        """Commit the current control-point list as this slice's warp."""
+        """Commit the current control-point list as this slice's warp.
+
+        Saving is also how the user *accepts* an auto-generated (elastix) warp:
+        promoting ``warp.status`` to COMPLETE turns the proposal green. An empty
+        warp resets to NOT_STARTED so it reads gray.
+        """
         section = self._panel.section
         if section is None:
             return False
+        section.warp.status = (
+            AlignmentStatus.COMPLETE
+            if section.warp.control_points
+            else AlignmentStatus.NOT_STARTED
+        )
         self._baseline_warp = copy.deepcopy(section.warp)
         self._state.pop_baseline(section.id, "warp")
         self._reset_undo()

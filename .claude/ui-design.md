@@ -162,7 +162,9 @@ checkable pill buttons. Right-aligned: the current project name.
     *Clear all L/R masks*.
   - **Align**: Run DeepSlice; Default proposal; Reverse proposal;
     *Clear all alignments*.
-  - **Warp**: *Clear all warps*.
+  - **Warp**: Auto-generate control points for all slices; *Clear all manual
+    control points*; *Clear all automatic control points* (each enabled only
+    when control points of that kind exist in the project).
 - **Export** — Images with atlas overlay.
 - **Help** — Atlas info; Project info.
 

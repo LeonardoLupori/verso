@@ -305,7 +305,8 @@ class OverviewView(QWidget):
 
         for row, section in enumerate(p.sections):
             self._fill_row(row, section)
-            ws = section.warp.status
+            warp_dirty = self._state.is_dirty(section.id, "warp")
+            ws = section_step_status(section, "warp", dirty=warp_dirty)
             if ws == AlignmentStatus.COMPLETE:
                 complete += 1
             elif ws == AlignmentStatus.IN_PROGRESS:
