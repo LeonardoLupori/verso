@@ -134,6 +134,27 @@ class AtlasVolume:
 
         return np.dstack([rgb, alpha])
 
+    def colorize_labels(self, labels: np.ndarray) -> np.ndarray:
+        """Map an integer label map → ``(H, W, 3)`` uint8 RGB using Allen colors.
+
+        Each region ID is looked up in the structure colour table (unknown IDs
+        fall back to neutral gray; label ``0`` is black). Vectorised via
+        ``np.unique(return_inverse=True)`` so the lookup runs once per distinct
+        ID rather than per pixel.
+
+        Args:
+            labels: Integer region-ID map of any shape ``(H, W)``.
+
+        Returns:
+            uint8 ``(H, W, 3)`` RGB array.
+        """
+        unique_ids, inverse = np.unique(labels, return_inverse=True)
+        colors = np.array(
+            [self._color_dict.get(int(uid), (128, 128, 128)) for uid in unique_ids],
+            dtype=np.uint8,
+        )
+        return colors[inverse].reshape(*labels.shape, 3)
+
     def slice_outline(
         self,
         anchoring: list[float],

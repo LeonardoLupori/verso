@@ -1,14 +1,15 @@
 """Export section images with a high-quality atlas overlay.
 
-Produces publication-grade output by re-sampling the atlas annotation at the
-requested resolution, extracting region boundaries as sub-pixel contours
-(``skimage.measure.find_contours``), warping those contours into section
-space through the existing Delaunay map, and rendering them with anti-aliased
-polylines (``cv2.polylines``) onto a transparent RGBA canvas.
+Produces publication-grade output by smoothing the atlas annotation in *label
+space*: each region's signed-distance field (SDF) is blurred, upscaled, and the
+per-pixel argmax over regions reconstructs a single, shared, artifact-free set
+of smooth boundaries with region IDs preserved exactly. From that smoothed label
+map we render either region outlines or filled Allen-coloured regions.
 
-The interactive GUI overlay runs at ~512 px for responsiveness; this module
-exists so exports can use whatever long-side the user picks without losing
-contour smoothness.
+The interactive GUI overlay runs at low resolution for responsiveness; this
+module exists so exports can use a higher ``scale`` (relative to the atlas voxel
+grid) without the voxel/warp staircase artifacts that a plain nearest-neighbour
+upscale would show.
 """
 
 from __future__ import annotations
@@ -25,13 +26,16 @@ from verso.engine.model.project import Project, Section
 from verso.engine.preprocessing import apply_flip, composite_channels
 from verso.engine.warping import build_backward_remap
 
-# Cap the atlas sampling grid used for contour extraction. The annotation
-# volume is at 25 µm voxels, so sampling much finer than this just multiplies
-# the same staircase boundary — wasted work for find_contours, the Delaunay
-# warp, and the smoothing kernel. 1000 px on the long side is ~2–3× the atlas
-# voxel grid for a typical mouse-brain coronal section, which is plenty for
-# the smoothing slider to operate on while keeping vertex counts modest.
-_ATLAS_SAMPLING_LONG_SIDE = 1000
+# Smoothing slider (0–100) maps to a Gaussian sigma applied to the per-region
+# SDF at *base* (atlas-voxel) resolution, so the smoothing strength is
+# independent of the export ``scale``. ~5 voxels is already very heavy
+# smoothing for a 25 µm mouse atlas, so 100 → 5.0 covers the useful range.
+_MAX_SMOOTHING_SIGMA = 5.0
+
+# Output long side (px) used when a section has no usable anchoring, so the
+# section image still exports at a reasonable resolution even though no atlas
+# voxel count is available to derive it from.
+_NO_ANCHOR_LONG_SIDE = 2000
 
 
 @dataclass
@@ -41,11 +45,17 @@ class ExportOptions:
     burn_overlay: bool = True
     overlay_color: tuple[int, int, int] = (255, 255, 255)
     overlay_opacity: float = 1.0  # 0..1
-    long_side: int = 4000
+    # Output resolution relative to the atlas voxel grid: 1 == one output pixel
+    # per atlas voxel along the plane, higher == bigger. Output long side is
+    # ``round(scale * atlas_plane_voxels)`` with the section aspect preserved.
+    scale: float = 4.0
+    # 0 (no blur) .. 100 (very smooth contours). Mapped to an SDF Gaussian
+    # sigma in atlas-voxel units (see :data:`_MAX_SMOOTHING_SIGMA`).
+    smoothing: float = 30.0
+    # "outline" — region boundaries in ``overlay_color``;
+    # "filled"  — Allen-coloured semi-transparent regions.
+    overlay_style: str = "outline"
     outline_thickness: int = 1
-    # Gaussian sigma in atlas-sampling pixels (capped resolution, ~1000 px on
-    # the long side). 0 disables smoothing.
-    contour_smoothing: float = 1.5
 
 
 def _target_dims(orig_w: int, orig_h: int, long_side: int) -> tuple[int, int]:
@@ -81,48 +91,100 @@ def render_section_rgb(section: Section, project: Project, long_side: int) -> np
     return composite_channels(img, project.channels)
 
 
-def _label_contours(labels: np.ndarray) -> list[np.ndarray]:
-    """Extract sub-pixel boundary polylines for every labelled region.
+def _smooth_label_map(
+    labels: np.ndarray,
+    out_w: int,
+    out_h: int,
+    sigma: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Smooth + upscale an integer label map via per-region signed-distance fields.
 
-    Returns one polyline per connected boundary as a (K, 2) array of
-    (row, col) pixel-edge coordinates in the same convention as
-    ``skimage.measure.find_contours``.
+    Each region's SDF (positive inside, negative outside) is optionally Gaussian
+    blurred, upscaled with cubic interpolation, and the per-pixel argmax over all
+    regions reconstructs a single set of smooth, shared boundaries with labels
+    preserved exactly.
+
+    For speed each region is processed inside its bounding box plus a margin
+    (``ceil(3·sigma) + 2``): a region's SDF can only win the argmax within ~its
+    own boundary neighbourhood, so cropping is exact where it matters while
+    avoiding a full-frame distance-transform + cubic resize per region.
+
+    Args:
+        labels: ``(H, W)`` integer region-ID map (base / atlas-voxel resolution).
+        out_w: Output width in pixels (``> H/W`` for an upscale).
+        out_h: Output height in pixels.
+        sigma: Gaussian sigma applied to each SDF at base resolution. ``0`` skips
+            blurring (boundaries still get sub-pixel-smoothed by the cubic upscale).
+
+    Returns:
+        ``(smoothed_ids, best_lab)`` where ``smoothed_ids`` is the ``(out_h,
+        out_w)`` label map with real region IDs and ``best_lab`` is the compact
+        ``(out_h, out_w)`` argmax index map (handy for fast boundary diffs).
     """
-    from skimage import measure
+    from scipy import ndimage
 
-    polylines: list[np.ndarray] = []
-    unique = np.unique(labels)
-    for lbl in unique:
-        if lbl == 0:
+    ids, compact = np.unique(labels, return_inverse=True)
+    compact = compact.reshape(labels.shape).astype(np.int32)
+    base_h, base_w = labels.shape
+    sx = out_w / base_w
+    sy = out_h / base_h
+    margin = int(np.ceil(3.0 * sigma)) + 2 if sigma > 0 else 2
+
+    best_val = np.full((out_h, out_w), -1e30, np.float32)
+    best_lab = np.zeros((out_h, out_w), np.int32)
+
+    for li in range(len(ids)):
+        mask = compact == li
+        rows = np.flatnonzero(mask.any(axis=1))
+        cols = np.flatnonzero(mask.any(axis=0))
+        if rows.size == 0:
             continue
-        mask = (labels == lbl).astype(np.float32)
-        for contour in measure.find_contours(mask, 0.5):
-            if len(contour) >= 2:
-                polylines.append(contour)
-    return polylines
+        r0 = max(0, int(rows[0]) - margin)
+        r1 = min(base_h, int(rows[-1]) + 1 + margin)
+        c0 = max(0, int(cols[0]) - margin)
+        c1 = min(base_w, int(cols[-1]) + 1 + margin)
+
+        m = mask[r0:r1, c0:c1]
+        sdf = (ndimage.distance_transform_edt(m) - ndimage.distance_transform_edt(~m)).astype(
+            np.float32
+        )
+        if sigma > 0:
+            sdf = cv2.GaussianBlur(sdf, (0, 0), sigma)
+
+        # Output window covering this crop. Use round() at both edges so adjacent
+        # crops tile the output grid without gaps or overlaps.
+        or0 = int(round(r0 * sy))
+        or1 = int(round(r1 * sy))
+        oc0 = int(round(c0 * sx))
+        oc1 = int(round(c1 * sx))
+        ow = oc1 - oc0
+        oh = or1 - or0
+        if ow <= 0 or oh <= 0:
+            continue
+        up = cv2.resize(sdf, (ow, oh), interpolation=cv2.INTER_CUBIC)
+
+        win_val = best_val[or0:or1, oc0:oc1]
+        win_lab = best_lab[or0:or1, oc0:oc1]
+        better = up > win_val
+        win_val[better] = up[better]
+        win_lab[better] = li
+
+    return ids[best_lab], best_lab
 
 
-def _smooth_polyline(poly: np.ndarray, sigma: float) -> np.ndarray:
-    """Gaussian-smooth a (K, 2) polyline along its arc.
+def _boundary_mask(compact: np.ndarray, brain: np.ndarray) -> np.ndarray:
+    """Boolean edge mask between differing labels, keeping brain-adjacent edges.
 
-    Closed contours (first vertex ≈ last) use periodic boundary conditions so
-    the seam doesn't develop a kink; open contours use ``nearest`` so endpoints
-    stay put.
+    Mirrors :meth:`AtlasVolume.slice_outline`: a 1-px edge is marked where two
+    neighbouring pixels carry different labels and at least one is annotated
+    brain, so the empty-background frame is not outlined.
     """
-    if sigma <= 0.0 or len(poly) < 3:
-        return poly
-    from scipy.ndimage import gaussian_filter1d
-
-    closed = np.allclose(poly[0], poly[-1])
-    mode = "wrap" if closed else "nearest"
-    # Smooth row/col independently along the vertex axis.
-    src = poly[:-1] if closed else poly
-    smoothed = np.empty_like(src)
-    smoothed[:, 0] = gaussian_filter1d(src[:, 0], sigma=sigma, mode=mode)
-    smoothed[:, 1] = gaussian_filter1d(src[:, 1], sigma=sigma, mode=mode)
-    if closed:
-        smoothed = np.vstack([smoothed, smoothed[:1]])
-    return smoothed
+    edges = np.zeros(compact.shape, dtype=bool)
+    diff_h = compact[:, :-1] != compact[:, 1:]
+    edges[:, :-1] |= diff_h & (brain[:, :-1] | brain[:, 1:])
+    diff_v = compact[:-1, :] != compact[1:, :]
+    edges[:-1, :] |= diff_v & (brain[:-1, :] | brain[1:, :])
+    return edges
 
 
 def render_overlay_rgba(
@@ -130,22 +192,36 @@ def render_overlay_rgba(
     atlas: AtlasVolume,
     out_w: int,
     out_h: int,
+    *,
+    scale: float = 4.0,
+    smoothing: float = 30.0,
+    overlay_style: str = "outline",
     color: tuple[int, int, int] = (255, 255, 255),
     opacity: float = 1.0,
     thickness: int = 1,
-    smoothing: float = 0.0,
 ) -> np.ndarray:
     """Render the atlas overlay as a transparent RGBA image at the export size.
 
-    Pipeline: sample atlas labels at output resolution → find_contours per
-    region → backward-warp the label map through the Delaunay map → draw
-    anti-aliased polylines.
+    Pipeline: sample atlas labels at base (atlas-voxel) resolution → backward-warp
+    the label map through the Delaunay map → SDF-smooth + upscale to the output
+    size → render region outlines (anti-aliased) or filled Allen-coloured regions.
 
-    The overlay is *not* flipped here. Like the GUI (which flips only the
-    section background, never the atlas overlay — see SectionCanvasPanel),
-    the atlas orientation is fully encoded by the anchoring, which was solved
-    against the already-flipped display. The section RGB is flipped separately
-    in :func:`render_section_rgb`, so the two compose correctly.
+    The overlay is *not* flipped here. Like the GUI (which flips only the section
+    background, never the atlas overlay), the atlas orientation is fully encoded
+    by the anchoring, which was solved against the already-flipped display. The
+    section RGB is flipped separately in :func:`render_section_rgb`, so the two
+    compose correctly.
+
+    Args:
+        out_w: Output width in pixels (section aspect; set by the caller).
+        out_h: Output height in pixels.
+        scale: Output resolution relative to the atlas voxel grid. Sampling and
+            warping happen at ``round(out/scale)``; the SDF step upscales back up.
+        smoothing: 0–100 smoothing strength (see :data:`_MAX_SMOOTHING_SIGMA`).
+        overlay_style: ``"outline"`` or ``"filled"``.
+        color: Outline RGB colour (ignored for ``"filled"``).
+        opacity: 0–1 overlay opacity.
+        thickness: Outline thickness in output pixels (ignored for ``"filled"``).
 
     Returns:
         uint8 ``(out_h, out_w, 4)`` RGBA. Background pixels have alpha 0.
@@ -154,29 +230,23 @@ def render_overlay_rgba(
     if not anchoring or all(v == 0.0 for v in anchoring):
         return np.zeros((out_h, out_w, 4), dtype=np.uint8)
 
-    # Atlas sampling is decoupled from the output canvas: contour extraction
-    # works in (sample_w, sample_h) space, polylines are normalised to [0, 1],
-    # and we draw at full (out_w, out_h) resolution. This keeps find_contours
-    # and the smoothing kernel tied to the atlas voxel grid rather than the
-    # arbitrary export size.
-    scale = min(1.0, _ATLAS_SAMPLING_LONG_SIDE / max(out_w, out_h))
-    sample_w = max(1, round(out_w * scale))
-    sample_h = max(1, round(out_h * scale))
+    base_w = max(1, round(out_w / scale))
+    base_h = max(1, round(out_h / scale))
 
-    labels, _ = atlas.sample_labels(anchoring, sample_w, sample_h)
+    # Out-of-volume voxels are clipped to label 0 (background); the brain mask
+    # (label > 0) is what excludes them downstream, so in_bounds is not needed.
+    labels, _ = atlas.sample_labels(anchoring, base_w, base_h)
 
-    # Apply the warp using the same backward remap as the display pipeline so
-    # that exported contours match what the user sees in the Warp view.
-    # Forward-mapping contour points (warp_points_atlas_to_section) uses the
-    # opposite triangulation direction and produces different results.
+    # Apply the warp using the same backward remap as the display pipeline so the
+    # exported overlay matches what the user sees in the Warp view. Nearest-
+    # neighbour keeps the integer labels exact; the SDF step smooths the resulting
+    # staircase together with the atlas voxel staircase.
     cps = section.warp.control_points
     if cps:
         src = np.array([[cp.src_x, cp.src_y] for cp in cps], dtype=np.float64)
         dst = np.array([[cp.dst_x, cp.dst_y] for cp in cps], dtype=np.float64)
-        # Triangulate in the section's aspect ratio (== out_w/out_h, which
-        # preserves it) so the warp matches the Warp view and VisuAlign exactly.
         aspect = out_w / out_h if out_h else 1.0
-        map_x, map_y = build_backward_remap(sample_h, sample_w, src, dst, aspect=aspect)
+        map_x, map_y = build_backward_remap(base_h, base_w, src, dst, aspect=aspect)
         labels = cv2.remap(
             labels.astype(np.float32),
             map_x,
@@ -186,41 +256,37 @@ def render_overlay_rgba(
             borderValue=0,
         ).astype(np.int32)
 
-    polylines = _label_contours(labels)
+    sigma = max(0.0, min(smoothing, 100.0)) / 100.0 * _MAX_SMOOTHING_SIGMA
+    smooth_ids, _ = _smooth_label_map(labels, out_w, out_h, sigma)
 
+    alpha_scalar = min(max(opacity, 0.0), 1.0)
     canvas = np.zeros((out_h, out_w, 4), dtype=np.uint8)
-    alpha = int(round(min(max(opacity, 0.0), 1.0) * 255))
-    line_color = (int(color[0]), int(color[1]), int(color[2]), alpha)
-    # When smoothing is off, drop anti-aliasing so the rendered line stays
-    # pixel-faithful to the marching-squares contour rather than getting
-    # softened back into apparent curves.
-    line_type = cv2.LINE_AA if smoothing > 0.0 else cv2.LINE_8
 
-    for poly in polylines:
-        poly = _smooth_polyline(poly, smoothing)
-        # After the backward warp, the label map is in section space, so
-        # contour pixel coords directly normalise to section-space fractions.
-        # find_contours returns (row, col) ≈ (y, x).
-        section_norm = np.column_stack(
-            [
-                (poly[:, 1] + 0.5) / sample_w,  # x
-                (poly[:, 0] + 0.5) / sample_h,  # y
-            ]
-        )
+    if overlay_style == "filled":
+        rgb = atlas.colorize_labels(smooth_ids)
+        alpha = np.where(smooth_ids > 0, int(round(alpha_scalar * 255)), 0).astype(np.uint8)
+        canvas[..., :3] = rgb
+        canvas[..., 3] = alpha
+        return canvas
 
-        pts = np.empty((len(section_norm), 1, 2), dtype=np.int32)
-        pts[:, 0, 0] = np.round(section_norm[:, 0] * out_w).astype(np.int32)
-        pts[:, 0, 1] = np.round(section_norm[:, 1] * out_h).astype(np.int32)
+    # Outline: edge mask from the smoothed label map, dilated to the requested
+    # thickness, then lightly feathered for anti-aliasing.
+    _, compact = np.unique(smooth_ids, return_inverse=True)
+    compact = compact.reshape(smooth_ids.shape).astype(np.int32)
+    brain = smooth_ids > 0
+    edges = _boundary_mask(compact, brain)
 
-        cv2.polylines(
-            canvas,
-            [pts],
-            isClosed=False,
-            color=line_color,
-            thickness=int(thickness),
-            lineType=line_type,
-        )
+    line = edges.astype(np.float32)
+    if thickness > 1:
+        k = int(thickness)
+        line = cv2.dilate(line, np.ones((k, k), np.float32))
+    line = cv2.GaussianBlur(line, (0, 0), 0.8)
+    line = np.clip(line, 0.0, 1.0)
 
+    canvas[..., 0] = int(color[0])
+    canvas[..., 1] = int(color[1])
+    canvas[..., 2] = int(color[2])
+    canvas[..., 3] = np.round(line * alpha_scalar * 255).astype(np.uint8)
     return canvas
 
 
@@ -243,6 +309,24 @@ def _save_png(image: np.ndarray, path: Path) -> None:
         Image.fromarray(image, mode="RGB").save(str(path), format="PNG")
 
 
+def _output_long_side(section: Section, scale: float) -> int:
+    """Output long side in pixels: ``scale × atlas-plane voxel count``.
+
+    The anchoring's ``u``/``v`` vectors are lengths in atlas voxels, so their
+    magnitudes give the voxel count spanned along the plane. Falls back to a
+    fixed default when the section has no usable anchoring.
+    """
+    anchoring = section.alignment.anchoring
+    if not anchoring or all(v == 0.0 for v in anchoring):
+        return _NO_ANCHOR_LONG_SIDE
+    u = np.asarray(anchoring[3:6], dtype=np.float64)
+    v = np.asarray(anchoring[6:9], dtype=np.float64)
+    atlas_long = max(float(np.linalg.norm(u)), float(np.linalg.norm(v)))
+    if atlas_long <= 0:
+        return _NO_ANCHOR_LONG_SIDE
+    return max(1, round(scale * atlas_long))
+
+
 def export_section(
     section: Section,
     project: Project,
@@ -255,17 +339,20 @@ def export_section(
     Returns the list of written paths (one file in burn mode, two in
     separate-overlay mode).
     """
-    rgb = render_section_rgb(section, project, options.long_side)
+    long_side = _output_long_side(section, options.scale)
+    rgb = render_section_rgb(section, project, long_side)
     out_h, out_w = rgb.shape[:2]
     overlay = render_overlay_rgba(
         section,
         atlas,
         out_w,
         out_h,
+        scale=options.scale,
+        smoothing=options.smoothing,
+        overlay_style=options.overlay_style,
         color=options.overlay_color,
         opacity=options.overlay_opacity,
         thickness=options.outline_thickness,
-        smoothing=options.contour_smoothing,
     )
 
     stem = Path(section.original_path).stem

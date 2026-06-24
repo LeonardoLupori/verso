@@ -1,8 +1,8 @@
 """Modal dialog for the "Export → Images with atlas overlay" action.
 
-Collects user choices (scope, burn vs separate, color/opacity, output size,
-outline thickness) and exposes them as :class:`ExportOptions` for the
-``MainWindow`` handler to consume.
+Collects user choices (scope, burn vs separate, overlay style, color/opacity,
+scale, smoothing, outline thickness) and exposes them as :class:`ExportOptions`
+for the ``MainWindow`` handler to consume.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
     QColorDialog,
     QDialog,
     QDialogButtonBox,
+    QDoubleSpinBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -78,6 +79,20 @@ class ExportImagesDialog(QDialog):
         style_layout.addWidget(self._radio_separate)
         layout.addWidget(style_box)
 
+        # --- Overlay style ---------------------------------------------
+        overlay_box = QGroupBox("Overlay style")
+        overlay_layout = QVBoxLayout(overlay_box)
+        self._radio_outline = QRadioButton("Region outlines")
+        self._radio_filled = QRadioButton("Filled regions (atlas colors)")
+        self._radio_outline.setChecked(True)
+        overlay_group = QButtonGroup(self)
+        overlay_group.addButton(self._radio_outline)
+        overlay_group.addButton(self._radio_filled)
+        self._radio_outline.toggled.connect(self._on_overlay_style_changed)
+        overlay_layout.addWidget(self._radio_outline)
+        overlay_layout.addWidget(self._radio_filled)
+        layout.addWidget(overlay_box)
+
         # --- Overlay appearance ----------------------------------------
         appearance_box = QGroupBox("Overlay appearance")
         appearance_layout = QFormLayout(appearance_box)
@@ -114,16 +129,15 @@ class ExportImagesDialog(QDialog):
         self._thickness_spin.setSuffix(" px")
         appearance_layout.addRow("Outline thickness:", self._thickness_spin)
 
-        # Smoothing (Gaussian sigma along contour, in atlas-sampling pixels).
+        # Smoothing: 0 (no blur) .. 100 (very smooth contours). Maps to an SDF
+        # Gaussian sigma in atlas-voxel units inside the engine.
         smoothing_row = QHBoxLayout()
         self._smoothing_slider = QSlider(Qt.Orientation.Horizontal)
-        self._smoothing_slider.setRange(0, 100)  # tenths of a unit: 0.0–10.0
-        self._smoothing_slider.setValue(15)
-        self._smoothing_value = QLabel("1.5")
+        self._smoothing_slider.setRange(0, 100)
+        self._smoothing_slider.setValue(30)
+        self._smoothing_value = QLabel("30")
         self._smoothing_value.setMinimumWidth(48)
-        self._smoothing_slider.valueChanged.connect(
-            lambda v: self._smoothing_value.setText(f"{v / 10:.1f}")
-        )
+        self._smoothing_slider.valueChanged.connect(lambda v: self._smoothing_value.setText(f"{v}"))
         smoothing_row.addWidget(self._smoothing_slider, 1)
         smoothing_row.addWidget(self._smoothing_value)
         smoothing_widget = QWidget()
@@ -135,12 +149,13 @@ class ExportImagesDialog(QDialog):
         # --- Output resolution -----------------------------------------
         size_box = QGroupBox("Output resolution")
         size_layout = QFormLayout(size_box)
-        self._long_side_spin = QSpinBox()
-        self._long_side_spin.setRange(500, 20000)
-        self._long_side_spin.setSingleStep(500)
-        self._long_side_spin.setValue(4000)
-        self._long_side_spin.setSuffix(" px")
-        size_layout.addRow("Long side:", self._long_side_spin)
+        self._scale_spin = QDoubleSpinBox()
+        self._scale_spin.setRange(1.0, 16.0)
+        self._scale_spin.setSingleStep(1.0)
+        self._scale_spin.setDecimals(1)
+        self._scale_spin.setValue(4.0)
+        self._scale_spin.setSuffix("×")
+        size_layout.addRow("Scale (× atlas):", self._scale_spin)
         layout.addWidget(size_box)
 
         # --- Buttons ---------------------------------------------------
@@ -162,6 +177,12 @@ class ExportImagesDialog(QDialog):
             self._color = new
             self._color_swatch.setStyleSheet(self._swatch_qss(new))
 
+    def _on_overlay_style_changed(self) -> None:
+        """Disable line-only controls (color, thickness) for filled regions."""
+        outline = self._radio_outline.isChecked()
+        self._color_button.setEnabled(outline)
+        self._thickness_spin.setEnabled(outline)
+
     # ------------------------------------------------------------------
     def export_all(self) -> bool:
         """True if the user chose to export every section in the project."""
@@ -176,7 +197,8 @@ class ExportImagesDialog(QDialog):
                 self._color.blue(),
             ),
             overlay_opacity=self._opacity_slider.value() / 100.0,
-            long_side=int(self._long_side_spin.value()),
+            scale=float(self._scale_spin.value()),
+            smoothing=float(self._smoothing_slider.value()),
+            overlay_style="outline" if self._radio_outline.isChecked() else "filled",
             outline_thickness=int(self._thickness_spin.value()),
-            contour_smoothing=self._smoothing_slider.value() / 10.0,
         )
