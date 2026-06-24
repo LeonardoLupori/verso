@@ -4,6 +4,7 @@
 
 # VERSO
 
+[![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/release/python-31213/)
 [![Tests](https://github.com/LeonardoLupori/verso/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/LeonardoLupori/verso/actions/workflows/tests.yml)
 
 **V**erso, **E**asy **R**egistration of **S**ecti**O**ns
