@@ -836,10 +836,11 @@ class MainWindow(QMainWindow):
         for section, steps in self._state.dirty_sections():
             if "prep" in steps:
                 draft = self._state.pop_prep_draft(section.id)
-                if draft is not None and persist_prep_draft(section, draft):
-                    # Flip invalidated the alignment + warp.
-                    self._state.clear_dirty(section.id, "align")
-                    self._state.clear_dirty(section.id, "warp")
+                if draft is not None:
+                    # Flip invalidation already happened at toggle time, so this
+                    # only writes masks — it won't clobber an alignment the user
+                    # redid after flipping.
+                    persist_prep_draft(section, draft)
                 self._state.clear_dirty(section.id, "prep")
             # Commit align before warp so warp can reach COMPLETE.
             if "align" in steps and self._state.is_dirty(section.id, "align"):
@@ -937,12 +938,44 @@ class MainWindow(QMainWindow):
             self._state.clear_dirty(section.id, step)
 
     def _on_prep_invalidated_alignment(self) -> None:
-        """A prep flip wiped the current section's alignment + warp."""
+        """A prep Clear/Reset wiped the current section's alignment + warp."""
         section = self._state.current_section
         if section is None:
             return
+        self._clear_alignment_view_state(section)
+
+    def _clear_alignment_view_state(self, section) -> None:
+        """Drop registry dirty + stashed baselines for a section whose alignment
+        was just wiped, so Align/Warp re-sync to the cleared state on activate."""
         self._state.clear_dirty(section.id, "align")
         self._state.clear_dirty(section.id, "warp")
+        self._state.pop_baseline(section.id, "align")
+        self._state.pop_baseline(section.id, "warp")
+
+    def _invalidate_alignment_for_flip(self, section) -> None:
+        """Wipe a section's alignment + warp the instant its flip is toggled.
+
+        A horizontal/vertical flip changes the image coordinate frame, so any
+        existing registration no longer applies.  Doing this at toggle time (not
+        at save time) means a re-alignment performed in the new orientation is
+        preserved through the next save instead of being wiped by it.
+        """
+        from verso.engine.drafts import wipe_alignment_for_flip
+
+        has_alignment = (
+            section.alignment.status != AlignmentStatus.NOT_STARTED
+            or bool(section.warp.control_points)
+            or (
+                section.alignment.anchoring
+                and any(v != 0.0 for v in section.alignment.anchoring)
+            )
+        )
+        if not has_alignment:
+            return
+        wipe_alignment_for_flip(section)
+        self._clear_alignment_view_state(section)
+        self._overview.refresh_row(self._state.section_index)
+        self._refresh_filmstrip_dots()
 
     def _confirm_discard_active_draft(self) -> bool:
         """Prompt when unsaved edits exist anywhere before a disruptive operation.
@@ -1529,6 +1562,7 @@ class MainWindow(QMainWindow):
             self._props.prep.hemisphere.set_draw_active(False)
         section.preprocessing.flip_horizontal = value
         self._prep.mark_flip_changed()
+        self._invalidate_alignment_for_flip(section)
         self._prep.refresh_display()
 
     def _on_flip_v_changed(self, value: bool) -> None:
@@ -1541,6 +1575,7 @@ class MainWindow(QMainWindow):
             self._props.prep.hemisphere.set_draw_active(False)
         section.preprocessing.flip_vertical = value
         self._prep.mark_flip_changed()
+        self._invalidate_alignment_for_flip(section)
         self._prep.refresh_display()
 
     def _on_opacity_changed(self, opacity: float) -> None:

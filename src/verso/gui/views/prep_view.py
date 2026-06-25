@@ -606,10 +606,10 @@ class PrepView(QWidget):
     def save(self) -> bool:
         """Persist the current draft to disk + section.
 
-        Writes the slice mask / L/R mask PNGs, updates the section's
-        preprocessing paths, and (if a flip toggled since the last save)
-        invalidates the alignment + warp for this slice so the user is
-        forced to re-align in the new orientation.
+        Writes the slice mask / L/R mask PNGs and updates the section's
+        preprocessing paths.  A flip already invalidated the alignment + warp at
+        the moment it was toggled (see ``_invalidate_alignment_for_flip``), so
+        saving the prep draft never touches the alignment here.
 
         Returns True iff anything actually changed.
         """
@@ -624,9 +624,12 @@ class PrepView(QWidget):
             base_flip_h=self._prep_base_flip[0],
             base_flip_v=self._prep_base_flip[1],
         )
-        changed = self._mask_dirty or self._lr_dirty
-        flip_changed = persist_prep_draft(self._section, draft)
-        changed = changed or flip_changed
+        flip_changed = self._prep_base_flip != (
+            self._section.preprocessing.flip_horizontal,
+            self._section.preprocessing.flip_vertical,
+        )
+        changed = self._mask_dirty or self._lr_dirty or flip_changed
+        persist_prep_draft(self._section, draft)
 
         self._mask_dirty = False
         self._lr_dirty = False
@@ -638,8 +641,6 @@ class PrepView(QWidget):
             self._section.preprocessing.flip_vertical,
         )
         self._set_dirty(False)
-        if flip_changed:
-            self.alignment_invalidated.emit()
         return changed
 
     def revert(self) -> bool:

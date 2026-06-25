@@ -167,15 +167,16 @@ def test_persist_prep_draft_writes_mask_and_sets_path(tmp_path):
     mask[1:3, 1:3] = True
     draft = PrepDraft(slice_mask=mask, mask_dirty=True)
 
-    flip_changed = persist_prep_draft(section, draft)
+    persist_prep_draft(section, draft)
 
-    assert flip_changed is False
     expected = slice_mask_path_for(section)
     assert expected.exists()
     assert section.preprocessing.slice_mask_path == str(expected)
 
 
-def test_persist_prep_draft_flip_change_wipes_alignment(tmp_path):
+def test_persist_prep_draft_preserves_alignment_through_flip(tmp_path):
+    """Flips are invalidated at toggle time, so persisting a prep draft must
+    never wipe an alignment the user (re)did after flipping."""
     section = _section(
         original_path=str(tmp_path / "img.png"),
         thumbnail_path=str(tmp_path / "thumbnails" / "img.tif"),
@@ -186,9 +187,10 @@ def test_persist_prep_draft_flip_change_wipes_alignment(tmp_path):
     section.preprocessing.flip_horizontal = True  # current differs from base (False)
     draft = PrepDraft(base_flip_h=False, base_flip_v=False)
 
-    assert persist_prep_draft(section, draft) is True
-    assert section.alignment.status == AlignmentStatus.NOT_STARTED
-    assert section.alignment.stored_anchoring is None
+    persist_prep_draft(section, draft)
+
+    assert section.alignment.status == AlignmentStatus.COMPLETE
+    assert section.alignment.stored_anchoring == [1.0] * 9
 
 
 def test_lr_mask_path_distinct_from_slice(tmp_path):
