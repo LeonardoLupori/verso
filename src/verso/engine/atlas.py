@@ -110,6 +110,70 @@ class AtlasVolume:
         """
         return self._sample(anchoring, out_w, out_h)
 
+    # ------------------------------------------------------------------
+    # Canonical (axis-aligned) plane construction
+    #
+    # Used by the aligned-stack export to define a clean atlas slice — a
+    # straight coronal/sagittal/horizontal plane — that every section is
+    # resampled onto, so the inverse-warped stack overlays the reference
+    # atlas annotation directly.
+
+    @property
+    def shape(self) -> tuple[int, int, int]:
+        """Annotation volume shape ``(AP, DV, LR)`` in voxels."""
+        return tuple(self._annotation.shape)  # type: ignore[return-value]
+
+    def axis_plane_dims(self, axis: int) -> tuple[int, int]:
+        """Voxel ``(width, height)`` of the canonical plane orthogonal to ``axis``.
+
+        Args:
+            axis: Slicing axis in QuickNII voxel order (0 = LR/ML, 1 = AP, 2 = DV).
+
+        Returns:
+            ``(width_vox, height_vox)`` — the two atlas extents in the plane,
+            with width/height chosen to give a natural anatomical view
+            (e.g. coronal = LR wide × DV tall).
+        """
+        ap_max, dv_max, lr_max = self._annotation.shape
+        if axis == 0:  # sagittal plane: AP (width) × DV (height)
+            return ap_max, dv_max
+        if axis == 1:  # coronal plane: LR (width) × DV (height)
+            return lr_max, dv_max
+        if axis == 2:  # horizontal plane: LR (width) × AP (height)
+            return lr_max, ap_max
+        raise ValueError(f"axis must be 0, 1 or 2, got {axis}")
+
+    def canonical_plane_anchoring(self, position: float, axis: int) -> list[float]:
+        """Anchoring for an axis-aligned plane at ``position`` along ``axis``.
+
+        The plane spans the full atlas extent in the two orthogonal axes, so
+        sampling it yields the standard atlas section. Width/height directions
+        match :meth:`axis_plane_dims`.
+
+        Args:
+            position: Voxel coordinate along ``axis`` (the slice location).
+            axis: Slicing axis in QuickNII voxel order (0 = LR, 1 = AP, 2 = DV).
+
+        Returns:
+            9-element anchoring ``[o, u, v]`` in atlas voxel space.
+        """
+        ap_max, dv_max, lr_max = self._annotation.shape
+        if axis == 0:  # LR slice → AP (u) × DV (v)
+            o = [float(position), 0.0, 0.0]
+            u = [0.0, float(ap_max), 0.0]
+            v = [0.0, 0.0, float(dv_max)]
+        elif axis == 1:  # AP slice → LR (u) × DV (v)
+            o = [0.0, float(position), 0.0]
+            u = [float(lr_max), 0.0, 0.0]
+            v = [0.0, 0.0, float(dv_max)]
+        elif axis == 2:  # DV slice → LR (u) × AP (v)
+            o = [0.0, 0.0, float(position)]
+            u = [float(lr_max), 0.0, 0.0]
+            v = [0.0, float(ap_max), 0.0]
+        else:
+            raise ValueError(f"axis must be 0, 1 or 2, got {axis}")
+        return [*o, *u, *v]
+
     def slice_annotation(self, anchoring: list[float], out_w: int, out_h: int) -> np.ndarray:
         """Slice the annotation volume → RGBA uint8 (H, W, 4).
 

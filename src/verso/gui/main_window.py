@@ -366,6 +366,10 @@ class MainWindow(QMainWindow):
         act_export_images.triggered.connect(self._export_images_with_overlay)
         export_menu.addAction(act_export_images)
 
+        act_export_stack = QAction("Export aligned section &stack…", self)
+        act_export_stack.triggered.connect(self._export_aligned_stack)
+        export_menu.addAction(act_export_stack)
+
         export_menu.addSeparator()
 
         act_export_qn_xml = QAction("Export QuickNII &XML…", self)
@@ -2677,3 +2681,150 @@ class MainWindow(QMainWindow):
             box.exec()
             if box.clickedButton() is open_btn:
                 QDesktopServices.openUrl(QUrl.fromLocalFile(str(out_dir)))
+
+    def _export_aligned_stack(self) -> None:
+        """Open the aligned-stack dialog and write the un-warped TIFF stack."""
+        from datetime import datetime
+
+        from PyQt6.QtCore import QUrl
+        from PyQt6.QtGui import QDesktopServices
+        from PyQt6.QtWidgets import QApplication
+
+        from verso.engine.io.export_stack import (
+            export_section_aligned,
+            finalize_aligned_pages,
+            write_aligned_stack,
+        )
+        from verso.gui.dialogs.export_stack import ExportStackDialog
+
+        if not self._confirm_discard_active_draft():
+            return
+
+        project = self._state.project
+        if project is None or not project.sections:
+            QMessageBox.warning(self, "Export", "No project is loaded.")
+            return
+        atlas = self._state.atlas
+        if atlas is None:
+            QMessageBox.warning(
+                self, "Export", "The atlas is still loading. Try again in a moment."
+            )
+            return
+        if self._state.project_path is None:
+            QMessageBox.warning(
+                self,
+                "Export",
+                "Save the project to disk before exporting so VERSO knows where to "
+                "write the exports folder.",
+            )
+            return
+
+        selected_rows = self._overview.selected_rows()
+        dlg = ExportStackDialog(
+            n_selected=len(selected_rows),
+            n_total=len(project.sections),
+            parent=self,
+        )
+        if dlg.exec() != dlg.DialogCode.Accepted:
+            return
+
+        if dlg.export_all():
+            sections = list(project.sections)
+        else:
+            sections = [project.sections[i] for i in selected_rows]
+        if not sections:
+            QMessageBox.warning(self, "Export", "No sections selected.")
+            return
+
+        options = dlg.options()
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+        out_dir = self._state.project_path.parent / "exports"
+        out_path = out_dir / f"aligned_stack_{timestamp}.ome.tif"
+
+        progress = QProgressDialog("Resampling sections...", "Cancel", 0, len(sections), self)
+        progress.setWindowTitle("Export aligned section stack")
+        progress.setMinimumDuration(0)
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+        progress.setModal(True)
+        progress.show()
+        QApplication.processEvents()
+
+        entries: list = []
+        skipped: list[str] = []
+        errors: list[str] = []
+        canceled = False
+        for idx, section in enumerate(sections):
+            if progress.wasCanceled():
+                canceled = True
+                break
+            progress.setLabelText(
+                f"Resampling {idx + 1} / {len(sections)}: {Path(section.original_path).name}"
+            )
+            QApplication.processEvents()
+            try:
+                result = export_section_aligned(
+                    section,
+                    project,
+                    atlas,
+                    options.scale,
+                    apply_slice_mask=options.background is not None,
+                )
+                if result is None:
+                    skipped.append(Path(section.original_path).name)
+                else:
+                    page, valid = result
+                    entries.append((section.slice_index, page, valid))
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"{Path(section.original_path).name}: {exc}")
+            progress.setValue(idx + 1)
+            QApplication.processEvents()
+
+        if canceled:
+            progress.close()
+            return
+
+        pages = finalize_aligned_pages(entries, options) if entries else []
+        if pages:
+            try:
+                channel_names = [c.name for c in project.channels] or [
+                    f"Ch {i}" for i in range(pages[0].shape[2])
+                ]
+                write_aligned_stack(pages, channel_names, out_path)
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"writing stack: {exc}")
+
+        progress.close()
+
+        notes: list[str] = []
+        if skipped:
+            notes.append(f"Skipped {len(skipped)} section(s) without alignment.")
+        if errors:
+            preview = "\n".join(errors[:8])
+            suffix = "" if len(errors) <= 8 else f"\n...and {len(errors) - 8} more"
+            QMessageBox.warning(
+                self,
+                "Export finished with errors",
+                "\n".join(notes) + f"\n\nErrors:\n{preview}{suffix}",
+            )
+            return
+        if not pages:
+            QMessageBox.warning(
+                self,
+                "Export",
+                "No sections had a usable alignment, so no stack was written.",
+            )
+            return
+
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setWindowTitle("Export complete")
+        msg = f"Wrote a {len(pages)}-section stack to:\n{out_path}"
+        if notes:
+            msg += "\n\n" + "\n".join(notes)
+        box.setText(msg)
+        open_btn = box.addButton("Open folder", QMessageBox.ButtonRole.ActionRole)
+        box.addButton(QMessageBox.StandardButton.Ok)
+        box.exec()
+        if box.clickedButton() is open_btn:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(out_dir)))

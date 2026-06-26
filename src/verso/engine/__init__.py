@@ -29,6 +29,14 @@ from verso.engine.io.export_images import (
     render_overlay_rgba,
     render_section_rgb,
 )
+from verso.engine.io.export_stack import (
+    ExportStackOptions,
+    build_canonical_remap,
+    export_aligned_stack,
+    export_section_aligned,
+    finalize_aligned_pages,
+    write_aligned_stack,
+)
 from verso.engine.io.image_io import (
     compute_working_scale,
     ensure_working_copy,
@@ -146,6 +154,12 @@ __all__ = [
     "export_section",
     "render_overlay_rgba",
     "render_section_rgb",
+    "ExportStackOptions",
+    "build_canonical_remap",
+    "export_aligned_stack",
+    "export_section_aligned",
+    "finalize_aligned_pages",
+    "write_aligned_stack",
     # I/O
     "export_brainglobe_atlas_for_visualign",
     "load_deepslice",
