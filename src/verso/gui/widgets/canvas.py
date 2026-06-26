@@ -749,6 +749,12 @@ class ImageCanvas(QWidget):
         self.overlay_item.setImage(image)
         if display_w is not None and display_h is not None:
             self.overlay_item.setRect(QRectF(0, 0, display_w, display_h))
+            self._align_handle.set_center(display_w / 2.0, display_h / 2.0)
+        else:
+            h, w = image.shape[:2]
+            self._align_handle.set_center(w / 2.0, h / 2.0)
+        self._overlay_present = True
+        self._update_handle_visibility()
 
     def _on_scene_mouse_moved(self, scene_pos) -> None:
         vb_pos = self._vb.mapSceneToView(scene_pos)
