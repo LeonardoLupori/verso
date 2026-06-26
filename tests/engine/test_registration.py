@@ -16,6 +16,7 @@ from verso.engine.registration import (
     normalized_to_atlas,
     normalized_to_pixel,
     pixel_to_normalized,
+    plane_tilt_deg,
     quicknii_default_anchoring,
     quicknii_pack_anchoring,
     quicknii_series_anchorings,
@@ -831,3 +832,50 @@ def test_interpolate_anchorings_sagittal_axis_strips_in_plane_rotation(tmp_path)
     np.testing.assert_allclose(u_unit, [0.0, 1.0, 0.0], atol=1e-9)
     np.testing.assert_allclose(v_unit, [0.0, 0.0, 1.0], atol=1e-9)
     assert sections[1].alignment.status == AlignmentStatus.IN_PROGRESS
+
+
+# ---------------------------------------------------------------------------
+# plane_tilt_deg
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("axis", [0, 1, 2])
+def test_plane_tilt_deg_zero_for_axis_aligned_plane(axis):
+    atlas_shape = (528, 320, 456)
+    anchoring = quicknii_default_anchoring(
+        image_width=1000,
+        image_height=800,
+        max_width=1000,
+        max_height=800,
+        atlas_shape=atlas_shape,
+        interpolation_axis=axis,
+    )
+    assert plane_tilt_deg(anchoring, axis) == pytest.approx(0.0, abs=1e-9)
+
+
+def test_plane_tilt_deg_matches_rotation_angle():
+    # Coronal default plane (axis=1): u along LR, v along DV, normal along AP.
+    # Rotate v toward AP by 30° around LR; the plane should tilt by 30°.
+    o = np.array([0.0, 264.0, 0.0])
+    u = np.array([456.0, 0.0, 0.0])  # LR
+    deg = 30.0
+    a = math.radians(deg)
+    v_tilted = np.array([0.0, math.sin(a) * 320.0, math.cos(a) * 320.0])
+    anchoring = vectors_to_anchoring(o, u, v_tilted)
+    assert plane_tilt_deg(anchoring, 1) == pytest.approx(deg, abs=1e-6)
+
+
+def test_rotate_anchoring_is_in_plane_only():
+    # In-plane rotation must not change the direction of the plane normal,
+    # so plane_tilt_deg is invariant under rotate_anchoring (the basis for
+    # clamping tilt independently of in-plane spin).
+    anchoring = SAMPLE_ANCHORING
+    before = plane_tilt_deg(anchoring, 1)
+    rotated = rotate_anchoring(anchoring, math.radians(37.0))
+    after = plane_tilt_deg(rotated, 1)
+    assert after == pytest.approx(before, abs=1e-9)
+
+    n0 = np.cross(*anchoring_to_vectors(anchoring)[1:])
+    n1 = np.cross(*anchoring_to_vectors(rotated)[1:])
+    cos = np.dot(n0, n1) / (np.linalg.norm(n0) * np.linalg.norm(n1))
+    assert cos == pytest.approx(1.0, abs=1e-9)

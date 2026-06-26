@@ -67,6 +67,8 @@ class SectionCanvasPanel(QWidget):
     canvas_dragged = pyqtSignal(float, float)
     canvas_drag_ended = pyqtSignal(float, float)
     overlay_panned = pyqtSignal(float, float)
+    overlay_rotated = pyqtSignal(float)
+    overlay_scaled = pyqtSignal(float, float)
 
     # Lifecycle / state-change notifications for the active view
     section_loaded = pyqtSignal(object)  # Section | None
@@ -147,6 +149,8 @@ class SectionCanvasPanel(QWidget):
         self.canvas.canvas_dragged.connect(self.canvas_dragged)
         self.canvas.canvas_drag_ended.connect(self.canvas_drag_ended)
         self.canvas.overlay_panned.connect(self.overlay_panned)
+        self.canvas.overlay_rotated.connect(self.overlay_rotated)
+        self.canvas.overlay_scaled.connect(self.overlay_scaled)
 
     # ------------------------------------------------------------------
     # Public accessors

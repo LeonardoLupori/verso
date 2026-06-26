@@ -111,6 +111,8 @@ class AlignView(QWidget):
 
     def _wire_panel(self) -> None:
         self._panel.overlay_panned.connect(self._on_overlay_panned)
+        self._panel.overlay_rotated.connect(self._on_overlay_rotated)
+        self._panel.overlay_scaled.connect(self._on_overlay_scaled)
         self._panel.overlay_updated.connect(self._on_overlay_updated)
         self._panel.section_loaded.connect(self._on_section_loaded)
         self._panel.atlas_changed.connect(lambda _atlas: self._navigator.set_atlas(_atlas))
@@ -252,6 +254,9 @@ class AlignView(QWidget):
         if not self._pan_run_active:
             self._push_undo()
             self._pan_run_active = True
+            # Canvas gestures must move keyboard focus into this view's subtree
+            # so the Ctrl+Z shortcut (WidgetWithChildrenShortcut) still fires.
+            self._panel.canvas.view.setFocus()
             # Pan re-renders the outline every move event; sample it cheaper for
             # the duration of the gesture (restored in _end_pan_run).
             self._panel.set_overlay_fast(True)
@@ -262,6 +267,69 @@ class AlignView(QWidget):
         v = np.array(anchoring[6:9])
         new_o = o - (dx / w_bg) * u - (dy / h_bg) * v
         new_anchoring = new_o.tolist() + anchoring[3:]
+        section.alignment.anchoring = new_anchoring
+        self._sync_position_from_anchoring(new_anchoring)
+        self._panel.update_overlay()
+        self._set_dirty(True)
+        self.anchoring_changed.emit(new_anchoring)
+
+    # ------------------------------------------------------------------
+    # Overlay rotate (handle ring drag)
+    # ------------------------------------------------------------------
+
+    def _on_overlay_rotated(self, d_deg: float) -> None:
+        section = self._panel.section
+        if section is None or self._panel.raw_image is None:
+            return
+        anchoring = section.alignment.anchoring
+        if not anchoring or all(v == 0.0 for v in anchoring):
+            return
+        # Coalesce the whole ring drag into a single undo step, mirroring the pan
+        # gesture: snapshot once, keep the idle timer alive, sample the outline
+        # cheaper while dragging.
+        if not self._pan_run_active:
+            self._push_undo()
+            self._pan_run_active = True
+            # See _on_overlay_panned: grab focus so Ctrl+Z keeps working.
+            self._panel.canvas.view.setFocus()
+            self._panel.set_overlay_fast(True)
+        self._pan_coalesce_timer.start()
+
+        from verso.engine.registration import rotate_anchoring
+
+        # In-plane spin about the section centre. A clockwise drag on the ring
+        # spins the overlay clockwise (canvas y points down, so a positive
+        # screen-space sweep maps straight onto the rotation).
+        new_anchoring = rotate_anchoring(anchoring, np.radians(d_deg))
+        section.alignment.anchoring = new_anchoring
+        self._sync_position_from_anchoring(new_anchoring)
+        self._panel.update_overlay()
+        self._set_dirty(True)
+        self.anchoring_changed.emit(new_anchoring)
+
+    # ------------------------------------------------------------------
+    # Overlay stretch (handle grip drag)
+    # ------------------------------------------------------------------
+
+    def _on_overlay_scaled(self, scale_s: float, scale_t: float) -> None:
+        section = self._panel.section
+        if section is None or self._panel.raw_image is None:
+            return
+        anchoring = section.alignment.anchoring
+        if not anchoring or all(v == 0.0 for v in anchoring):
+            return
+        # Coalesce the whole grip drag into a single undo step, mirroring pan/rotate.
+        if not self._pan_run_active:
+            self._push_undo()
+            self._pan_run_active = True
+            # See _on_overlay_panned: grab focus so Ctrl+Z keeps working.
+            self._panel.canvas.view.setFocus()
+            self._panel.set_overlay_fast(True)
+        self._pan_coalesce_timer.start()
+
+        from verso.engine.registration import scale_anchoring
+
+        new_anchoring = scale_anchoring(anchoring, scale_s, scale_t)
         section.alignment.anchoring = new_anchoring
         self._sync_position_from_anchoring(new_anchoring)
         self._panel.update_overlay()

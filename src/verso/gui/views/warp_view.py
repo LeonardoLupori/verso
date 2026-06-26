@@ -469,9 +469,7 @@ class WarpView(QWidget):
         if section is None:
             return False
         section.warp.status = (
-            AlignmentStatus.COMPLETE
-            if section.warp.control_points
-            else AlignmentStatus.NOT_STARTED
+            AlignmentStatus.COMPLETE if section.warp.control_points else AlignmentStatus.NOT_STARTED
         )
         self._baseline_warp = copy.deepcopy(section.warp)
         self._state.pop_baseline(section.id, "warp")

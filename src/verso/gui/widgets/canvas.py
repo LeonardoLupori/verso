@@ -11,21 +11,43 @@ Item stack (low z to high):
   cp_item          — warp control points (z=20).
   stroke_item      — live freehand mask preview (z=30).
 
-Space + drag interaction: while the spacebar is held, left-button drag emits
-``overlay_panned(dx, dy)`` in scene/data coordinates (image pixels).  The
-AlignView connects this to translate the atlas cut plane.  This gesture is
-disabled in warp mode — spacebar and overlay movement are no-ops there.
+Align handle: in Align mode a centre gizmo (``_AlignHandle``) is drawn over the
+overlay.  Dragging the N/E/S/W arrowhead grips emits
+``overlay_scaled(scale_s, scale_t)`` to stretch width/height; dragging the ring
+emits ``overlay_rotated(deg)`` to spin it in-plane; dragging anywhere else emits
+``overlay_panned(dx, dy)`` to translate the cut plane.  The centre dot is inert.
+Holding the spacebar while dragging pans the view instead.  The handle is hidden
+outside Align mode and when no overlay is present.
 """
 
 from __future__ import annotations
 
+import math
 from typing import Literal
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtCore import QEvent, QObject, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QCursor, QPainter, QPen, QPixmap
-from PyQt6.QtWidgets import QAbstractButton, QApplication, QSizePolicy, QVBoxLayout, QWidget
+from PyQt6.QtCore import QEvent, QObject, QPointF, QRectF, Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QCursor, QPainter, QPen, QPixmap, QPolygonF
+from PyQt6.QtWidgets import (
+    QAbstractButton,
+    QApplication,
+    QGraphicsItem,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
+
+# Align handle geometry (in screen pixels) and opacity.
+_HANDLE_GRIP_PX = 30.0  # distance of the arrowhead stretch grips along each axis
+_HANDLE_GRIP_HALF = 8.0  # half-size of a stretch grip's square hit box
+_HANDLE_ARROW_LEN = 9.0  # arrowhead length (along its axis)
+_HANDLE_ARROW_HALF = 7.0  # arrowhead half-width (across its axis)
+_HANDLE_CENTER_DOT_PX = 6.0  # inert centre dot radius (visual marker only)
+_HANDLE_RING_PX = 42.0  # rotation ring radius
+_HANDLE_RING_HALF = 9.0  # half-width of the ring's grab band
+_HANDLE_DIM = 0.35  # resting opacity
+_HANDLE_OPAQUE = 1.0  # hovered opacity
 
 
 def _make_cross_cursor(rgb: tuple[int, int, int], size: int = 21) -> QCursor:
@@ -71,6 +93,35 @@ def _make_circle_cursor(rgb: tuple[int, int, int], diameter_px: int) -> QCursor:
     return QCursor(pm, mid, mid)
 
 
+# lucide "rotate-ccw" glyph (circled arrow), parameterised by render size/colour/stroke.
+_ROTATE_CCW_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" width="{s}" height="{s}" '
+    'viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="{w}" '
+    'stroke-linecap="round" stroke-linejoin="round">'
+    '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>'
+    '<path d="M3 3v5h5"/></svg>'
+)
+
+
+def _make_rotate_cursor(rgb: tuple[int, int, int], size: int = 24) -> QCursor:
+    """Build a circled-arrow rotation cursor from the lucide ``rotate-ccw`` glyph.
+
+    Rendered with a dark halo pass under the coloured stroke for contrast, hotspot
+    at the pixmap centre.
+    """
+    hexc = "#{:02x}{:02x}{:02x}".format(*rgb)
+    pm = QPixmap(size, size)
+    pm.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pm)
+    for color, width in (("#000000", 3.5), (hexc, 2.0)):
+        layer = QPixmap()
+        layer.loadFromData(_ROTATE_CCW_SVG.format(s=size, c=color, w=width).encode())
+        painter.drawPixmap(0, 0, layer)
+    painter.end()
+    h = size // 2
+    return QCursor(pm, h, h)
+
+
 # ---------------------------------------------------------------------------
 # Application-level space-key tracker (singleton, installed once)
 # ---------------------------------------------------------------------------
@@ -78,6 +129,8 @@ def _make_circle_cursor(rgb: tuple[int, int, int], diameter_px: int) -> QCursor:
 
 class _SpaceState:
     held: bool = False
+    # ImageCanvas instances that want to be notified on Space change.
+    listeners: set = set()
 
 
 class _ShiftState:
@@ -98,6 +151,8 @@ class _SpaceFilter(QObject):
         if t == QEvent.Type.KeyPress and not event.isAutoRepeat():
             if event.key() == Qt.Key.Key_Space:
                 _SpaceState.held = True
+                for canvas in list(_SpaceState.listeners):
+                    canvas._on_space_changed()
                 # Consume the event when a button has focus so spacebar doesn't
                 # re-trigger the last clicked button while panning.
                 if isinstance(QApplication.focusWidget(), QAbstractButton):
@@ -109,6 +164,8 @@ class _SpaceFilter(QObject):
         elif t == QEvent.Type.KeyRelease and not event.isAutoRepeat():
             if event.key() == Qt.Key.Key_Space:
                 _SpaceState.held = False
+                for canvas in list(_SpaceState.listeners):
+                    canvas._on_space_changed()
             elif event.key() == Qt.Key.Key_Shift:
                 _ShiftState.held = False
                 for canvas in list(_ShiftState.listeners):
@@ -133,6 +190,12 @@ class _OverlayViewBox(pg.ViewBox):
     and canvas_clicked / canvas_dragged for warp control-point interaction."""
 
     overlay_panned = pyqtSignal(float, float)
+    # Emitted (degrees) while dragging the align handle's rotation ring
+    overlay_rotated = pyqtSignal(float)
+    # Emitted (scale_s, scale_t multipliers) while dragging a stretch grip
+    overlay_scaled = pyqtSignal(float, float)
+    # Emitted True/False as a spacebar view-pan drag starts/ends (grab cursor)
+    space_pan_changed = pyqtSignal(bool)
     # Emitted in image-pixel coordinates
     canvas_clicked = pyqtSignal(float, float)  # single click (no drag)
     canvas_drag_started = pyqtSignal(float, float)  # drag begin
@@ -144,9 +207,13 @@ class _OverlayViewBox(pg.ViewBox):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._interaction_mode: _OverlayViewBox._InteractionMode = "align"
+        self._align_handle: _AlignHandle | None = None
 
     def set_interaction_mode(self, mode: _InteractionMode) -> None:
         self._interaction_mode = mode
+
+    def set_align_handle(self, handle: _AlignHandle) -> None:
+        self._align_handle = handle
 
     def mouseClickEvent(self, ev) -> None:
         if ev.double() and ev.button() == Qt.MouseButton.LeftButton:
@@ -167,15 +234,54 @@ class _OverlayViewBox(pg.ViewBox):
             super().mouseClickEvent(ev)
 
     def mouseDragEvent(self, ev, axis=None) -> None:
-        if (
-            self._interaction_mode == "align"
-            and _SpaceState.held
-            and ev.button() == Qt.MouseButton.LeftButton
-        ):
-            ev.accept()
-            p1 = self.mapSceneToView(ev.lastScenePos())
-            p2 = self.mapSceneToView(ev.scenePos())
-            self.overlay_panned.emit(p2.x() - p1.x(), p2.y() - p1.y())
+        if self._interaction_mode == "align" and ev.button() == Qt.MouseButton.LeftButton:
+            # Spacebar turns the drag into a plain view pan ("padding"); without
+            # it the gesture is interpreted by the handle zone it started in —
+            # ring rotates, arrowhead grips stretch, anywhere else translates the
+            # atlas overlay.
+            if _SpaceState.held:
+                if ev.isStart():
+                    self.space_pan_changed.emit(True)
+                elif ev.isFinish():
+                    self.space_pan_changed.emit(False)
+                super().mouseDragEvent(ev, axis)
+                return
+            handle = self._align_handle
+            zone = None
+            if handle is not None:
+                start = self.mapSceneToView(ev.buttonDownScenePos())
+                view_px = self.viewPixelSize()[0]
+                zone = handle.zone_at(start.x(), start.y(), view_px)
+            if zone == "rotate":
+                ev.accept()
+                c = handle.pos()
+                p1 = self.mapSceneToView(ev.lastScenePos())
+                p2 = self.mapSceneToView(ev.scenePos())
+                a1 = math.atan2(p1.y() - c.y(), p1.x() - c.x())
+                a2 = math.atan2(p2.y() - c.y(), p2.x() - c.x())
+                self.overlay_rotated.emit(math.degrees(a2 - a1))
+            elif zone in ("stretch_x", "stretch_y"):
+                ev.accept()
+                c = handle.pos()
+                p1 = self.mapSceneToView(ev.lastScenePos())
+                p2 = self.mapSceneToView(ev.scenePos())
+                floor = max(view_px * 2.0, 1e-6)  # avoid blow-up near the centre
+                if zone == "stretch_x":
+                    d1 = max(abs(p1.x() - c.x()), floor)
+                    d2 = max(abs(p2.x() - c.x()), floor)
+                    # Inverse ratio: pulling the grip outward (d2 > d1) shrinks u,
+                    # which widens the sampled overlay (scale_anchoring multiplies u).
+                    self.overlay_scaled.emit(min(2.0, max(0.5, d1 / d2)), 1.0)
+                else:
+                    d1 = max(abs(p1.y() - c.y()), floor)
+                    d2 = max(abs(p2.y() - c.y()), floor)
+                    self.overlay_scaled.emit(1.0, min(2.0, max(0.5, d1 / d2)))
+            else:
+                # Default: drag anywhere else translates the atlas overlay.
+                ev.accept()
+                p1 = self.mapSceneToView(ev.lastScenePos())
+                p2 = self.mapSceneToView(ev.scenePos())
+                self.overlay_panned.emit(p2.x() - p1.x(), p2.y() - p1.y())
         elif (
             self._interaction_mode in ("warp", "prep")
             and not _SpaceState.held
@@ -197,6 +303,103 @@ class _OverlayViewBox(pg.ViewBox):
 
 
 # ---------------------------------------------------------------------------
+# Align centre handle
+# ---------------------------------------------------------------------------
+
+
+class _AlignHandle(pg.GraphicsObject):
+    """Centre manipulator drawn over the atlas overlay in the Align view.
+
+    Painted at the overlay centre at a fixed on-screen size (it ignores the
+    view transform), it shows a crosshair inside an outer ring.  It is purely a
+    visual + hit-test helper: the :class:`_OverlayViewBox` reads :meth:`zone_at`
+    to route a drag — inner crosshair → translate, outer ring → rotate — and the
+    canvas toggles :meth:`set_hovered` so it brightens when the cursor is over it.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
+        self.setZValue(18)
+        self._hovered = False
+        self.setOpacity(_HANDLE_DIM)
+        self.setVisible(False)
+
+    def boundingRect(self) -> QRectF:
+        r = _HANDLE_RING_PX + 2.0
+        return QRectF(-r, -r, 2.0 * r, 2.0 * r)
+
+    def set_center(self, x: float, y: float) -> None:
+        """Place the handle at ``(x, y)`` in view/image-pixel coordinates."""
+        self.setPos(x, y)
+
+    def set_hovered(self, hovered: bool) -> None:
+        if hovered == self._hovered:
+            return
+        self._hovered = hovered
+        self.setOpacity(_HANDLE_OPAQUE if hovered else _HANDLE_DIM)
+
+    def set_active(self, active: bool) -> None:
+        """Show/hide the handle (Align mode with an overlay present)."""
+        self.setVisible(active)
+        if not active:
+            self.set_hovered(False)
+
+    def zone_at(self, view_x: float, view_y: float, view_px: float) -> str | None:
+        """Classify a view-space point relative to the handle.
+
+        Returns ``"stretch_x"``/``"stretch_y"`` over an arrowhead grip,
+        ``"rotate"`` over the ring's grab band, ``"translate"`` anywhere else
+        (the default drag), or ``None`` when the handle is hidden.  ``view_px``
+        is view units per screen pixel (``ViewBox.viewPixelSize()[0]``); pixel
+        thresholds are scaled by it so hit-testing matches the painted,
+        screen-fixed size at any zoom level.
+        """
+        if not self.isVisible() or view_px <= 0:
+            return None
+        c = self.pos()
+        px = (view_x - c.x()) / view_px
+        py = (view_y - c.y()) / view_px
+        # Stretch grips sit on each axis at _HANDLE_GRIP_PX; their square hit
+        # boxes take priority over the rotation ring band they overlap.
+        if abs(py) <= _HANDLE_GRIP_HALF and abs(abs(px) - _HANDLE_GRIP_PX) <= _HANDLE_GRIP_HALF:
+            return "stretch_x"
+        if abs(px) <= _HANDLE_GRIP_HALF and abs(abs(py) - _HANDLE_GRIP_PX) <= _HANDLE_GRIP_HALF:
+            return "stretch_y"
+        # Rotate only on the ring line itself; everything else translates.
+        if abs(math.hypot(px, py) - _HANDLE_RING_PX) <= _HANDLE_RING_HALF:
+            return "rotate"
+        return "translate"
+
+    def paint(self, painter: QPainter, *args) -> None:
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        gray = QColor(200, 200, 200)
+        halo = QColor(0, 0, 0, 160)
+        g = _HANDLE_GRIP_PX
+        hl = _HANDLE_ARROW_LEN
+        hw = _HANDLE_ARROW_HALF
+        # Outer rotation ring (gray, with a dark halo for contrast)
+        painter.setPen(QPen(halo, 5.0))
+        painter.drawEllipse(QPointF(0.0, 0.0), _HANDLE_RING_PX, _HANDLE_RING_PX)
+        painter.setPen(QPen(gray, 3.0))
+        painter.drawEllipse(QPointF(0.0, 0.0), _HANDLE_RING_PX, _HANDLE_RING_PX)
+        # Arrowhead stretch grips at N/E/S/W, each pointing outward along its axis
+        painter.setPen(QPen(halo, 1.5))
+        painter.setBrush(gray)
+        for dx, dy in ((1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)):
+            tip = QPointF(g * dx, g * dy)
+            bx, by = (g - hl) * dx, (g - hl) * dy
+            px, py = -dy, dx  # unit perpendicular to the axis
+            c1 = QPointF(bx + hw * px, by + hw * py)
+            c2 = QPointF(bx - hw * px, by - hw * py)
+            painter.drawPolygon(QPolygonF([tip, c1, c2]))
+        # Translate centre dot
+        painter.drawEllipse(QPointF(0.0, 0.0), _HANDLE_CENTER_DOT_PX, _HANDLE_CENTER_DOT_PX)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+
+# ---------------------------------------------------------------------------
 # Public widget
 # ---------------------------------------------------------------------------
 
@@ -204,8 +407,12 @@ class _OverlayViewBox(pg.ViewBox):
 class ImageCanvas(QWidget):
     """PyQtGraph canvas with a background and an optional semi-transparent overlay."""
 
-    # Emitted while space+drag panning in the Align view (dx, dy in image pixels)
+    # Emitted while dragging the align handle's inner crosshair (dx, dy in image pixels)
     overlay_panned = pyqtSignal(float, float)
+    # Emitted (degrees) while dragging the align handle's rotation ring
+    overlay_rotated = pyqtSignal(float)
+    # Emitted (scale_s, scale_t multipliers) while dragging an align stretch grip
+    overlay_scaled = pyqtSignal(float, float)
     # Emitted on every mouse move over the canvas (x, y in scene/image pixel coords)
     mouse_position_changed = pyqtSignal(float, float)
     # Warp control-point interaction (image pixel coords)
@@ -228,9 +435,16 @@ class ImageCanvas(QWidget):
         self._channel_shape: tuple[int, int] | None = None
         self._interaction_mode: ImageCanvas._InteractionMode = "align"
         self._lr_draw_active: bool = False
+        self._overlay_present: bool = False
+        # Align-cursor state: last hovered handle zone + whether a spacebar pan
+        # drag is currently in progress (closed-hand vs open-hand cursor).
+        self._last_handle_zone: str | None = None
+        self._space_panning: bool = False
         # Pre-built cursors swapped in/out by the prep-mode hover filter.
         self._cursor_draw = _make_cross_cursor((120, 200, 255))  # bright sky-blue
         self._cursor_erase = _make_cross_cursor((255, 140, 140))  # bright coral
+        # Rotation cursor shown over the align handle's ring.
+        self._cursor_rotate = _make_rotate_cursor((230, 230, 230))
         # Brush mode: circular cursor sized to the brush footprint in image px.
         self._brush_mode: bool = False
         self._brush_radius_img: int = 20
@@ -248,6 +462,8 @@ class ImageCanvas(QWidget):
         self._vb = _OverlayViewBox()
         self._vb.setBackgroundColor((0, 0, 0))  # black so Lighten(channel, black)=channel
         self._vb.overlay_panned.connect(self.overlay_panned)
+        self._vb.overlay_rotated.connect(self.overlay_rotated)
+        self._vb.overlay_scaled.connect(self.overlay_scaled)
 
         self.plot = self.view.addPlot(viewBox=self._vb)
         self.plot.setAspectLocked(True)
@@ -289,12 +505,17 @@ class ImageCanvas(QWidget):
         )
         self.stroke_item.setZValue(30)
 
+        # Align centre handle (translate/rotate manipulator), hidden until Align.
+        self._align_handle = _AlignHandle()
+
         self.plot.addItem(self.overlay_item)
         self.plot.addItem(self.lr_overlay_item)
         self.plot.addItem(self.disp_halo_item)
         self.plot.addItem(self.disp_item)
         self.plot.addItem(self.cp_item)
         self.plot.addItem(self.stroke_item)
+        self.plot.addItem(self._align_handle)
+        self._vb.set_align_handle(self._align_handle)
 
         # Forward scene mouse moves as image-pixel coordinates
         self.plot.scene().sigMouseMoved.connect(self._on_scene_mouse_moved)
@@ -307,6 +528,7 @@ class ImageCanvas(QWidget):
         self._vb.canvas_drag_started.connect(self.canvas_drag_started)
         self._vb.canvas_dragged.connect(self.canvas_dragged)
         self._vb.canvas_drag_ended.connect(self.canvas_drag_ended)
+        self._vb.space_pan_changed.connect(self._on_space_pan_changed)
 
     # ------------------------------------------------------------------
     # Public API
@@ -315,20 +537,27 @@ class ImageCanvas(QWidget):
     def set_interaction_mode(self, mode: _InteractionMode) -> None:
         """Choose how left-drag gestures are interpreted by the canvas.
 
-        ``align`` preserves Align/Warp behavior: space+drag pans the atlas
-        overlay and plain left-drag emits CP interaction signals.
+        ``align`` shows the centre handle: dragging its ring rotates the overlay,
+        its arrowhead grips stretch it, plain left-drag translates it, and
+        spacebar+drag pans the view.
         ``prep`` emits plain left-drag signals for mask strokes while allowing
         space+drag to fall through to pyqtgraph.
         ``view`` lets pyqtgraph handle left-drag gestures normally.
         """
         self._vb.set_interaction_mode(mode)
         self._interaction_mode = mode
+        self._update_handle_visibility()
         # If the cursor is already over the canvas, refresh immediately;
         # otherwise the next enterEvent will pick up the new mode.
         if self.view.underMouse():
             self._refresh_prep_cursor()
         elif mode != "prep":
             self.view.unsetCursor()
+
+    def _update_handle_visibility(self) -> None:
+        """Show the align handle only in Align mode with an overlay present."""
+        active = self._interaction_mode == "align" and self._overlay_present
+        self._align_handle.set_active(active)
 
     # ------------------------------------------------------------------
     # Prep-mode cursor: blue crosshair while hovering, red while Shift is
@@ -342,7 +571,13 @@ class ImageCanvas(QWidget):
         # Wheel events go to the scroll-area viewport, not the view itself.
         self.view.viewport().installEventFilter(self)
         _ShiftState.listeners.add(self)
-        self.destroyed.connect(lambda _=None, s=self: _ShiftState.listeners.discard(s))
+        _SpaceState.listeners.add(self)
+
+        def _drop_listeners(_=None, s=self) -> None:
+            _ShiftState.listeners.discard(s)
+            _SpaceState.listeners.discard(s)
+
+        self.destroyed.connect(_drop_listeners)
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:
         t = event.type()
@@ -362,8 +597,12 @@ class ImageCanvas(QWidget):
             if t == QEvent.Type.Enter:
                 if self._interaction_mode == "prep":
                     self._refresh_prep_cursor()
+                elif self._interaction_mode == "align":
+                    # Show the pan grab cursor immediately if entering with space held.
+                    self._refresh_align_cursor()
             elif t == QEvent.Type.Leave:
                 self.view.unsetCursor()
+                self._align_handle.set_hovered(False)
         return super().eventFilter(obj, event)
 
     def _on_shift_changed(self) -> None:
@@ -496,12 +735,18 @@ class ImageCanvas(QWidget):
         """
         if image is None:
             self.overlay_item.clear()
+            self._overlay_present = False
+            self._update_handle_visibility()
             return
         self.overlay_item.setImage(image)
         if display_w is not None and display_h is not None:
-            from PyQt6.QtCore import QRectF
-
             self.overlay_item.setRect(QRectF(0, 0, display_w, display_h))
+            self._align_handle.set_center(display_w / 2.0, display_h / 2.0)
+        else:
+            h, w = image.shape[:2]
+            self._align_handle.set_center(w / 2.0, h / 2.0)
+        self._overlay_present = True
+        self._update_handle_visibility()
 
     def set_lr_overlay(
         self,
@@ -525,7 +770,56 @@ class ImageCanvas(QWidget):
 
     def _on_scene_mouse_moved(self, scene_pos) -> None:
         vb_pos = self._vb.mapSceneToView(scene_pos)
+        if self._interaction_mode == "align":
+            view_px = self._vb.viewPixelSize()[0]
+            zone = self._align_handle.zone_at(vb_pos.x(), vb_pos.y(), view_px)
+            self._last_handle_zone = zone
+            # Brighten only over the gizmo itself (ring/grips), not the broad
+            # translate field that covers the whole canvas.
+            self._align_handle.set_hovered(zone in ("rotate", "stretch_x", "stretch_y"))
+            self._refresh_align_cursor()
         self.mouse_position_changed.emit(vb_pos.x(), vb_pos.y())
+
+    _HANDLE_CURSORS = {
+        "stretch_x": Qt.CursorShape.SizeHorCursor,
+        "stretch_y": Qt.CursorShape.SizeVerCursor,
+    }
+
+    def _refresh_align_cursor(self) -> None:
+        """Set the canvas cursor for the current Align state.
+
+        Spacebar shows the pan grab cursor (open hand, or closed hand while
+        dragging); otherwise the hovered handle zone decides (rotate / stretch /
+        default translate).
+        """
+        if self._interaction_mode != "align":
+            return
+        if _SpaceState.held:
+            self.view.setCursor(
+                Qt.CursorShape.ClosedHandCursor
+                if self._space_panning
+                else Qt.CursorShape.OpenHandCursor
+            )
+            return
+        zone = self._last_handle_zone
+        if zone == "rotate":
+            self.view.setCursor(self._cursor_rotate)
+            return
+        shape = self._HANDLE_CURSORS.get(zone)
+        if shape is None:
+            self.view.unsetCursor()
+        else:
+            self.view.setCursor(shape)
+
+    def _on_space_changed(self) -> None:
+        """React to spacebar press/release (open-hand pan cursor in Align)."""
+        if self._interaction_mode == "align" and self.view.underMouse():
+            self._refresh_align_cursor()
+
+    def _on_space_pan_changed(self, panning: bool) -> None:
+        """Track an in-progress spacebar pan drag (closed-hand cursor)."""
+        self._space_panning = panning
+        self._refresh_align_cursor()
 
     _CP_SYMBOLS: dict[str, str] = {
         "Circle": "o",
@@ -667,6 +961,8 @@ class ImageCanvas(QWidget):
         self._channel_items.clear()
         self._channel_shape = None
         self.overlay_item.clear()
+        self._overlay_present = False
+        self._update_handle_visibility()
         self.lr_overlay_item.clear()
         self.cp_item.clear()
         self.disp_halo_item.clear()

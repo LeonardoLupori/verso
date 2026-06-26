@@ -45,6 +45,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from verso.engine.registration import plane_tilt_deg
+
 _ICONS_DIR = Path(__file__).parent.parent / "icons"
 
 # Scale step per stretch button click
@@ -75,6 +77,8 @@ _MOVE_STEP = 1
 _MOVE_STEP_FAST = 10
 # Per-click rotation step (degrees)
 _ROTATE_STEP_DEG = 1.0
+# Maximum plane tilt (degrees) from the slicing axis allowed via navigator views
+_MAX_TILT_DEG = 45.0
 
 _OUTLINE_COLOR = QColor(255, 80, 80, 220)
 _CENTER_COLOR = QColor(255, 255, 0, 220)
@@ -391,6 +395,43 @@ class _SliceView(QWidget):
         new_anchoring[atlas_axis] += delta
         self.anchoring_changed.emit(new_anchoring)
 
+    def _tilt_after(self, u: np.ndarray, v: np.ndarray, rot_axis: np.ndarray, deg: float) -> float:
+        """Plane tilt (deg) that would result from rotating u,v by ``deg``."""
+        u_new = _rot_around(u, rot_axis, deg)
+        v_new = _rot_around(v, rot_axis, deg)
+        anchoring = [0.0, 0.0, 0.0, *u_new.tolist(), *v_new.tolist()]
+        return plane_tilt_deg(anchoring, self._interpolation_axis)
+
+    def _clamp_rotation_deg(
+        self, u: np.ndarray, v: np.ndarray, rot_axis: np.ndarray, deg: float
+    ) -> float:
+        """Reduce ``deg`` so the plane never tilts past ±_MAX_TILT_DEG.
+
+        Tilt is monotonic in the rotation magnitude over a 90° window, so cap the
+        request to that window and bisect for the boundary when it overshoots.
+        Rotation about the slicing axis (the in-plane spin of the now-removed
+        parallel view) leaves tilt unchanged, so this is a no-op there.
+        """
+        deg = max(-90.0, min(90.0, deg))
+        if deg == 0.0 or self._tilt_after(u, v, rot_axis, deg) <= _MAX_TILT_DEG:
+            return deg
+        if self._tilt_after(u, v, rot_axis, 0.0) > _MAX_TILT_DEG:
+            # Already past the limit (e.g. an imported plane): only allow tilt to
+            # decrease, never increase.
+            return (
+                deg
+                if self._tilt_after(u, v, rot_axis, deg) < self._tilt_after(u, v, rot_axis, 0.0)
+                else 0.0
+            )
+        lo, hi = 0.0, deg
+        for _ in range(24):
+            mid = 0.5 * (lo + hi)
+            if self._tilt_after(u, v, rot_axis, mid) <= _MAX_TILT_DEG:
+                lo = mid
+            else:
+                hi = mid
+        return lo
+
     def _rotate_step(self, deg_signed: float) -> None:
         """Rotate cut plane around this view's perpendicular atlas axis."""
         if self._anchoring is None:
@@ -403,6 +444,7 @@ class _SliceView(QWidget):
         v = np.array(self._anchoring[6:9])
         center = o + u / 2.0 + v / 2.0
         rot_axis = self._ROTATION_AXES[self._axis]
+        deg = self._clamp_rotation_deg(u, v, rot_axis, deg)
         u_new = _rot_around(u, rot_axis, deg)
         v_new = _rot_around(v, rot_axis, deg)
         new_o = center - u_new / 2.0 - v_new / 2.0
@@ -547,6 +589,7 @@ class _SliceView(QWidget):
         center = o + u / 2.0 + v / 2.0
 
         rot_axis = self._ROTATION_AXES[self._axis]
+        deg = self._clamp_rotation_deg(u, v, rot_axis, deg)
         u_new = _rot_around(u, rot_axis, deg)
         v_new = _rot_around(v, rot_axis, deg)
         new_o = center - u_new / 2.0 - v_new / 2.0
@@ -613,6 +656,10 @@ class NavigatorPanel(QWidget):
         self._cor = _SliceView(1, dims)
         self._hor = _SliceView(2, dims)
 
+        # Group box per axis, so the view parallel to the slices (the one whose
+        # axis is the slicing axis) can be hidden once the project axis is known.
+        self._groups: dict[int, QGroupBox] = {}
+        self._hidden_axis: int | None = None
         view_titles = ["Sagittal", "Coronal", "Horizontal"]
         for view, title in zip((self._sag, self._cor, self._hor), view_titles):
             view.anchoring_changed.connect(self._on_anchoring_changed)
@@ -626,6 +673,7 @@ class NavigatorPanel(QWidget):
             grp_layout.setSpacing(0)
             grp_layout.addWidget(view)
             layout.addWidget(grp)
+            self._groups[view._axis] = grp
 
         layout.addStretch()
 
@@ -729,6 +777,11 @@ class NavigatorPanel(QWidget):
     def set_interpolation_axis(self, axis: int) -> None:
         for view in (self._sag, self._cor, self._hor):
             view.set_interpolation_axis(axis)
+        # Hide the view parallel to the slices (face-on); the two edge-on views
+        # that reveal tilt remain. In-plane rotation is handled on the canvas.
+        self._hidden_axis = axis
+        for ax, grp in self._groups.items():
+            grp.setVisible(ax != axis)
 
     def set_atlas(self, atlas: AtlasVolume | None) -> None:
         self._atlas = atlas
@@ -748,15 +801,13 @@ class NavigatorPanel(QWidget):
                 view.set_buttons_enabled(False)
             return
         center = self._atlas.cut_center(self._anchoring)
-        lr_c = int(round(center[0]))
-        ap_c = int(round(center[1]))
-        dv_c = int(round(center[2]))
+        idx_for = {0: int(round(center[0])), 1: int(round(center[1])), 2: int(round(center[2]))}
+        views_by_axis = {0: self._sag, 1: self._cor, 2: self._hor}
 
-        self._sag.set_image(self._atlas.get_orthogonal_slice(0, lr_c))
-        self._cor.set_image(self._atlas.get_orthogonal_slice(1, ap_c))
-        self._hor.set_image(self._atlas.get_orthogonal_slice(2, dv_c))
-
-        for view in (self._sag, self._cor, self._hor):
+        for ax, view in views_by_axis.items():
+            if ax == self._hidden_axis:
+                continue
+            view.set_image(self._atlas.get_orthogonal_slice(ax, idx_for[ax]))
             view.set_buttons_enabled(True)
             view.set_cut(self._anchoring)
 

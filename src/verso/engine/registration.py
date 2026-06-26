@@ -174,6 +174,31 @@ def rotate_anchoring(
     return vectors_to_anchoring(o_new, u_new, v_new)
 
 
+def plane_tilt_deg(anchoring: list[float], slicing_axis: int) -> float:
+    """Acute angle in degrees between the plane normal and the slicing axis.
+
+    The plane normal is ``cross(u, v)`` and the slicing axis is the unit vector
+    along ``slicing_axis`` (0=LR, 1=AP, 2=DV in QuickNII voxel space).  A plane
+    perpendicular to the slicing axis (no tilt) returns 0°.  In-plane rotation
+    leaves the direction of ``cross(u, v)`` unchanged, so the result reflects
+    tilt only — making this the reference for clamping tilt.
+
+    Args:
+        anchoring: 9-element anchoring vector.
+        slicing_axis: Atlas voxel axis index the cutting series runs along.
+
+    Returns:
+        Acute tilt angle in degrees, in [0, 90].
+    """
+    _o, u, v = anchoring_to_vectors(anchoring)
+    normal = np.cross(u, v)
+    norm = float(np.linalg.norm(normal))
+    if norm == 0.0:
+        return 0.0
+    cos_t = min(1.0, max(0.0, abs(normal[slicing_axis]) / norm))
+    return float(np.degrees(np.arccos(cos_t)))
+
+
 def scale_anchoring(
     anchoring: list[float],
     scale_s: float,
