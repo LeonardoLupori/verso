@@ -49,6 +49,10 @@ _HANDLE_RING_PX = 42.0  # rotation ring radius
 _HANDLE_RING_HALF = 9.0  # half-width of the ring's grab band
 _HANDLE_DIM = 0.35  # resting opacity
 _HANDLE_OPAQUE = 1.0  # hovered opacity
+# Stretch sensitivity: per-event scale ratios are raised to this power before
+# being applied. <1 makes grip dragging slower (the ratios compound across move
+# events, so this scales overall sensitivity).
+_STRETCH_GAIN = 0.5
 
 
 def _make_cross_cursor(rgb: tuple[int, int, int], size: int = 21) -> QCursor:
@@ -272,11 +276,13 @@ class _OverlayViewBox(pg.ViewBox):
                     d2 = max(abs(p2.x() - c.x()), floor)
                     # Inverse ratio: pulling the grip outward (d2 > d1) shrinks u,
                     # which widens the sampled overlay (scale_anchoring multiplies u).
-                    self.overlay_scaled.emit(min(2.0, max(0.5, d1 / d2)), 1.0)
+                    ratio = (d1 / d2) ** _STRETCH_GAIN
+                    self.overlay_scaled.emit(min(2.0, max(0.5, ratio)), 1.0)
                 else:
                     d1 = max(abs(p1.y() - c.y()), floor)
                     d2 = max(abs(p2.y() - c.y()), floor)
-                    self.overlay_scaled.emit(1.0, min(2.0, max(0.5, d1 / d2)))
+                    ratio = (d1 / d2) ** _STRETCH_GAIN
+                    self.overlay_scaled.emit(1.0, min(2.0, max(0.5, ratio)))
             else:
                 # Default: drag anywhere else translates the atlas overlay.
                 ev.accept()
@@ -563,8 +569,8 @@ class ImageCanvas(QWidget):
         # If the cursor is already over the canvas, refresh immediately;
         # otherwise the next enterEvent will pick up the new mode.
         if self.view.underMouse():
-            self._refresh_prep_cursor()
-        elif mode != "prep":
+            self._refresh_cursor()
+        else:
             self.view.unsetCursor()
 
     def _update_handle_visibility(self) -> None:
@@ -608,14 +614,31 @@ class ImageCanvas(QWidget):
             return True
         if obj is self.view:
             if t == QEvent.Type.Enter:
-                if self._interaction_mode == "prep":
-                    self._refresh_prep_cursor()
-                elif self._interaction_mode == "align":
-                    # Show the pan grab cursor immediately if entering with space held.
-                    self._refresh_align_cursor()
+                # Pick up the correct cursor for the current mode (and show the
+                # pan grab cursor immediately if entering with space held).
+                self._refresh_cursor()
             elif t == QEvent.Type.Leave:
                 self.view.unsetCursor()
                 self._align_handle.set_hovered(False)
+        elif obj is self.view.viewport():
+            # Closed-hand feedback the instant a space-pan grab begins (on press,
+            # not only once a drag starts) and back to open hand on release. Works
+            # in every mode since space+drag pans the view everywhere. The events
+            # are observed, never consumed, so pyqtgraph still does the pan.
+            if (
+                t == QEvent.Type.MouseButtonPress
+                and _SpaceState.held
+                and event.button() == Qt.MouseButton.LeftButton
+            ):
+                self._space_panning = True
+                self._refresh_cursor()
+            elif (
+                t == QEvent.Type.MouseButtonRelease
+                and event.button() == Qt.MouseButton.LeftButton
+                and self._space_panning
+            ):
+                self._space_panning = False
+                self._refresh_cursor()
         return super().eventFilter(obj, event)
 
     def _on_shift_changed(self) -> None:
@@ -655,6 +678,8 @@ class ImageCanvas(QWidget):
     def _refresh_prep_cursor(self) -> None:
         if self._interaction_mode != "prep":
             self.view.unsetCursor()
+            return
+        if self._apply_pan_cursor():
             return
         rgb = (255, 140, 140) if _ShiftState.held else (120, 200, 255)
         if self._brush_mode:
@@ -773,6 +798,36 @@ class ImageCanvas(QWidget):
         "stretch_y": Qt.CursorShape.SizeVerCursor,
     }
 
+    def _apply_pan_cursor(self) -> bool:
+        """Show the grab cursor whenever space is held, in any interaction mode.
+
+        Open hand while space is merely held; closed hand once a (left) button is
+        pressed and a pan is underway. Returns ``True`` when it took over the
+        cursor so per-mode refreshers can bail out early.
+        """
+        if not _SpaceState.held:
+            return False
+        self.view.setCursor(
+            Qt.CursorShape.ClosedHandCursor
+            if self._space_panning
+            else Qt.CursorShape.OpenHandCursor
+        )
+        return True
+
+    def _refresh_cursor(self) -> None:
+        """Dispatch to the right cursor for the current mode.
+
+        The spacebar pan cursor takes priority in every mode; otherwise each mode
+        picks its own (handle zones in Align, draw/erase in Prep, default arrow
+        in Warp / View).
+        """
+        if self._interaction_mode == "align":
+            self._refresh_align_cursor()
+        elif self._interaction_mode == "prep":
+            self._refresh_prep_cursor()
+        elif not self._apply_pan_cursor():
+            self.view.unsetCursor()
+
     def _refresh_align_cursor(self) -> None:
         """Set the canvas cursor for the current Align state.
 
@@ -782,12 +837,7 @@ class ImageCanvas(QWidget):
         """
         if self._interaction_mode != "align":
             return
-        if _SpaceState.held:
-            self.view.setCursor(
-                Qt.CursorShape.ClosedHandCursor
-                if self._space_panning
-                else Qt.CursorShape.OpenHandCursor
-            )
+        if self._apply_pan_cursor():
             return
         zone = self._last_handle_zone
         if zone == "rotate":
@@ -800,14 +850,14 @@ class ImageCanvas(QWidget):
             self.view.setCursor(shape)
 
     def _on_space_changed(self) -> None:
-        """React to spacebar press/release (open-hand pan cursor in Align)."""
-        if self._interaction_mode == "align" and self.view.underMouse():
-            self._refresh_align_cursor()
+        """React to spacebar press/release (open-hand pan cursor in any mode)."""
+        if self.view.underMouse():
+            self._refresh_cursor()
 
     def _on_space_pan_changed(self, panning: bool) -> None:
         """Track an in-progress spacebar pan drag (closed-hand cursor)."""
         self._space_panning = panning
-        self._refresh_align_cursor()
+        self._refresh_cursor()
 
     _CP_SYMBOLS: dict[str, str] = {
         "Circle": "o",
