@@ -35,8 +35,9 @@ class PrepDraft:
     user cleared that mask (the saved file, if any, should be removed).
 
     ``base_flip_*`` capture the section's last-saved flip flags at the moment the
-    draft was created, so :func:`persist_prep_draft` can detect a flip change and
-    invalidate the alignment exactly like the interactive save path.
+    draft was created so the GUI can carry them across navigation for its
+    Clear/Reset logic.  They no longer drive alignment invalidation: a flip wipes
+    the alignment the instant it is toggled, not when the draft is persisted.
     """
 
     slice_mask: np.ndarray | None = None
@@ -77,13 +78,15 @@ def wipe_alignment_for_flip(section: Section) -> None:
     section.warp.status = AlignmentStatus.NOT_STARTED
 
 
-def persist_prep_draft(section: Section, draft: PrepDraft) -> bool:
+def persist_prep_draft(section: Section, draft: PrepDraft) -> None:
     """Write *draft*'s masks to disk and update ``section.preprocessing`` paths.
 
-    Returns:
-        True iff the section's flip changed relative to ``draft.base_flip_*`` —
-        in which case the caller must treat the alignment + warp as invalidated
-        (this function already wiped them).
+    A flip invalidates the alignment **at the moment the user toggles it** (the
+    GUI wipes the alignment + warp then), not here — so persisting a prep draft
+    only writes masks and never touches the alignment.  This keeps an alignment
+    the user (re)did *after* a flip from being clobbered when the flip is later
+    saved.  ``draft.base_flip_*`` are retained only so the GUI can carry the
+    last-saved flip across navigation for its Clear/Reset logic.
     """
     if draft.mask_dirty and draft.slice_mask is not None:
         path = slice_mask_path_for(section)
@@ -104,14 +107,6 @@ def persist_prep_draft(section: Section, draft: PrepDraft) -> bool:
             path = lr_mask_path_for(section)
             save_lr_mask(draft.lr_mask, path)
             section.preprocessing.lr_mask_path = str(path)
-
-    flip_changed = (
-        draft.base_flip_h != section.preprocessing.flip_horizontal
-        or draft.base_flip_v != section.preprocessing.flip_vertical
-    )
-    if flip_changed:
-        wipe_alignment_for_flip(section)
-    return flip_changed
 
 
 def commit_alignment(section: Section) -> bool:
