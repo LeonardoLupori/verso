@@ -37,6 +37,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from verso.gui.widgets.orientation_overlay import OrientationOverlay
+
 # Align handle geometry (in screen pixels) and opacity.
 _HANDLE_GRIP_PX = 30.0  # distance of the arrowhead stretch grips along each axis
 _HANDLE_GRIP_HALF = 8.0  # half-size of a stretch grip's square hit box
@@ -47,8 +49,6 @@ _HANDLE_RING_PX = 42.0  # rotation ring radius
 _HANDLE_RING_HALF = 9.0  # half-width of the ring's grab band
 _HANDLE_DIM = 0.35  # resting opacity
 _HANDLE_OPAQUE = 1.0  # hovered opacity
-
-from verso.gui.widgets.orientation_overlay import OrientationOverlay
 
 
 def _make_cross_cursor(rgb: tuple[int, int, int], size: int = 21) -> QCursor:
