@@ -27,6 +27,8 @@ from PyQt6.QtCore import QEvent, QObject, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QCursor, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import QAbstractButton, QApplication, QSizePolicy, QVBoxLayout, QWidget
 
+from verso.gui.widgets.orientation_overlay import OrientationOverlay
+
 
 def _make_cross_cursor(rgb: tuple[int, int, int], size: int = 21) -> QCursor:
     """Build a 1-px colored crosshair with a 1-px black outline, hotspot at center."""
@@ -245,6 +247,13 @@ class ImageCanvas(QWidget):
         self.view.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         layout.addWidget(self.view)
 
+        # Anatomical edge labels — a mouse-transparent overlay layered above the
+        # graphics view so the words stay pinned to the container edges,
+        # unaffected by zoom/pan.  Populated via ``set_orientation_labels``.
+        self._orientation = OrientationOverlay(self)
+        self._orientation.setGeometry(self.rect())
+        self._orientation.raise_()
+
         self._vb = _OverlayViewBox()
         self._vb.setBackgroundColor((0, 0, 0))  # black so Lighten(channel, black)=channel
         self._vb.overlay_panned.connect(self.overlay_panned)
@@ -311,6 +320,18 @@ class ImageCanvas(QWidget):
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 (Qt signature)
+        super().resizeEvent(event)
+        # Keep the orientation overlay covering the full canvas area.
+        self._orientation.setGeometry(self.rect())
+
+    def set_orientation_labels(self, labels: dict[str, str] | None) -> None:
+        """Set the anatomical edge labels drawn over the canvas.
+
+        Pass ``None`` to clear them (e.g. when no project is loaded).
+        """
+        self._orientation.set_labels(labels)
 
     def set_interaction_mode(self, mode: _InteractionMode) -> None:
         """Choose how left-drag gestures are interpreted by the canvas.

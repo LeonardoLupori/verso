@@ -38,6 +38,35 @@ def _quicknii_floor_indices(
     return np.floor(lr_c), np.ceil(ap_c), np.ceil(dv_c)
 
 
+# Anatomical words shown at the four canvas edges, keyed by interpolation axis.
+# Convention (canvas shows row 0 at top, ``plot.invertY(True)``):
+#   AP (coronal):  ML horizontal, DV vertical
+#   ML (sagittal): AP horizontal, DV vertical  — Anterior on the left
+#   DV (horizontal): ML horizontal, AP vertical — Anterior on top
+_ORIENTATION_LABELS: dict[str, dict[str, str]] = {
+    "AP": {"top": "Dorsal", "bottom": "Ventral", "left": "Left", "right": "Right"},
+    "ML": {"top": "Dorsal", "bottom": "Ventral", "left": "Anterior", "right": "Posterior"},
+    "DV": {"top": "Anterior", "bottom": "Posterior", "left": "Left", "right": "Right"},
+}
+
+
+def orientation_labels(interpolation_axis: str) -> dict[str, str]:
+    """Anatomical edge labels for a slicing axis.
+
+    Args:
+        interpolation_axis: Project interpolation axis, one of ``"AP"`` (coronal),
+            ``"ML"`` (sagittal), or ``"DV"`` (horizontal).
+
+    Returns:
+        Mapping with keys ``"top"``, ``"bottom"``, ``"left"``, ``"right"`` to the
+        anatomical word displayed at that canvas edge.
+
+    Raises:
+        KeyError: If ``interpolation_axis`` is not a recognized axis name.
+    """
+    return dict(_ORIENTATION_LABELS[interpolation_axis])
+
+
 class AtlasVolume:
     """Wraps a brainglobe atlas for 2D slicing and color mapping."""
 

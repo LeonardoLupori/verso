@@ -40,6 +40,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from verso.engine.atlas import orientation_labels
 from verso.engine.elastix import ElastixWorker
 from verso.engine.io.quint_io import load_quicknii, load_visualign
 from verso.engine.model.alignment import AlignmentStatus
@@ -1115,6 +1116,8 @@ class MainWindow(QMainWindow):
         if project is None:
             self._project_label.setText("")
             self._set_project_views_enabled(False)
+            self._prep.canvas.set_orientation_labels(None)
+            self._panel.canvas.set_orientation_labels(None)
             return
 
         self._set_project_views_enabled(True)
@@ -1123,6 +1126,12 @@ class MainWindow(QMainWindow):
         self._align.set_reverse_axis(False)
         self._align.set_interpolation_axis(project.interpolation_axis_index)
         self._props.align.slicing_position.set_axis_name(project.interpolation_axis)
+
+        # Anatomical orientation labels at the canvas edges (Prep + shared
+        # Align/Warp canvas), keyed by the project's interpolation axis.
+        labels = orientation_labels(project.interpolation_axis)
+        self._prep.canvas.set_orientation_labels(labels)
+        self._panel.canvas.set_orientation_labels(labels)
 
         # QuickNII interpolation needs atlas dimensions for the no-anchor and
         # one-anchor endpoint controls. If the atlas is still loading,

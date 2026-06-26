@@ -6,7 +6,7 @@ User scripts and the GUI should import from here:
     from verso.engine import Project, Section, Alignment, ControlPoint
 """
 
-from verso.engine.atlas import AtlasVolume
+from verso.engine.atlas import AtlasVolume, orientation_labels
 from verso.engine.deepslice import (
     DeepSliceError,
     DeepSliceOptions,
@@ -90,6 +90,7 @@ from verso.engine.warping import (
 __all__ = [
     # Atlas
     "AtlasVolume",
+    "orientation_labels",
     # Elastix auto control points
     "ElastixParams",
     "anchor_source_points",
