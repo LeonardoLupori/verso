@@ -147,8 +147,12 @@ def rotate_anchoring(
 ) -> list[float]:
     """Rotate the section plane around a pivot point in normalized coords.
 
-    Rotates the u and v vectors in the plane defined by u and v (in-plane
-    rotation only — does not change the AP position of the pivot).
+    This is a *rigid* in-plane spin: ``u`` and ``v`` are rotated about the plane
+    normal ``cross(u, v)`` via Rodrigues, so their lengths and the angle between
+    them are preserved and the normal direction is left unchanged (tilt is
+    untouched). Rotating in the raw ``u``/``v`` basis instead would distort the
+    section whenever ``|u| != |v|`` (squashing it in height as it spins); this
+    matches the rigid rotation the orthogonal navigator views use.
 
     Args:
         anchoring: Current 9-element anchoring vector.
@@ -161,11 +165,23 @@ def rotate_anchoring(
     """
     o, u, v = anchoring_to_vectors(anchoring)
 
+    normal = np.cross(u, v)
+    n_norm = float(np.linalg.norm(normal))
+    if n_norm == 0.0:
+        # Degenerate plane (collinear u, v): no well-defined rotation axis.
+        return list(anchoring)
+    n = normal / n_norm
+
     cos_a = np.cos(angle_rad)
     sin_a = np.sin(angle_rad)
 
-    u_new = cos_a * u - sin_a * v
-    v_new = sin_a * u + cos_a * v
+    def _rot(w: np.ndarray) -> np.ndarray:
+        # Rodrigues about the unit normal. The ``-sin`` on the cross term keeps
+        # the legacy drag direction (positive angle spins u toward -v).
+        return cos_a * w - sin_a * np.cross(n, w) + (1.0 - cos_a) * float(np.dot(n, w)) * n
+
+    u_new = _rot(u)
+    v_new = _rot(v)
 
     # Shift origin so the pivot point stays fixed in atlas space.
     pivot_atlas = o + pivot_s * u + pivot_t * v
