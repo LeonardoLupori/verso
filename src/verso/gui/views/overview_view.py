@@ -28,7 +28,7 @@ from verso.engine.model.status import section_step_status
 if TYPE_CHECKING:
     from verso.gui.state import AppState
 
-_STEPS = ("Flip", "Slice mask", "L/R mask", "Align", "Warp")
+_STEPS = ("Flip", "Slice mask", "Align", "Warp")
 
 # Every step shows a dot; the colour carries the meaning, matching the
 # filmstrip convention (gray = not started, yellow = unsaved edits, green =
@@ -43,7 +43,7 @@ _COL_SERIAL = 0
 _COL_FILE = 1
 _COL_DIMS = 2
 _COL_AP = 3
-_COL_STEPS_START = 4  # Flip, Slice, LR, Align, Warp
+_COL_STEPS_START = 4  # Flip, Slice, Align, Warp
 
 # Modern table styling, tuned to the app's dark theme (#2a2a2a chrome,
 # #1e5a8a accent — see main_window / view_chrome).  Flat, gridline-free rows
@@ -365,9 +365,8 @@ class OverviewView(QWidget):
         if draft is not None:
             # The flushed draft carries per-sub-step dirty flags, so colour each
             # sub-step independently — editing only the mask yellows just the
-            # Slice-mask dot, not Flip and L/R.
+            # Slice-mask dot, not Flip.
             mask_dirty = draft.mask_dirty
-            lr_dirty = draft.lr_dirty
             flip_dirty = (
                 draft.base_flip_h != section.preprocessing.flip_horizontal
                 or draft.base_flip_v != section.preprocessing.flip_vertical
@@ -382,7 +381,7 @@ class OverviewView(QWidget):
             # live edits aren't flushed yet, so we only know the aggregate prep
             # flag.  Fall back to it for any not-yet-saved sub-step.
             prep_dirty = self._state.is_dirty(section.id, "prep")
-            mask_dirty = lr_dirty = flip_dirty = False
+            mask_dirty = flip_dirty = False
 
             def prep_status(is_done: bool, _sub_dirty: bool) -> AlignmentStatus:
                 if is_done:
@@ -403,7 +402,6 @@ class OverviewView(QWidget):
         # The remaining steps are genuine tasks — render them as status dots.
         dot_statuses = [
             prep_status(bool(section.preprocessing.slice_mask_path), mask_dirty),
-            prep_status(bool(section.preprocessing.lr_mask_path), lr_dirty),
             section_step_status(section, "align", dirty=self._state.is_dirty(section.id, "align")),
             section_step_status(section, "warp", dirty=self._state.is_dirty(section.id, "warp")),
         ]

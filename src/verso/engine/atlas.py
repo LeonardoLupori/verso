@@ -38,6 +38,35 @@ def _quicknii_floor_indices(
     return np.floor(lr_c), np.ceil(ap_c), np.ceil(dv_c)
 
 
+# Anatomical words shown at the four canvas edges, keyed by interpolation axis.
+# Convention (canvas shows row 0 at top, ``plot.invertY(True)``):
+#   AP (coronal):  ML horizontal, DV vertical
+#   ML (sagittal): AP horizontal, DV vertical  — Anterior on the left
+#   DV (horizontal): ML horizontal, AP vertical — Anterior on top
+_ORIENTATION_LABELS: dict[str, dict[str, str]] = {
+    "AP": {"top": "Dorsal", "bottom": "Ventral", "left": "Left", "right": "Right"},
+    "ML": {"top": "Dorsal", "bottom": "Ventral", "left": "Anterior", "right": "Posterior"},
+    "DV": {"top": "Anterior", "bottom": "Posterior", "left": "Left", "right": "Right"},
+}
+
+
+def orientation_labels(interpolation_axis: str) -> dict[str, str]:
+    """Anatomical edge labels for a slicing axis.
+
+    Args:
+        interpolation_axis: Project interpolation axis, one of ``"AP"`` (coronal),
+            ``"ML"`` (sagittal), or ``"DV"`` (horizontal).
+
+    Returns:
+        Mapping with keys ``"top"``, ``"bottom"``, ``"left"``, ``"right"`` to the
+        anatomical word displayed at that canvas edge.
+
+    Raises:
+        KeyError: If ``interpolation_axis`` is not a recognized axis name.
+    """
+    return dict(_ORIENTATION_LABELS[interpolation_axis])
+
+
 class AtlasVolume:
     """Wraps a brainglobe atlas for 2D slicing and color mapping."""
 
@@ -109,6 +138,70 @@ class AtlasVolume:
             in_bounds: (H, W) bool — True where the voxel is inside the volume
         """
         return self._sample(anchoring, out_w, out_h)
+
+    # ------------------------------------------------------------------
+    # Canonical (axis-aligned) plane construction
+    #
+    # Used by the aligned-stack export to define a clean atlas slice — a
+    # straight coronal/sagittal/horizontal plane — that every section is
+    # resampled onto, so the inverse-warped stack overlays the reference
+    # atlas annotation directly.
+
+    @property
+    def shape(self) -> tuple[int, int, int]:
+        """Annotation volume shape ``(AP, DV, LR)`` in voxels."""
+        return tuple(self._annotation.shape)  # type: ignore[return-value]
+
+    def axis_plane_dims(self, axis: int) -> tuple[int, int]:
+        """Voxel ``(width, height)`` of the canonical plane orthogonal to ``axis``.
+
+        Args:
+            axis: Slicing axis in QuickNII voxel order (0 = LR/ML, 1 = AP, 2 = DV).
+
+        Returns:
+            ``(width_vox, height_vox)`` — the two atlas extents in the plane,
+            with width/height chosen to give a natural anatomical view
+            (e.g. coronal = LR wide × DV tall).
+        """
+        ap_max, dv_max, lr_max = self._annotation.shape
+        if axis == 0:  # sagittal plane: AP (width) × DV (height)
+            return ap_max, dv_max
+        if axis == 1:  # coronal plane: LR (width) × DV (height)
+            return lr_max, dv_max
+        if axis == 2:  # horizontal plane: LR (width) × AP (height)
+            return lr_max, ap_max
+        raise ValueError(f"axis must be 0, 1 or 2, got {axis}")
+
+    def canonical_plane_anchoring(self, position: float, axis: int) -> list[float]:
+        """Anchoring for an axis-aligned plane at ``position`` along ``axis``.
+
+        The plane spans the full atlas extent in the two orthogonal axes, so
+        sampling it yields the standard atlas section. Width/height directions
+        match :meth:`axis_plane_dims`.
+
+        Args:
+            position: Voxel coordinate along ``axis`` (the slice location).
+            axis: Slicing axis in QuickNII voxel order (0 = LR, 1 = AP, 2 = DV).
+
+        Returns:
+            9-element anchoring ``[o, u, v]`` in atlas voxel space.
+        """
+        ap_max, dv_max, lr_max = self._annotation.shape
+        if axis == 0:  # LR slice → AP (u) × DV (v)
+            o = [float(position), 0.0, 0.0]
+            u = [0.0, float(ap_max), 0.0]
+            v = [0.0, 0.0, float(dv_max)]
+        elif axis == 1:  # AP slice → LR (u) × DV (v)
+            o = [0.0, float(position), 0.0]
+            u = [float(lr_max), 0.0, 0.0]
+            v = [0.0, 0.0, float(dv_max)]
+        elif axis == 2:  # DV slice → LR (u) × AP (v)
+            o = [0.0, 0.0, float(position)]
+            u = [float(lr_max), 0.0, 0.0]
+            v = [0.0, float(ap_max), 0.0]
+        else:
+            raise ValueError(f"axis must be 0, 1 or 2, got {axis}")
+        return [*o, *u, *v]
 
     def slice_annotation(self, anchoring: list[float], out_w: int, out_h: int) -> np.ndarray:
         """Slice the annotation volume → RGBA uint8 (H, W, 4).
@@ -348,7 +441,3 @@ class AtlasVolume:
         u = np.array(anchoring[3:6])
         v = np.array(anchoring[6:9])
         return o + u / 2.0 + v / 2.0
-
-    @property
-    def shape(self) -> tuple[int, int, int]:
-        return self._annotation.shape  # type: ignore[return-value]

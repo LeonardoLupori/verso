@@ -6,7 +6,7 @@ User scripts and the GUI should import from here:
     from verso.engine import Project, Section, Alignment, ControlPoint
 """
 
-from verso.engine.atlas import AtlasVolume
+from verso.engine.atlas import AtlasVolume, orientation_labels
 from verso.engine.deepslice import (
     DeepSliceError,
     DeepSliceOptions,
@@ -29,6 +29,14 @@ from verso.engine.io.export_images import (
     render_overlay_rgba,
     render_section_rgb,
 )
+from verso.engine.io.export_stack import (
+    ExportStackOptions,
+    build_canonical_remap,
+    export_aligned_stack,
+    export_section_aligned,
+    finalize_aligned_pages,
+    write_aligned_stack,
+)
 from verso.engine.io.image_io import (
     compute_working_scale,
     ensure_working_copy,
@@ -48,7 +56,6 @@ from verso.engine.io.quint_io import (
 )
 from verso.engine.model.alignment import Alignment, AlignmentStatus, ControlPoint, WarpState
 from verso.engine.model.elastix import ElastixParams
-from verso.engine.model.mask import Mask, MaskType
 from verso.engine.model.project import AtlasRef, ChannelSpec, Preprocessing, Project, Section
 from verso.engine.registration import (
     anchoring_center,
@@ -83,6 +90,7 @@ from verso.engine.warping import (
 __all__ = [
     # Atlas
     "AtlasVolume",
+    "orientation_labels",
     # Elastix auto control points
     "ElastixParams",
     "anchor_source_points",
@@ -107,8 +115,6 @@ __all__ = [
     "AtlasRef",
     "ChannelSpec",
     "ControlPoint",
-    "Mask",
-    "MaskType",
     "Preprocessing",
     "Project",
     "Section",
@@ -148,6 +154,12 @@ __all__ = [
     "export_section",
     "render_overlay_rgba",
     "render_section_rgb",
+    "ExportStackOptions",
+    "build_canonical_remap",
+    "export_aligned_stack",
+    "export_section_aligned",
+    "finalize_aligned_pages",
+    "write_aligned_stack",
     # I/O
     "export_brainglobe_atlas_for_visualign",
     "load_deepslice",

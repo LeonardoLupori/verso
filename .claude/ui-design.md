@@ -13,7 +13,7 @@
 Four views are wired into the central stack and switched via the top toolbar:
 
 1. **Overview** (`OverviewView`) — table of all sections with progress badges.
-2. **Prep** (`PrepView`) — canvas for flips, slice mask, and L/R hemisphere editing.
+2. **Prep** (`PrepView`) — canvas for flips and slice-mask editing.
 3. **Align** (`AlignView`) — canvas for affine atlas registration.
 4. **Warp** (`WarpView`) — canvas for nonlinear control-point refinement.
 
@@ -45,8 +45,8 @@ Hub for organizing sections and tracking progress. Implemented in
 Implemented in `src/verso/gui/views/prep_view.py`. See [prep-view.md](prep-view.md)
 for the full specification.
 
-- Single canvas with the section, slice-mask overlay, and L/R-mask overlay.
-- All Prep interactions (flip, mask paint, L/R draw mode) are draft mutations
+- Single canvas with the section and slice-mask overlay.
+- All Prep interactions (flip, mask paint) are draft mutations
   that only persist on **Save**.
 
 ### 3. Align
@@ -83,7 +83,7 @@ with one page per mode:
 | Page | File | Sections (`QGroupBox`) |
 |---|---|---|
 | OverviewPage | `properties/overview_page.py` | overview-specific summary |
-| PrepPage     | `properties/prep_page.py`     | `FlipBox`, `MaskBox`, `HemisphereBox`, `SaveBarBox` |
+| PrepPage     | `properties/prep_page.py`     | `FlipBox`, `MaskBox`, `SaveBarBox` |
 | AlignPage    | `properties/align_page.py`    | `OverlayBox`, `SlicingPositionBox`, `SaveBarBox` |
 | WarpPage     | `properties/warp_page.py`     | `OverlayBox`, `ControlPointsBox`, `SaveBarBox` |
 
@@ -158,8 +158,7 @@ checkable pill buttons. Right-aligned: the current project name.
   per-channel visibility, name, color, and brightness; all project-wide,
   not per-section).
 - **Batch**
-  - **Preprocess**: Autodetect slice masks; *Clear all slice masks*;
-    *Clear all L/R masks*.
+  - **Preprocess**: Autodetect slice masks; *Clear all slice masks*.
   - **Align**: Run DeepSlice; Default proposal; Reverse proposal;
     *Clear all alignments*.
   - **Warp**: Auto-generate control points for all slices; *Clear all manual
@@ -193,8 +192,8 @@ pg.setConfigOption('imageAxisOrder', 'row-major')  # match NumPy
 ```
 
 The shared `SectionCanvasPanel.canvas` stacks one `ImageItem` per channel
-plus overlay `ImageItem`s (mask, L/R mask, atlas outline / fill). The
-OpenGL viewport is opt-in inside `widgets/canvas.py`.
+plus overlay `ImageItem`s (mask, atlas outline / fill). The OpenGL viewport
+is opt-in inside `widgets/canvas.py`.
 
 ## Panel layout sketch
 

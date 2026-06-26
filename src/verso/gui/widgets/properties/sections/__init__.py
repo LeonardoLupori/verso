@@ -2,7 +2,6 @@
 
 from verso.gui.widgets.properties.sections.control_points import ControlPointsBox
 from verso.gui.widgets.properties.sections.flip import FlipBox
-from verso.gui.widgets.properties.sections.hemisphere import HemisphereBox
 from verso.gui.widgets.properties.sections.mask import MaskBox
 from verso.gui.widgets.properties.sections.overlay import OverlayBox
 from verso.gui.widgets.properties.sections.save_bar import SaveBarBox
@@ -11,7 +10,6 @@ from verso.gui.widgets.properties.sections.slicing_position import SlicingPositi
 __all__ = [
     "ControlPointsBox",
     "FlipBox",
-    "HemisphereBox",
     "MaskBox",
     "OverlayBox",
     "SaveBarBox",

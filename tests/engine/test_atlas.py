@@ -1,8 +1,48 @@
 """Tests for engine/atlas.py voxel-selection convention."""
 
 import numpy as np
+import pytest
 
-from verso.engine.atlas import _quicknii_floor_indices
+from verso.engine.atlas import _quicknii_floor_indices, orientation_labels
+
+
+def test_orientation_labels_coronal_ap():
+    assert orientation_labels("AP") == {
+        "top": "Dorsal",
+        "bottom": "Ventral",
+        "left": "Left",
+        "right": "Right",
+    }
+
+
+def test_orientation_labels_sagittal_ml():
+    assert orientation_labels("ML") == {
+        "top": "Dorsal",
+        "bottom": "Ventral",
+        "left": "Anterior",
+        "right": "Posterior",
+    }
+
+
+def test_orientation_labels_horizontal_dv():
+    assert orientation_labels("DV") == {
+        "top": "Anterior",
+        "bottom": "Posterior",
+        "left": "Left",
+        "right": "Right",
+    }
+
+
+def test_orientation_labels_unknown_axis_raises():
+    with pytest.raises(KeyError):
+        orientation_labels("XX")
+
+
+def test_orientation_labels_returns_independent_copy():
+    """Callers may mutate the result without affecting later calls."""
+    labels = orientation_labels("AP")
+    labels["top"] = "MUTATED"
+    assert orientation_labels("AP")["top"] == "Dorsal"
 
 
 def test_quicknii_floor_indices_ceils_ap_dv_and_floors_lr():

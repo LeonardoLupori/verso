@@ -69,7 +69,7 @@ def section_step_status(section: Section, step: str, *, dirty: bool) -> Alignmen
 
     if step == "prep":
         pp = section.preprocessing
-        done = bool(pp.slice_mask_path or pp.lr_mask_path or pp.flip_horizontal or pp.flip_vertical)
+        done = bool(pp.slice_mask_path or pp.flip_horizontal or pp.flip_vertical)
         return AlignmentStatus.COMPLETE if done else AlignmentStatus.NOT_STARTED
 
     if step == "align":

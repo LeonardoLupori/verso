@@ -119,7 +119,6 @@ my_experiment/
     project-verso.json   # all state, settings, metadata (DEFAULT_PROJECT_FILENAME)
     thumbnails/          # working-resolution OME-TIFFs + filmstrip PNGs
     masks/               # slice masks (1-bit PNG)
-    lr_masks/            # L/R hemisphere masks (uint8 PNG: 0/1/2)
     exports/             # export outputs (warped images, etc.)
 ```
 

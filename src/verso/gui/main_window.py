@@ -40,6 +40,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from verso.engine.atlas import orientation_labels
 from verso.engine.elastix import ElastixWorker
 from verso.engine.io.quint_io import load_quicknii, load_visualign
 from verso.engine.model.alignment import AlignmentStatus
@@ -319,10 +320,6 @@ class MainWindow(QMainWindow):
         self._act_clear_all_slice_masks.setEnabled(False)
         self._act_clear_all_slice_masks.triggered.connect(self._clear_all_slice_masks)
         preprocess_menu.addAction(self._act_clear_all_slice_masks)
-        self._act_clear_all_lr_masks = QAction("Clear all &L/R masks…", self)
-        self._act_clear_all_lr_masks.setEnabled(False)
-        self._act_clear_all_lr_masks.triggered.connect(self._clear_all_lr_masks)
-        preprocess_menu.addAction(self._act_clear_all_lr_masks)
 
         align_menu = batch_menu.addMenu("&Align")
         self._act_deepslice = QAction("Run &DeepSlice", self)
@@ -365,6 +362,10 @@ class MainWindow(QMainWindow):
         act_export_images = QAction("Export images with atlas &overlay…", self)
         act_export_images.triggered.connect(self._export_images_with_overlay)
         export_menu.addAction(act_export_images)
+
+        act_export_stack = QAction("Export aligned section &stack…", self)
+        act_export_stack.triggered.connect(self._export_aligned_stack)
+        export_menu.addAction(act_export_stack)
 
         export_menu.addSeparator()
 
@@ -561,20 +562,6 @@ class MainWindow(QMainWindow):
         mask.clear_requested.connect(self._on_prep_clear_mask_requested)
         mask.erode_requested.connect(lambda px: self._prep.apply_morph(px, "erode"))
         mask.expand_requested.connect(lambda px: self._prep.apply_morph(px, "expand"))
-        # Hemisphere subpanel — non-draw actions.
-        hemi = self._props.prep.hemisphere
-        hemi.visibility_changed.connect(self._prep.set_lr_visible)
-        hemi.set_all_left_requested.connect(self._on_lr_set_all_left)
-        hemi.set_all_right_requested.connect(self._on_lr_set_all_right)
-        hemi.clear_requested.connect(self._on_lr_clear_requested)
-        # Hemisphere — draw-mode lifecycle.
-        hemi.draw_mode_toggled.connect(self._on_lr_draw_mode_toggled)
-        hemi.apply_requested.connect(self._on_lr_draw_apply)
-        hemi.cancel_requested.connect(self._on_lr_draw_cancel)
-        # Hemisphere — appearance.
-        hemi.opacity_changed.connect(self._prep.set_lr_opacity)
-        hemi.left_color_changed.connect(self._prep.set_lr_left_color)
-        hemi.right_color_changed.connect(self._prep.set_lr_right_color)
         # Overlay lives in both Align and Warp pages with independent state.
         for overlay in (self._props.align.overlay, self._props.warp.overlay):
             overlay.opacity_changed.connect(self._on_opacity_changed)
@@ -584,7 +571,6 @@ class MainWindow(QMainWindow):
         # PrepView edits
         self._prep.mask_negative_changed.connect(mask.set_negative)
         self._prep.mask_visibility_changed.connect(mask.set_visible_state)
-        self._prep.lr_status_changed.connect(self._refresh_lr_status)
 
         # AlignView navigator drives the anchoring; alignments_updated fires
         # when the user explicitly saves or clears, triggering re-interpolation.
@@ -1141,6 +1127,8 @@ class MainWindow(QMainWindow):
         if project is None:
             self._project_label.setText("")
             self._set_project_views_enabled(False)
+            self._prep.canvas.set_orientation_labels(None)
+            self._panel.canvas.set_orientation_labels(None)
             return
 
         self._set_project_views_enabled(True)
@@ -1149,6 +1137,12 @@ class MainWindow(QMainWindow):
         self._align.set_reverse_axis(False)
         self._align.set_interpolation_axis(project.interpolation_axis_index)
         self._props.align.slicing_position.set_axis_name(project.interpolation_axis)
+
+        # Anatomical orientation labels at the canvas edges (Prep + shared
+        # Align/Warp canvas), keyed by the project's interpolation axis.
+        labels = orientation_labels(project.interpolation_axis)
+        self._prep.canvas.set_orientation_labels(labels)
+        self._panel.canvas.set_orientation_labels(labels)
 
         # QuickNII interpolation needs atlas dimensions for the no-anchor and
         # one-anchor endpoint controls. If the atlas is still loading,
@@ -1533,12 +1527,6 @@ class MainWindow(QMainWindow):
             self._props.overview.set_preview(
                 self._filmstrip.thumbnail_pixmap(self._state.section_index)
             )
-        if self._current_mode == "prep":
-            # Sync the draw button with PrepView's actual state — covers section
-            # navigation, view switches, or anything else that may have torn the
-            # editor down behind our back.
-            self._props.prep.hemisphere.set_draw_active(self._prep.is_lr_draw_active())
-            self._refresh_lr_status()
 
     def _on_thumbnail_loaded(self, index: int) -> None:
         """Fill the Overview preview once the current section's tile arrives."""
@@ -1555,8 +1543,6 @@ class MainWindow(QMainWindow):
             return
         if value == section.preprocessing.flip_horizontal:
             return
-        if self._prep.cancel_lr_draw_if_active():
-            self._props.prep.hemisphere.set_draw_active(False)
         section.preprocessing.flip_horizontal = value
         self._prep.mark_flip_changed()
         self._invalidate_alignment_for_flip(section)
@@ -1568,8 +1554,6 @@ class MainWindow(QMainWindow):
             return
         if value == section.preprocessing.flip_vertical:
             return
-        if self._prep.cancel_lr_draw_if_active():
-            self._props.prep.hemisphere.set_draw_active(False)
         section.preprocessing.flip_vertical = value
         self._prep.mark_flip_changed()
         self._invalidate_alignment_for_flip(section)
@@ -1616,38 +1600,6 @@ class MainWindow(QMainWindow):
 
     def _on_prep_clear_mask_requested(self) -> None:
         self._prep.clear_mask()
-
-    def _on_lr_set_all_left(self) -> None:
-        self._prep.set_lr_all(1)
-
-    def _on_lr_set_all_right(self) -> None:
-        self._prep.set_lr_all(2)
-
-    def _on_lr_clear_requested(self) -> None:
-        self._prep.clear_lr_mask()
-
-    def _on_lr_draw_mode_toggled(self, active: bool) -> None:
-        """Draw-line button toggled by the user."""
-        if active:
-            self._prep.enter_lr_draw_mode()
-        else:
-            # User untoggled the button without using Apply/Cancel → treat as Cancel.
-            self._prep.exit_lr_draw_mode(apply=False)
-        self._props.prep.hemisphere.set_draw_active(active)
-        self._refresh_lr_status()
-
-    def _on_lr_draw_apply(self) -> None:
-        self._prep.exit_lr_draw_mode(apply=True)
-        self._props.prep.hemisphere.set_draw_active(False)
-
-    def _on_lr_draw_cancel(self) -> None:
-        self._prep.exit_lr_draw_mode(apply=False)
-        self._props.prep.hemisphere.set_draw_active(False)
-        self._refresh_lr_status()
-
-    def _refresh_lr_status(self) -> None:
-        """Push the current PrepView L/R state into the properties panel label."""
-        self._props.prep.hemisphere.set_status(self._prep.lr_status_text())
 
     def _batch_autodetect_masks(self) -> None:
         project = self._state.project
@@ -1847,7 +1799,6 @@ class MainWindow(QMainWindow):
         self._act_clear_all_alignments.setEnabled(atlas_ready and not running)
         # Mask + warp wipes only need a project with sections; atlas not required.
         self._act_clear_all_slice_masks.setEnabled(has_sections and not running)
-        self._act_clear_all_lr_masks.setEnabled(has_sections and not running)
         # Clearing manual / automatic control points is only offered when points
         # of that kind actually exist somewhere in the project.
         sections = project.sections if project is not None else []
@@ -2146,36 +2097,6 @@ class MainWindow(QMainWindow):
             section.preprocessing.slice_mask_path = None
         self._after_batch_clear()
         self.statusBar().showMessage(f"Cleared {removed} slice masks", 5000)
-
-    def _clear_all_lr_masks(self) -> None:
-        project = self._state.project
-        if project is None or not project.sections:
-            return
-        reply = QMessageBox.question(
-            self,
-            "Clear all L/R masks",
-            f"Delete the L/R hemisphere mask for all {len(project.sections)} sections? "
-            "This removes the PNG files from disk.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
-            return
-        if not self._confirm_discard_active_draft():
-            return
-        removed = 0
-        for section in project.sections:
-            old = section.preprocessing.lr_mask_path
-            if old:
-                try:
-                    Path(old).unlink(missing_ok=True)
-                except OSError:
-                    pass
-                removed += 1
-            section.preprocessing.lr_mask_path = None
-            section.preprocessing.lr_line = None
-        self._after_batch_clear()
-        self.statusBar().showMessage(f"Cleared {removed} L/R masks", 5000)
 
     def _clear_all_manual_cps(self) -> None:
         """Batch: drop every hand-placed control point, keeping auto ones."""
@@ -2704,3 +2625,150 @@ class MainWindow(QMainWindow):
             box.exec()
             if box.clickedButton() is open_btn:
                 QDesktopServices.openUrl(QUrl.fromLocalFile(str(out_dir)))
+
+    def _export_aligned_stack(self) -> None:
+        """Open the aligned-stack dialog and write the un-warped TIFF stack."""
+        from datetime import datetime
+
+        from PyQt6.QtCore import QUrl
+        from PyQt6.QtGui import QDesktopServices
+        from PyQt6.QtWidgets import QApplication
+
+        from verso.engine.io.export_stack import (
+            export_section_aligned,
+            finalize_aligned_pages,
+            write_aligned_stack,
+        )
+        from verso.gui.dialogs.export_stack import ExportStackDialog
+
+        if not self._confirm_discard_active_draft():
+            return
+
+        project = self._state.project
+        if project is None or not project.sections:
+            QMessageBox.warning(self, "Export", "No project is loaded.")
+            return
+        atlas = self._state.atlas
+        if atlas is None:
+            QMessageBox.warning(
+                self, "Export", "The atlas is still loading. Try again in a moment."
+            )
+            return
+        if self._state.project_path is None:
+            QMessageBox.warning(
+                self,
+                "Export",
+                "Save the project to disk before exporting so VERSO knows where to "
+                "write the exports folder.",
+            )
+            return
+
+        selected_rows = self._overview.selected_rows()
+        dlg = ExportStackDialog(
+            n_selected=len(selected_rows),
+            n_total=len(project.sections),
+            parent=self,
+        )
+        if dlg.exec() != dlg.DialogCode.Accepted:
+            return
+
+        if dlg.export_all():
+            sections = list(project.sections)
+        else:
+            sections = [project.sections[i] for i in selected_rows]
+        if not sections:
+            QMessageBox.warning(self, "Export", "No sections selected.")
+            return
+
+        options = dlg.options()
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+        out_dir = self._state.project_path.parent / "exports"
+        out_path = out_dir / f"aligned_stack_{timestamp}.ome.tif"
+
+        progress = QProgressDialog("Resampling sections...", "Cancel", 0, len(sections), self)
+        progress.setWindowTitle("Export aligned section stack")
+        progress.setMinimumDuration(0)
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+        progress.setModal(True)
+        progress.show()
+        QApplication.processEvents()
+
+        entries: list = []
+        skipped: list[str] = []
+        errors: list[str] = []
+        canceled = False
+        for idx, section in enumerate(sections):
+            if progress.wasCanceled():
+                canceled = True
+                break
+            progress.setLabelText(
+                f"Resampling {idx + 1} / {len(sections)}: {Path(section.original_path).name}"
+            )
+            QApplication.processEvents()
+            try:
+                result = export_section_aligned(
+                    section,
+                    project,
+                    atlas,
+                    options.scale,
+                    apply_slice_mask=options.background is not None,
+                )
+                if result is None:
+                    skipped.append(Path(section.original_path).name)
+                else:
+                    page, valid = result
+                    entries.append((section.slice_index, page, valid))
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"{Path(section.original_path).name}: {exc}")
+            progress.setValue(idx + 1)
+            QApplication.processEvents()
+
+        if canceled:
+            progress.close()
+            return
+
+        pages = finalize_aligned_pages(entries, options) if entries else []
+        if pages:
+            try:
+                channel_names = [c.name for c in project.channels] or [
+                    f"Ch {i}" for i in range(pages[0].shape[2])
+                ]
+                write_aligned_stack(pages, channel_names, out_path)
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"writing stack: {exc}")
+
+        progress.close()
+
+        notes: list[str] = []
+        if skipped:
+            notes.append(f"Skipped {len(skipped)} section(s) without alignment.")
+        if errors:
+            preview = "\n".join(errors[:8])
+            suffix = "" if len(errors) <= 8 else f"\n...and {len(errors) - 8} more"
+            QMessageBox.warning(
+                self,
+                "Export finished with errors",
+                "\n".join(notes) + f"\n\nErrors:\n{preview}{suffix}",
+            )
+            return
+        if not pages:
+            QMessageBox.warning(
+                self,
+                "Export",
+                "No sections had a usable alignment, so no stack was written.",
+            )
+            return
+
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setWindowTitle("Export complete")
+        msg = f"Wrote a {len(pages)}-section stack to:\n{out_path}"
+        if notes:
+            msg += "\n\n" + "\n".join(notes)
+        box.setText(msg)
+        open_btn = box.addButton("Open folder", QMessageBox.ButtonRole.ActionRole)
+        box.addButton(QMessageBox.StandardButton.Ok)
+        box.exec()
+        if box.clickedButton() is open_btn:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(out_dir)))

@@ -6,7 +6,6 @@ Item stack (low z to high):
                      together with CompositionMode_Lighten (component-wise max),
                      which is the GPU equivalent of np.maximum.reduce.
   overlay_item     — atlas overlay (z=10), normal SourceOver alpha blend.
-  lr_overlay_item  — L/R hemisphere mask (z=11), SourceOver.
   disp_halo/disp   — warp displacement lines (z=14, 15).
   cp_item          — warp control points (z=20).
   stroke_item      — live freehand mask preview (z=30).
@@ -48,6 +47,8 @@ _HANDLE_RING_PX = 42.0  # rotation ring radius
 _HANDLE_RING_HALF = 9.0  # half-width of the ring's grab band
 _HANDLE_DIM = 0.35  # resting opacity
 _HANDLE_OPAQUE = 1.0  # hovered opacity
+
+from verso.gui.widgets.orientation_overlay import OrientationOverlay
 
 
 def _make_cross_cursor(rgb: tuple[int, int, int], size: int = 21) -> QCursor:
@@ -434,7 +435,6 @@ class ImageCanvas(QWidget):
         self._channel_items: list[pg.ImageItem] = []
         self._channel_shape: tuple[int, int] | None = None
         self._interaction_mode: ImageCanvas._InteractionMode = "align"
-        self._lr_draw_active: bool = False
         self._overlay_present: bool = False
         # Align-cursor state: last hovered handle zone + whether a spacebar pan
         # drag is currently in progress (closed-hand vs open-hand cursor).
@@ -459,6 +459,13 @@ class ImageCanvas(QWidget):
         self.view.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         layout.addWidget(self.view)
 
+        # Anatomical edge labels — a mouse-transparent overlay layered above the
+        # graphics view so the words stay pinned to the container edges,
+        # unaffected by zoom/pan.  Populated via ``set_orientation_labels``.
+        self._orientation = OrientationOverlay(self)
+        self._orientation.setGeometry(self.rect())
+        self._orientation.raise_()
+
         self._vb = _OverlayViewBox()
         self._vb.setBackgroundColor((0, 0, 0))  # black so Lighten(channel, black)=channel
         self._vb.overlay_panned.connect(self.overlay_panned)
@@ -477,11 +484,6 @@ class ImageCanvas(QWidget):
         self.overlay_item = pg.ImageItem()
         self.overlay_item.setOpacity(0.5)
         self.overlay_item.setZValue(10)
-
-        # L/R hemisphere overlay (Prep mode) — sits above slice overlay,
-        # below the displacement halos / control points.
-        self.lr_overlay_item = pg.ImageItem()
-        self.lr_overlay_item.setZValue(11)
 
         # Control-point displacement lines (Warp mode) — drawn below the dots.
         self.disp_halo_item = pg.PlotCurveItem(
@@ -509,7 +511,6 @@ class ImageCanvas(QWidget):
         self._align_handle = _AlignHandle()
 
         self.plot.addItem(self.overlay_item)
-        self.plot.addItem(self.lr_overlay_item)
         self.plot.addItem(self.disp_halo_item)
         self.plot.addItem(self.disp_item)
         self.plot.addItem(self.cp_item)
@@ -533,6 +534,18 @@ class ImageCanvas(QWidget):
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 (Qt signature)
+        super().resizeEvent(event)
+        # Keep the orientation overlay covering the full canvas area.
+        self._orientation.setGeometry(self.rect())
+
+    def set_orientation_labels(self, labels: dict[str, str] | None) -> None:
+        """Set the anatomical edge labels drawn over the canvas.
+
+        Pass ``None`` to clear them (e.g. when no project is loaded).
+        """
+        self._orientation.set_labels(labels)
 
     def set_interaction_mode(self, mode: _InteractionMode) -> None:
         """Choose how left-drag gestures are interpreted by the canvas.
@@ -610,11 +623,6 @@ class ImageCanvas(QWidget):
         if self._interaction_mode == "prep" and self.view.underMouse():
             self._refresh_prep_cursor()
 
-    def set_lr_draw_active(self, active: bool) -> None:
-        self._lr_draw_active = active
-        if self.view.underMouse():
-            self._refresh_prep_cursor()
-
     def set_brush_cursor(self, active: bool, radius_img: int) -> None:
         """Enable the circular brush cursor (``active``) sized to ``radius_img``
         image pixels. When inactive the crosshair cursor is used."""
@@ -645,7 +653,7 @@ class ImageCanvas(QWidget):
         return 1.0 / vps
 
     def _refresh_prep_cursor(self) -> None:
-        if self._interaction_mode != "prep" or self._lr_draw_active:
+        if self._interaction_mode != "prep":
             self.view.unsetCursor()
             return
         rgb = (255, 140, 140) if _ShiftState.held else (120, 200, 255)
@@ -741,32 +749,6 @@ class ImageCanvas(QWidget):
         self.overlay_item.setImage(image)
         if display_w is not None and display_h is not None:
             self.overlay_item.setRect(QRectF(0, 0, display_w, display_h))
-            self._align_handle.set_center(display_w / 2.0, display_h / 2.0)
-        else:
-            h, w = image.shape[:2]
-            self._align_handle.set_center(w / 2.0, h / 2.0)
-        self._overlay_present = True
-        self._update_handle_visibility()
-
-    def set_lr_overlay(
-        self,
-        image: np.ndarray | None,
-        display_w: int | None = None,
-        display_h: int | None = None,
-    ) -> None:
-        """Set the L/R hemisphere overlay (H×W×4 RGBA uint8, or None to hide).
-
-        Mirrors :meth:`set_overlay` for the dedicated ``lr_overlay_item``
-        layer used in Prep mode.
-        """
-        if image is None:
-            self.lr_overlay_item.clear()
-            return
-        self.lr_overlay_item.setImage(image)
-        if display_w is not None and display_h is not None:
-            from PyQt6.QtCore import QRectF
-
-            self.lr_overlay_item.setRect(QRectF(0, 0, display_w, display_h))
 
     def _on_scene_mouse_moved(self, scene_pos) -> None:
         vb_pos = self._vb.mapSceneToView(scene_pos)
@@ -946,14 +928,6 @@ class ImageCanvas(QWidget):
         """Set overlay opacity in [0, 1]."""
         self.overlay_item.setOpacity(opacity)
 
-    def set_lr_overlay_opacity(self, opacity: float) -> None:
-        """Set L/R hemisphere overlay opacity in [0, 1]."""
-        self.lr_overlay_item.setOpacity(opacity)
-
-    def set_lr_overlay_visible(self, visible: bool) -> None:
-        """Show or hide the L/R hemisphere overlay without discarding its image data."""
-        self.lr_overlay_item.setVisible(visible)
-
     def clear(self) -> None:
         for item in self._channel_items:
             item.clear()
@@ -963,7 +937,6 @@ class ImageCanvas(QWidget):
         self.overlay_item.clear()
         self._overlay_present = False
         self._update_handle_visibility()
-        self.lr_overlay_item.clear()
         self.cp_item.clear()
         self.disp_halo_item.clear()
         self.disp_item.clear()

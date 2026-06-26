@@ -27,7 +27,7 @@ Histological brain sections imaged at high resolution need to be mapped onto a 3
 VERSO handles the entire workflow in one place:
 
 - **Import** microscopy images (TIFF, OME-TIFF, PNG, JPEG), including 16-bit and multi-channel files
-- **Preprocess** sections non-destructively: flip orientation, draw slice masks and left/right hemisphere masks
+- **Preprocess** sections non-destructively: flip orientation, draw slice masks
 - **Register** each section to the atlas by positioning an atlas overlay (anteroposterior position, rotation, scale) using an affine transformation
 - **Warp** the atlas overlay onto curved or distorted sections using nonlinear control points (Delaunay triangulation, matching VisuAlign's algorithm)
 - **Export** warped images, region-annotated data, and point clouds for downstream quantification

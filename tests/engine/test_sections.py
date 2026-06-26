@@ -102,7 +102,6 @@ def test_removed_section_artifacts_lists_own_files(tmp_path):
     stems = {p.name for p in paths}
     assert "img_01-thumb.ome.tif" in stems
     assert "img_01-slice-mask.png" in stems
-    assert "img_01_lr.png" in stems
     # Nothing belonging to the surviving section.
     assert not any("img_02" in p.name for p in paths)
 
