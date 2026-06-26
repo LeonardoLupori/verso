@@ -50,7 +50,7 @@ class AppState(QObject):
         # _dirty: which (section.id, step) pairs have unsaved edits.
         # _baselines: last-saved view-state snapshot for each dirty (id, step),
         #             so "Clear edits" can revert to it even after navigation.
-        # _prep_drafts: resident slice/L-R mask edits, keyed by section.id.
+        # _prep_drafts: resident slice-mask edits, keyed by section.id.
         self._dirty: dict[tuple[str, str], bool] = {}
         self._baselines: dict[tuple[str, str], object] = {}
         self._prep_drafts: dict[str, PrepDraft] = {}

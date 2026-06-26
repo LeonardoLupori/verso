@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 
 from verso.engine.model.alignment import Alignment, AlignmentStatus, ControlPoint, WarpState
-from verso.engine.model.mask import Mask, MaskType
 from verso.engine.model.project import AtlasRef, ChannelSpec, Preprocessing, Project, Section
 
 # ---------------------------------------------------------------------------
@@ -95,48 +94,35 @@ def test_warp_state_empty():
 
 
 # ---------------------------------------------------------------------------
-# Mask
-# ---------------------------------------------------------------------------
-
-
-def test_mask_round_trip():
-    m = Mask(path="masks/s001_slice.png", mask_type=MaskType.SLICE)
-    assert Mask.from_dict(m.to_dict()) == m
-
-
-# ---------------------------------------------------------------------------
 # Preprocessing
 # ---------------------------------------------------------------------------
 
 
-def test_preprocessing_defaults_have_no_lr_line():
-    pp = Preprocessing()
-    assert pp.lr_line is None
-
-
-def test_preprocessing_lr_line_round_trip():
-    pp = Preprocessing(lr_line=[[10.5, 20.0], [100.0, 200.5]])
+def test_preprocessing_round_trip():
+    pp = Preprocessing(
+        flip_horizontal=True,
+        flip_vertical=False,
+        slice_mask_path="masks/s001-slice-mask.png",
+    )
     out = Preprocessing.from_dict(pp.to_dict())
-    assert out.lr_line == [[10.5, 20.0], [100.0, 200.5]]
+    assert out == pp
 
 
-def test_preprocessing_lr_line_none_round_trip():
-    pp = Preprocessing(lr_mask_path="lr_masks/s001_lr.png")
-    out = Preprocessing.from_dict(pp.to_dict())
-    assert out.lr_line is None
-    assert out.lr_mask_path == "lr_masks/s001_lr.png"
-
-
-def test_preprocessing_legacy_dict_without_lr_line():
+def test_preprocessing_ignores_legacy_lr_keys():
+    """Legacy projects may carry lr_mask_path/lr_line; loading drops them."""
     pp = Preprocessing.from_dict(
         {
             "flip_horizontal": True,
             "flip_vertical": False,
             "slice_mask_path": "masks/s001-slice-mask.png",
-            "lr_mask_path": None,
+            "lr_mask_path": "lr_masks/s001_lr.png",
+            "lr_line": [[1.0, 2.0], [3.0, 4.0]],
         }
     )
-    assert pp.lr_line is None
+    assert pp.flip_horizontal is True
+    assert pp.slice_mask_path == "masks/s001-slice-mask.png"
+    assert "lr_mask_path" not in pp.to_dict()
+    assert "lr_line" not in pp.to_dict()
 
 
 # ---------------------------------------------------------------------------

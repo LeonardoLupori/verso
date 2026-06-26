@@ -6,7 +6,6 @@ Item stack (low z to high):
                      together with CompositionMode_Lighten (component-wise max),
                      which is the GPU equivalent of np.maximum.reduce.
   overlay_item     — atlas overlay (z=10), normal SourceOver alpha blend.
-  lr_overlay_item  — L/R hemisphere mask (z=11), SourceOver.
   disp_halo/disp   — warp displacement lines (z=14, 15).
   cp_item          — warp control points (z=20).
   stroke_item      — live freehand mask preview (z=30).
@@ -229,7 +228,6 @@ class ImageCanvas(QWidget):
         self._channel_items: list[pg.ImageItem] = []
         self._channel_shape: tuple[int, int] | None = None
         self._interaction_mode: ImageCanvas._InteractionMode = "align"
-        self._lr_draw_active: bool = False
         # Pre-built cursors swapped in/out by the prep-mode hover filter.
         self._cursor_draw = _make_cross_cursor((120, 200, 255))  # bright sky-blue
         self._cursor_erase = _make_cross_cursor((255, 140, 140))  # bright coral
@@ -271,11 +269,6 @@ class ImageCanvas(QWidget):
         self.overlay_item.setOpacity(0.5)
         self.overlay_item.setZValue(10)
 
-        # L/R hemisphere overlay (Prep mode) — sits above slice overlay,
-        # below the displacement halos / control points.
-        self.lr_overlay_item = pg.ImageItem()
-        self.lr_overlay_item.setZValue(11)
-
         # Control-point displacement lines (Warp mode) — drawn below the dots.
         self.disp_halo_item = pg.PlotCurveItem(
             pen=pg.mkPen((0, 0, 0, 220), width=5.0),
@@ -299,7 +292,6 @@ class ImageCanvas(QWidget):
         self.stroke_item.setZValue(30)
 
         self.plot.addItem(self.overlay_item)
-        self.plot.addItem(self.lr_overlay_item)
         self.plot.addItem(self.disp_halo_item)
         self.plot.addItem(self.disp_item)
         self.plot.addItem(self.cp_item)
@@ -392,11 +384,6 @@ class ImageCanvas(QWidget):
         if self._interaction_mode == "prep" and self.view.underMouse():
             self._refresh_prep_cursor()
 
-    def set_lr_draw_active(self, active: bool) -> None:
-        self._lr_draw_active = active
-        if self.view.underMouse():
-            self._refresh_prep_cursor()
-
     def set_brush_cursor(self, active: bool, radius_img: int) -> None:
         """Enable the circular brush cursor (``active``) sized to ``radius_img``
         image pixels. When inactive the crosshair cursor is used."""
@@ -427,7 +414,7 @@ class ImageCanvas(QWidget):
         return 1.0 / vps
 
     def _refresh_prep_cursor(self) -> None:
-        if self._interaction_mode != "prep" or self._lr_draw_active:
+        if self._interaction_mode != "prep":
             self.view.unsetCursor()
             return
         rgb = (255, 140, 140) if _ShiftState.held else (120, 200, 255)
@@ -523,26 +510,6 @@ class ImageCanvas(QWidget):
             from PyQt6.QtCore import QRectF
 
             self.overlay_item.setRect(QRectF(0, 0, display_w, display_h))
-
-    def set_lr_overlay(
-        self,
-        image: np.ndarray | None,
-        display_w: int | None = None,
-        display_h: int | None = None,
-    ) -> None:
-        """Set the L/R hemisphere overlay (H×W×4 RGBA uint8, or None to hide).
-
-        Mirrors :meth:`set_overlay` for the dedicated ``lr_overlay_item``
-        layer used in Prep mode.
-        """
-        if image is None:
-            self.lr_overlay_item.clear()
-            return
-        self.lr_overlay_item.setImage(image)
-        if display_w is not None and display_h is not None:
-            from PyQt6.QtCore import QRectF
-
-            self.lr_overlay_item.setRect(QRectF(0, 0, display_w, display_h))
 
     def _on_scene_mouse_moved(self, scene_pos) -> None:
         vb_pos = self._vb.mapSceneToView(scene_pos)
@@ -673,14 +640,6 @@ class ImageCanvas(QWidget):
         """Set overlay opacity in [0, 1]."""
         self.overlay_item.setOpacity(opacity)
 
-    def set_lr_overlay_opacity(self, opacity: float) -> None:
-        """Set L/R hemisphere overlay opacity in [0, 1]."""
-        self.lr_overlay_item.setOpacity(opacity)
-
-    def set_lr_overlay_visible(self, visible: bool) -> None:
-        """Show or hide the L/R hemisphere overlay without discarding its image data."""
-        self.lr_overlay_item.setVisible(visible)
-
     def clear(self) -> None:
         for item in self._channel_items:
             item.clear()
@@ -688,7 +647,6 @@ class ImageCanvas(QWidget):
         self._channel_items.clear()
         self._channel_shape = None
         self.overlay_item.clear()
-        self.lr_overlay_item.clear()
         self.cp_item.clear()
         self.disp_halo_item.clear()
         self.disp_item.clear()

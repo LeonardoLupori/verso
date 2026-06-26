@@ -1,4 +1,4 @@
-"""Properties page for the Prep view (Flip + Mask + Hemisphere)."""
+"""Properties page for the Prep view (Flip + Mask)."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ from PyQt6.QtWidgets import QScrollArea, QVBoxLayout, QWidget
 from verso.engine.model.project import Section
 from verso.gui.widgets.properties.sections import (
     FlipBox,
-    HemisphereBox,
     MaskBox,
     SaveBarBox,
 )
@@ -34,11 +33,9 @@ class PrepPage(QWidget):
 
         self.flip = FlipBox()
         self.mask = MaskBox()
-        self.hemisphere = HemisphereBox()
 
         layout.addWidget(self.flip)
         layout.addWidget(self.mask)
-        layout.addWidget(self.hemisphere)
         layout.addStretch()
 
         self.save_bar = SaveBarBox()

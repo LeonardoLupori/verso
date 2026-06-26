@@ -56,7 +56,6 @@ from verso.engine.io.quint_io import (
 )
 from verso.engine.model.alignment import Alignment, AlignmentStatus, ControlPoint, WarpState
 from verso.engine.model.elastix import ElastixParams
-from verso.engine.model.mask import Mask, MaskType
 from verso.engine.model.project import AtlasRef, ChannelSpec, Preprocessing, Project, Section
 from verso.engine.registration import (
     anchoring_center,
@@ -115,8 +114,6 @@ __all__ = [
     "AtlasRef",
     "ChannelSpec",
     "ControlPoint",
-    "Mask",
-    "MaskType",
     "Preprocessing",
     "Project",
     "Section",

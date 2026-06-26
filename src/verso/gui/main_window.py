@@ -320,10 +320,6 @@ class MainWindow(QMainWindow):
         self._act_clear_all_slice_masks.setEnabled(False)
         self._act_clear_all_slice_masks.triggered.connect(self._clear_all_slice_masks)
         preprocess_menu.addAction(self._act_clear_all_slice_masks)
-        self._act_clear_all_lr_masks = QAction("Clear all &L/R masks…", self)
-        self._act_clear_all_lr_masks.setEnabled(False)
-        self._act_clear_all_lr_masks.triggered.connect(self._clear_all_lr_masks)
-        preprocess_menu.addAction(self._act_clear_all_lr_masks)
 
         align_menu = batch_menu.addMenu("&Align")
         self._act_deepslice = QAction("Run &DeepSlice", self)
@@ -566,20 +562,6 @@ class MainWindow(QMainWindow):
         mask.clear_requested.connect(self._on_prep_clear_mask_requested)
         mask.erode_requested.connect(lambda px: self._prep.apply_morph(px, "erode"))
         mask.expand_requested.connect(lambda px: self._prep.apply_morph(px, "expand"))
-        # Hemisphere subpanel — non-draw actions.
-        hemi = self._props.prep.hemisphere
-        hemi.visibility_changed.connect(self._prep.set_lr_visible)
-        hemi.set_all_left_requested.connect(self._on_lr_set_all_left)
-        hemi.set_all_right_requested.connect(self._on_lr_set_all_right)
-        hemi.clear_requested.connect(self._on_lr_clear_requested)
-        # Hemisphere — draw-mode lifecycle.
-        hemi.draw_mode_toggled.connect(self._on_lr_draw_mode_toggled)
-        hemi.apply_requested.connect(self._on_lr_draw_apply)
-        hemi.cancel_requested.connect(self._on_lr_draw_cancel)
-        # Hemisphere — appearance.
-        hemi.opacity_changed.connect(self._prep.set_lr_opacity)
-        hemi.left_color_changed.connect(self._prep.set_lr_left_color)
-        hemi.right_color_changed.connect(self._prep.set_lr_right_color)
         # Overlay lives in both Align and Warp pages with independent state.
         for overlay in (self._props.align.overlay, self._props.warp.overlay):
             overlay.opacity_changed.connect(self._on_opacity_changed)
@@ -589,7 +571,6 @@ class MainWindow(QMainWindow):
         # PrepView edits
         self._prep.mask_negative_changed.connect(mask.set_negative)
         self._prep.mask_visibility_changed.connect(mask.set_visible_state)
-        self._prep.lr_status_changed.connect(self._refresh_lr_status)
 
         # AlignView navigator drives the anchoring; alignments_updated fires
         # when the user explicitly saves or clears, triggering re-interpolation.
@@ -1546,12 +1527,6 @@ class MainWindow(QMainWindow):
             self._props.overview.set_preview(
                 self._filmstrip.thumbnail_pixmap(self._state.section_index)
             )
-        if self._current_mode == "prep":
-            # Sync the draw button with PrepView's actual state — covers section
-            # navigation, view switches, or anything else that may have torn the
-            # editor down behind our back.
-            self._props.prep.hemisphere.set_draw_active(self._prep.is_lr_draw_active())
-            self._refresh_lr_status()
 
     def _on_thumbnail_loaded(self, index: int) -> None:
         """Fill the Overview preview once the current section's tile arrives."""
@@ -1568,8 +1543,6 @@ class MainWindow(QMainWindow):
             return
         if value == section.preprocessing.flip_horizontal:
             return
-        if self._prep.cancel_lr_draw_if_active():
-            self._props.prep.hemisphere.set_draw_active(False)
         section.preprocessing.flip_horizontal = value
         self._prep.mark_flip_changed()
         self._invalidate_alignment_for_flip(section)
@@ -1581,8 +1554,6 @@ class MainWindow(QMainWindow):
             return
         if value == section.preprocessing.flip_vertical:
             return
-        if self._prep.cancel_lr_draw_if_active():
-            self._props.prep.hemisphere.set_draw_active(False)
         section.preprocessing.flip_vertical = value
         self._prep.mark_flip_changed()
         self._invalidate_alignment_for_flip(section)
@@ -1629,38 +1600,6 @@ class MainWindow(QMainWindow):
 
     def _on_prep_clear_mask_requested(self) -> None:
         self._prep.clear_mask()
-
-    def _on_lr_set_all_left(self) -> None:
-        self._prep.set_lr_all(1)
-
-    def _on_lr_set_all_right(self) -> None:
-        self._prep.set_lr_all(2)
-
-    def _on_lr_clear_requested(self) -> None:
-        self._prep.clear_lr_mask()
-
-    def _on_lr_draw_mode_toggled(self, active: bool) -> None:
-        """Draw-line button toggled by the user."""
-        if active:
-            self._prep.enter_lr_draw_mode()
-        else:
-            # User untoggled the button without using Apply/Cancel → treat as Cancel.
-            self._prep.exit_lr_draw_mode(apply=False)
-        self._props.prep.hemisphere.set_draw_active(active)
-        self._refresh_lr_status()
-
-    def _on_lr_draw_apply(self) -> None:
-        self._prep.exit_lr_draw_mode(apply=True)
-        self._props.prep.hemisphere.set_draw_active(False)
-
-    def _on_lr_draw_cancel(self) -> None:
-        self._prep.exit_lr_draw_mode(apply=False)
-        self._props.prep.hemisphere.set_draw_active(False)
-        self._refresh_lr_status()
-
-    def _refresh_lr_status(self) -> None:
-        """Push the current PrepView L/R state into the properties panel label."""
-        self._props.prep.hemisphere.set_status(self._prep.lr_status_text())
 
     def _batch_autodetect_masks(self) -> None:
         project = self._state.project
@@ -1860,7 +1799,6 @@ class MainWindow(QMainWindow):
         self._act_clear_all_alignments.setEnabled(atlas_ready and not running)
         # Mask + warp wipes only need a project with sections; atlas not required.
         self._act_clear_all_slice_masks.setEnabled(has_sections and not running)
-        self._act_clear_all_lr_masks.setEnabled(has_sections and not running)
         # Clearing manual / automatic control points is only offered when points
         # of that kind actually exist somewhere in the project.
         sections = project.sections if project is not None else []
@@ -2159,36 +2097,6 @@ class MainWindow(QMainWindow):
             section.preprocessing.slice_mask_path = None
         self._after_batch_clear()
         self.statusBar().showMessage(f"Cleared {removed} slice masks", 5000)
-
-    def _clear_all_lr_masks(self) -> None:
-        project = self._state.project
-        if project is None or not project.sections:
-            return
-        reply = QMessageBox.question(
-            self,
-            "Clear all L/R masks",
-            f"Delete the L/R hemisphere mask for all {len(project.sections)} sections? "
-            "This removes the PNG files from disk.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
-            return
-        if not self._confirm_discard_active_draft():
-            return
-        removed = 0
-        for section in project.sections:
-            old = section.preprocessing.lr_mask_path
-            if old:
-                try:
-                    Path(old).unlink(missing_ok=True)
-                except OSError:
-                    pass
-                removed += 1
-            section.preprocessing.lr_mask_path = None
-            section.preprocessing.lr_line = None
-        self._after_batch_clear()
-        self.statusBar().showMessage(f"Cleared {removed} L/R masks", 5000)
 
     def _clear_all_manual_cps(self) -> None:
         """Batch: drop every hand-placed control point, keeping auto ones."""

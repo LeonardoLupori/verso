@@ -2,9 +2,9 @@
 
 These back the GUI's "Add images to project" and "Remove from project" actions.
 They never touch :attr:`Project.working_scale` — it is frozen after import because
-every working-resolution coordinate (control points, masks, ``lr_line``,
-anchorings) is defined relative to it. Recomputing it would silently invalidate
-all existing geometry.
+every working-resolution coordinate (control points, masks, anchorings) is
+defined relative to it. Recomputing it would silently invalidate all existing
+geometry.
 
 No Qt imports here, so this stays usable from scripts and tests.
 """
@@ -15,7 +15,7 @@ import os
 import re
 from pathlib import Path
 
-from verso.engine.drafts import lr_mask_path_for, slice_mask_path_for
+from verso.engine.drafts import slice_mask_path_for
 from verso.engine.io.image_io import thumbnail_filename
 from verso.engine.model.alignment import Alignment, AlignmentStatus, WarpState
 from verso.engine.model.project import Section
@@ -130,7 +130,7 @@ def make_added_sections(
 def removed_section_artifacts(section: Section, surviving_sections: list[Section]) -> list[Path]:
     """Return generated files safe to delete when ``section`` is removed.
 
-    Covers the section's working-resolution thumbnail, slice mask, and L/R mask.
+    Covers the section's working-resolution thumbnail and slice mask.
     A path is excluded when any surviving section maps to the same file (possible
     when two sources share a filename stem), so a removal never deletes a file
     another section still relies on. Original images are never included.
@@ -146,11 +146,9 @@ def removed_section_artifacts(section: Section, surviving_sections: list[Section
     for s in surviving_sections:
         surviving_paths.add(_norm(s.thumbnail_path))
         surviving_paths.add(_norm(slice_mask_path_for(s)))
-        surviving_paths.add(_norm(lr_mask_path_for(s)))
 
     candidates = [
         Path(section.thumbnail_path),
         slice_mask_path_for(section),
-        lr_mask_path_for(section),
     ]
     return [p for p in candidates if _norm(p) not in surviving_paths]

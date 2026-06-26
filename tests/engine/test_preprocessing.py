@@ -12,15 +12,9 @@ from verso.engine.preprocessing import (
     channel_lut,
     composite_channels,
     detect_foreground,
-    flip_lr_mask,
-    line_side_polygons,
-    load_lr_mask,
     load_mask,
-    lr_mask_to_rgba,
     mask_to_rgba,
     morph_mask,
-    rasterize_lr_line,
-    save_lr_mask,
     save_mask,
 )
 
@@ -185,96 +179,6 @@ def test_detect_foreground_bright_tissue_on_dark_background() -> None:
 
     assert mask[40, 40]
     assert not mask[5, 5]
-
-
-# ---------------------------------------------------------------------------
-# L/R hemisphere masks
-# ---------------------------------------------------------------------------
-
-
-def test_rasterize_lr_line_vertical_default_splits_left_right() -> None:
-    # Vertical line down the centre (p0 above p1). Cross product convention:
-    # negative side is "left", which for a downward-pointing line is the +x side.
-    mask = rasterize_lr_line((50.0, 0.0), (50.0, 99.0), shape=(100, 100))
-    # p0 → p1 points downward (dy>0, dx=0); cross = dx*(y-y0) - dy*(x-x0) = -dy*(x-x0).
-    # x < 50 → cross > 0 → right (2); x > 50 → cross < 0 → left (1).
-    assert (mask[:, 0:49] == 2).all()
-    assert (mask[:, 51:] == 1).all()
-    # On the line itself (x=50): cross == 0 → assigned 2 by convention.
-    assert (mask[:, 50] == 2).all()
-
-
-def test_rasterize_lr_line_reversed_endpoints_swaps_sides() -> None:
-    a = rasterize_lr_line((50.0, 0.0), (50.0, 99.0), shape=(40, 100))
-    b = rasterize_lr_line((50.0, 99.0), (50.0, 0.0), shape=(40, 100))
-    # Reversing direction flips 1↔2 for every off-line pixel.
-    swap = np.where(a == 1, 2, np.where(a == 2, 1, 0)).astype(np.uint8)
-    # On-line pixels are 2 in both rasters by convention (cross == 0 → 2).
-    on_line = (a == 2) & (b == 2) & (np.arange(100)[np.newaxis, :] == 50)
-    off_line = ~on_line
-    np.testing.assert_array_equal(swap[off_line], b[off_line])
-
-
-def test_flip_lr_mask_horizontal_swaps_values_and_mirrors() -> None:
-    m = np.array([[1, 1, 2, 2]], dtype=np.uint8)
-    out = flip_lr_mask(m, horizontal=True, vertical=False)
-    # np.fliplr → [2, 2, 1, 1]; then 1↔2 swap → [1, 1, 2, 2]
-    np.testing.assert_array_equal(out, [[1, 1, 2, 2]])
-
-
-def test_flip_lr_mask_horizontal_is_involutive() -> None:
-    m = np.array([[0, 1, 2, 0, 1, 2]], dtype=np.uint8)
-    once = flip_lr_mask(m, horizontal=True, vertical=False)
-    twice = flip_lr_mask(once, horizontal=True, vertical=False)
-    np.testing.assert_array_equal(twice, m)
-
-
-def test_flip_lr_mask_vertical_mirrors_without_value_swap() -> None:
-    m = np.array([[1, 1, 2, 2], [1, 0, 0, 2]], dtype=np.uint8)
-    out = flip_lr_mask(m, horizontal=False, vertical=True)
-    np.testing.assert_array_equal(out, [[1, 0, 0, 2], [1, 1, 2, 2]])
-
-
-def test_save_load_lr_mask_round_trip(tmp_path) -> None:
-    mask = np.array([[0, 1, 2], [2, 1, 0]], dtype=np.uint8)
-    path = tmp_path / "lr.png"
-    save_lr_mask(mask, path)
-    loaded = load_lr_mask(path, shape=mask.shape)
-    np.testing.assert_array_equal(loaded, mask)
-
-
-def test_lr_mask_to_rgba_assigns_distinct_colors_and_alpha() -> None:
-    mask = np.array([[0, 1, 2]], dtype=np.uint8)
-    rgba = lr_mask_to_rgba(
-        mask,
-        opacity=0.5,
-        left_color=(10, 20, 30),
-        right_color=(40, 50, 60),
-    )
-    # Unlabeled pixels: fully transparent.
-    np.testing.assert_array_equal(rgba[0, 0], [0, 0, 0, 0])
-    # Left pixels: red-ish tint at 50% alpha = 128 (round(0.5 * 255)).
-    np.testing.assert_array_equal(rgba[0, 1], [10, 20, 30, 128])
-    np.testing.assert_array_equal(rgba[0, 2], [40, 50, 60, 128])
-
-
-def test_line_side_polygons_vertical_midline_splits_rect() -> None:
-    left, right = line_side_polygons((50.0, 0.0), (50.0, 100.0), 100.0, 100.0)
-    # Each side should be a 4-vertex polygon (left/right halves of the rect).
-    assert len(left) == 4
-    assert len(right) == 4
-    # Left side (negative cross product) is +x side for a downward line.
-    assert (left[:, 0] >= 49.999).all()
-    assert (right[:, 0] <= 50.001).all()
-
-
-def test_line_side_polygons_horizontal_midline() -> None:
-    left, right = line_side_polygons((0.0, 50.0), (100.0, 50.0), 100.0, 100.0)
-    # Line points rightward (dx>0, dy=0); cross = dx*(y-y0) → negative for y<50.
-    assert len(left) == 4
-    assert len(right) == 4
-    assert (left[:, 1] <= 50.001).all()
-    assert (right[:, 1] >= 49.999).all()
 
 
 def test_channel_lut_shape_and_dtype() -> None:
@@ -522,7 +426,7 @@ def test_morph_mask_returns_bool_array() -> None:
 
 
 # ---------------------------------------------------------------------------
-# mask_to_rgba / lr_mask_to_rgba — opacity clamping
+# mask_to_rgba — opacity clamping
 # ---------------------------------------------------------------------------
 
 
@@ -536,96 +440,3 @@ def test_mask_to_rgba_opacity_clamped_below_0() -> None:
     mask = np.array([[True]])
     rgba = mask_to_rgba(mask, negative=False, opacity=-1.0)
     assert rgba[0, 0, 3] == 0
-
-
-def test_lr_mask_to_rgba_opacity_clamped_above_1() -> None:
-    mask = np.array([[1]], dtype=np.uint8)
-    rgba = lr_mask_to_rgba(mask, opacity=99.0)
-    assert rgba[0, 0, 3] == 255
-
-
-def test_lr_mask_to_rgba_opacity_clamped_below_0() -> None:
-    mask = np.array([[1]], dtype=np.uint8)
-    rgba = lr_mask_to_rgba(mask, opacity=-1.0)
-    assert rgba[0, 0, 3] == 0
-
-
-# ---------------------------------------------------------------------------
-# load_lr_mask — resize branch
-# ---------------------------------------------------------------------------
-
-
-def test_load_lr_mask_resizes_to_target_shape(tmp_path) -> None:
-    mask = np.array([[0, 1], [2, 0]], dtype=np.uint8)
-    path = tmp_path / "lr.png"
-    save_lr_mask(mask, path)
-    loaded = load_lr_mask(path, shape=(4, 4))
-    assert loaded.shape == (4, 4)
-    assert loaded.dtype == np.uint8
-    # Corner values must survive NEAREST resize.
-    assert loaded[0, 0] == 0
-    assert loaded[0, 3] == 1
-    assert loaded[3, 0] == 2
-
-
-# ---------------------------------------------------------------------------
-# line_side_polygons — diagonal line and out-of-bounds line
-# ---------------------------------------------------------------------------
-
-
-def test_line_side_polygons_diagonal_areas_sum_to_rect() -> None:
-    w, h = 100.0, 80.0
-    left, right = line_side_polygons((0.0, 40.0), (100.0, 40.0), w, h)
-
-    # Each half-rect is a triangle or quadrilateral — shoelace area check.
-    def shoelace(poly: np.ndarray) -> float:
-        x, y = poly[:, 0], poly[:, 1]
-        return 0.5 * abs(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1)))
-
-    assert abs(shoelace(left) + shoelace(right) - w * h) < 1e-6
-
-
-def test_line_side_polygons_line_outside_rect_one_side_empty() -> None:
-    # Line entirely to the right of the rectangle.
-    left, right = line_side_polygons((200.0, 0.0), (200.0, 100.0), 100.0, 100.0)
-    # The entire rect is on one side; the other clip is empty.
-    assert len(left) == 0 or len(right) == 0
-
-
-# ---------------------------------------------------------------------------
-# rasterize_lr_line — diagonal line
-# ---------------------------------------------------------------------------
-
-
-def test_rasterize_lr_line_diagonal_produces_valid_tri_values() -> None:
-    mask = rasterize_lr_line((0.0, 0.0), (100.0, 100.0), shape=(100, 100))
-    assert set(np.unique(mask)).issubset({1, 2})
-    # Upper-right (row=0, col=99): cross = dx*(0-0)-dy*(99-0) = 100*0 - 100*99 < 0 → left (1).
-    assert mask[0, 99] == 1
-    # Lower-left corner (row=99, col=0): cross = 100*(99-0) - 100*(0-0) = 9900 > 0 → right (2).
-    assert mask[99, 0] == 2
-
-
-# ---------------------------------------------------------------------------
-# flip_lr_mask — both flags simultaneously and zero-value preservation
-# ---------------------------------------------------------------------------
-
-
-def test_flip_lr_mask_both_flags() -> None:
-    m = np.array([[1, 2], [0, 1]], dtype=np.uint8)
-    out = flip_lr_mask(m, horizontal=True, vertical=True)
-    # After fliplr+swap then flipud (or flipud then fliplr+swap — same result):
-    expected = flip_lr_mask(
-        flip_lr_mask(m, horizontal=True, vertical=False),
-        horizontal=False,
-        vertical=True,
-    )
-    np.testing.assert_array_equal(out, expected)
-
-
-def test_flip_lr_mask_zero_values_preserved() -> None:
-    m = np.array([[0, 1, 0]], dtype=np.uint8)
-    out = flip_lr_mask(m, horizontal=True, vertical=False)
-    # Zeros should remain zero after any flip.
-    assert out[0, 0] == 0
-    assert out[0, 2] == 0

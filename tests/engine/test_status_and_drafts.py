@@ -8,7 +8,6 @@ from verso.engine.drafts import (
     PrepDraft,
     commit_alignment,
     commit_warp,
-    lr_mask_path_for,
     persist_prep_draft,
     slice_mask_path_for,
     wipe_alignment_for_flip,
@@ -191,11 +190,3 @@ def test_persist_prep_draft_preserves_alignment_through_flip(tmp_path):
 
     assert section.alignment.status == AlignmentStatus.COMPLETE
     assert section.alignment.stored_anchoring == [1.0] * 9
-
-
-def test_lr_mask_path_distinct_from_slice(tmp_path):
-    section = _section(
-        original_path=str(tmp_path / "img.png"),
-        thumbnail_path=str(tmp_path / "thumbnails" / "img.tif"),
-    )
-    assert slice_mask_path_for(section) != lr_mask_path_for(section)

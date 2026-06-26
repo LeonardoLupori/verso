@@ -14,7 +14,6 @@ my_experiment/
     project-verso.json     # all project state, settings, metadata
     thumbnails/            # working-resolution OME-TIFFs + filmstrip PNGs
     masks/                 # slice masks as 1-bit PNGs
-    lr_masks/              # L/R hemisphere masks as uint8 PNGs (0/1/2)
     exports/               # export outputs (images with overlays, etc.)
 ```
 
@@ -91,16 +90,12 @@ Top level:
 {
   "flip_horizontal": false,
   "flip_vertical": false,
-  "slice_mask_path": "masks/IMG_0234-slice-mask.png",
-  "lr_mask_path": "lr_masks/IMG_0234_lr.png",
-  "lr_line": [[510.0, 80.0], [510.0, 720.0]]
+  "slice_mask_path": "masks/IMG_0234-slice-mask.png"
 }
 ```
 
 - Mask PNGs are at working resolution and stored in the **unflipped**
   frame.
-- `lr_line`: optional storage-frame endpoints `[[x0, y0], [x1, y1]]`
-  used to re-seed the L/R line editor next time.
 
 ### `Alignment`
 
@@ -197,7 +192,7 @@ All model types are `@dataclass`es in `engine/model/`:
 | `AtlasRef` | `model/project.py` | `{name, source}`. |
 | `ChannelSpec` | `model/project.py` | Per-project channel display config. |
 | `Section` | `model/project.py` | One histological section. |
-| `Preprocessing` | `model/project.py` | Flips + mask paths + `lr_line`. |
+| `Preprocessing` | `model/project.py` | Flips + slice-mask path. |
 | `Alignment` | `model/alignment.py` | 9-float anchoring + status + proposal/stored variants. |
 | `WarpState` | `model/alignment.py` | List of `ControlPoint`s + status. |
 | `ControlPoint` | `model/alignment.py` | `(src_x, src_y, dst_x, dst_y)` normalised. |

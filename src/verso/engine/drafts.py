@@ -2,7 +2,7 @@
 
 This module holds the pure-engine side of the persistent unsaved-edits model:
 
-- :class:`PrepDraft` — an in-memory slice/L-R mask edit for one section, kept
+- :class:`PrepDraft` — an in-memory slice-mask edit for one section, kept
   resident until the user saves.
 - :func:`persist_prep_draft` — write a prep draft's masks to disk.
 - :func:`commit_alignment` / :func:`commit_warp` — promote in-memory align/warp
@@ -22,17 +22,17 @@ import numpy as np
 
 from verso.engine.model.alignment import AlignmentStatus
 from verso.engine.model.project import Section
-from verso.engine.preprocessing import save_lr_mask, save_mask
+from verso.engine.preprocessing import save_mask
 
 
 @dataclass
 class PrepDraft:
-    """A resident, unsaved prep edit for one section (masks only).
+    """A resident, unsaved prep edit for one section (slice mask only).
 
-    Masks are stored unflipped (matching the on-disk convention); flips live on
-    ``section.preprocessing`` and need no draft.  ``slice_mask``/``lr_mask`` are
-    ``None`` when unset; a ``None`` mask with its ``*_dirty`` flag True means the
-    user cleared that mask (the saved file, if any, should be removed).
+    The mask is stored unflipped (matching the on-disk convention); flips live on
+    ``section.preprocessing`` and need no draft.  ``slice_mask`` is ``None`` when
+    unset; a ``None`` mask with ``mask_dirty`` True means the user cleared the
+    mask (the saved file, if any, should be removed).
 
     ``base_flip_*`` capture the section's last-saved flip flags at the moment the
     draft was created so the GUI can carry them across navigation for its
@@ -41,9 +41,7 @@ class PrepDraft:
     """
 
     slice_mask: np.ndarray | None = None
-    lr_mask: np.ndarray | None = None
     mask_dirty: bool = False
-    lr_dirty: bool = False
     base_flip_h: bool = False
     base_flip_v: bool = False
 
@@ -52,12 +50,6 @@ def slice_mask_path_for(section: Section) -> Path:
     """Canonical on-disk path for a section's slice mask PNG."""
     masks_dir = Path(section.thumbnail_path).parent.parent / "masks"
     return masks_dir / f"{Path(section.original_path).stem}-slice-mask.png"
-
-
-def lr_mask_path_for(section: Section) -> Path:
-    """Canonical on-disk path for a section's L/R hemisphere mask PNG."""
-    lr_dir = Path(section.thumbnail_path).parent.parent / "lr_masks"
-    return lr_dir / f"{Path(section.original_path).stem}_lr.png"
 
 
 def wipe_alignment_for_flip(section: Section) -> None:
@@ -93,21 +85,6 @@ def persist_prep_draft(section: Section, draft: PrepDraft) -> None:
         save_mask(draft.slice_mask, path)
         section.preprocessing.slice_mask_path = str(path)
 
-    if draft.lr_dirty:
-        if draft.lr_mask is None:
-            old = section.preprocessing.lr_mask_path
-            if old:
-                try:
-                    Path(old).unlink(missing_ok=True)
-                except OSError:
-                    pass
-            section.preprocessing.lr_mask_path = None
-            section.preprocessing.lr_line = None
-        else:
-            path = lr_mask_path_for(section)
-            save_lr_mask(draft.lr_mask, path)
-            section.preprocessing.lr_mask_path = str(path)
-
 
 def commit_alignment(section: Section) -> bool:
     """Promote the live anchoring to the saved plane (status COMPLETE).
@@ -133,7 +110,6 @@ def commit_warp(section: Section) -> bool:
 __all__ = [
     "PrepDraft",
     "slice_mask_path_for",
-    "lr_mask_path_for",
     "wipe_alignment_for_flip",
     "persist_prep_draft",
     "commit_alignment",
