@@ -970,10 +970,7 @@ class MainWindow(QMainWindow):
         has_alignment = (
             section.alignment.status != AlignmentStatus.NOT_STARTED
             or bool(section.warp.control_points)
-            or (
-                section.alignment.anchoring
-                and any(v != 0.0 for v in section.alignment.anchoring)
-            )
+            or (section.alignment.anchoring and any(v != 0.0 for v in section.alignment.anchoring))
         )
         if not has_alignment:
             return
@@ -1867,9 +1864,7 @@ class MainWindow(QMainWindow):
         # Clearing manual / automatic control points is only offered when points
         # of that kind actually exist somewhere in the project.
         sections = project.sections if project is not None else []
-        has_manual_cps = any(
-            cp for s in sections for cp in s.warp.control_points if not cp.auto
-        )
+        has_manual_cps = any(cp for s in sections for cp in s.warp.control_points if not cp.auto)
         has_auto_cps = any(cp for s in sections for cp in s.warp.control_points if cp.auto)
         self._act_clear_manual_cps.setEnabled(has_manual_cps and not running)
         self._act_clear_auto_cps.setEnabled(has_auto_cps and not running)
@@ -2211,8 +2206,7 @@ class MainWindow(QMainWindow):
         reply = QMessageBox.question(
             self,
             f"Clear all {kind} control points",
-            f"Remove every {kind} warp control point from all "
-            f"{len(project.sections)} sections?",
+            f"Remove every {kind} warp control point from all {len(project.sections)} sections?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -2234,9 +2228,7 @@ class MainWindow(QMainWindow):
             else:
                 section.warp.status = AlignmentStatus.IN_PROGRESS
         self._after_batch_clear()
-        self.statusBar().showMessage(
-            f"Cleared {kind} control points on {cleared} sections", 5000
-        )
+        self.statusBar().showMessage(f"Cleared {kind} control points on {cleared} sections", 5000)
 
     def _after_batch_clear(self) -> None:
         """Refresh dependent UI + write project after a batch wipe."""

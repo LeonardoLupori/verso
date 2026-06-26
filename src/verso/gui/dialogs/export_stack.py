@@ -94,9 +94,7 @@ class ExportStackDialog(QDialog):
         layout.addWidget(bg_box)
 
         # --- Merge -----------------------------------------------------
-        self._merge_check = QCheckBox(
-            "Merge sections with the same slice index (max projection)"
-        )
+        self._merge_check = QCheckBox("Merge sections with the same slice index (max projection)")
         layout.addWidget(self._merge_check)
 
         # --- Buttons ---------------------------------------------------

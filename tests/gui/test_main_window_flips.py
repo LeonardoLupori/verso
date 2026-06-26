@@ -91,9 +91,7 @@ def _stored_anchoring_section() -> Section:
             status=AlignmentStatus.COMPLETE,
             source="manual",
         ),
-        warp=WarpState(
-            control_points=[ControlPoint(0, 0, 0, 0)], status=AlignmentStatus.COMPLETE
-        ),
+        warp=WarpState(control_points=[ControlPoint(0, 0, 0, 0)], status=AlignmentStatus.COMPLETE),
     )
 
 

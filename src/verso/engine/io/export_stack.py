@@ -114,10 +114,7 @@ def build_canonical_remap(
 
     # Coverage: voxels whose (s, t) fall outside the section frame have no data.
     covered = (
-        (st[:, :, 0] >= 0.0)
-        & (st[:, :, 0] <= 1.0)
-        & (st[:, :, 1] >= 0.0)
-        & (st[:, :, 1] <= 1.0)
+        (st[:, :, 0] >= 0.0) & (st[:, :, 0] <= 1.0) & (st[:, :, 1] >= 0.0) & (st[:, :, 1] <= 1.0)
     )
 
     # Inverse warp: atlas-overlay (s, t) -> section image (s', t').

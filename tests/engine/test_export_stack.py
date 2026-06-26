@@ -359,9 +359,7 @@ def test_export_aligned_stack_skips_unaligned_and_writes(monkeypatch, tmp_path):
     )
     out = tmp_path / "out.ome.tif"
 
-    written, skipped = export_aligned_stack(
-        [good, bad], project, atlas, ExportStackOptions(), out
-    )
+    written, skipped = export_aligned_stack([good, bad], project, atlas, ExportStackOptions(), out)
     assert written == out and out.exists()
     assert skipped == ["bad"]  # the degenerate section, by id
     # Only the good section made a page (tifffile squeezes the singleton Z/C).

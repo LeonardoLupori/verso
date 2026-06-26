@@ -441,7 +441,3 @@ class AtlasVolume:
         u = np.array(anchoring[3:6])
         v = np.array(anchoring[6:9])
         return o + u / 2.0 + v / 2.0
-
-    @property
-    def shape(self) -> tuple[int, int, int]:
-        return self._annotation.shape  # type: ignore[return-value]
