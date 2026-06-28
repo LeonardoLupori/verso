@@ -24,6 +24,7 @@ from verso.engine.model.alignment import AlignmentStatus
 from verso.engine.model.project import Project, Section
 from verso.engine.model.status import STATUS_COLOR as _STATUS_COLOR
 from verso.engine.model.status import section_step_status
+from verso.gui.utils import require
 
 if TYPE_CHECKING:
     from verso.gui.state import AppState
@@ -214,9 +215,12 @@ class OverviewView(QWidget):
         headers = ["Slice index", "File", "Dimensions", f"{axis_name} (mm)"] + list(_STEPS)
         t.setHorizontalHeaderLabels(headers)
 
-        t.horizontalHeader().setSectionResizeMode(_COL_FILE, QHeaderView.ResizeMode.Stretch)
+        hheader = require(t.horizontalHeader())
+        vheader = require(t.verticalHeader())
+
+        hheader.setSectionResizeMode(_COL_FILE, QHeaderView.ResizeMode.Stretch)
         for col in [_COL_SERIAL, _COL_DIMS, _COL_AP] + list(range(_COL_STEPS_START, n_cols)):
-            t.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
+            hheader.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
 
         t.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         t.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -226,15 +230,15 @@ class OverviewView(QWidget):
             QAbstractItemView.EditTrigger.DoubleClicked
             | QAbstractItemView.EditTrigger.EditKeyPressed
         )
-        t.horizontalHeaderItem(_COL_SERIAL).setToolTip(
+        require(t.horizontalHeaderItem(_COL_SERIAL)).setToolTip(
             "Slice index — physical position along the interpolation axis. "
             "Double-click to edit; rows re-sort by index."
         )
         t.setAlternatingRowColors(True)
         t.setShowGrid(False)
-        t.verticalHeader().setDefaultSectionSize(38)
-        t.verticalHeader().setVisible(False)
-        t.horizontalHeader().setHighlightSections(False)
+        vheader.setDefaultSectionSize(38)
+        vheader.setVisible(False)
+        hheader.setHighlightSections(False)
         t.setStyleSheet(_TABLE_STYLE)
 
         # Slice index is the only editable column — render it as an input chip
@@ -279,7 +283,7 @@ class OverviewView(QWidget):
     def load_project(self, project: Project) -> None:
         self._project = project
         axis_name = project.interpolation_axis if project is not None else "AP"
-        self._table.horizontalHeaderItem(_COL_AP).setText(f"{axis_name} (mm)")
+        require(self._table.horizontalHeaderItem(_COL_AP)).setText(f"{axis_name} (mm)")
         self._populate()
 
     def _populate(self) -> None:
@@ -442,7 +446,7 @@ class OverviewView(QWidget):
         """Return the sorted indices of all currently selected sections."""
         if not self._table.isVisible():
             return []
-        rows = {idx.row() for idx in self._table.selectionModel().selectedRows()}
+        rows = {idx.row() for idx in require(self._table.selectionModel()).selectedRows()}
         return sorted(rows)
 
     def _section_id_for_row(self, row: int) -> str | None:
@@ -473,7 +477,7 @@ class OverviewView(QWidget):
         n = len(ids)
         label = "Remove from project" if n == 1 else f"Remove {n} from project"
         act_remove = menu.addAction(label)
-        chosen = menu.exec(self._table.viewport().mapToGlobal(pos))
+        chosen = menu.exec(require(self._table.viewport()).mapToGlobal(pos))
         if chosen is act_remove:
             self.remove_requested.emit(ids)
 

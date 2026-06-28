@@ -15,6 +15,7 @@ import pytest
 from PyQt6.QtWidgets import QApplication
 
 from verso.engine.registration import plane_tilt_deg, quicknii_default_anchoring
+from verso.gui.widgets.align_handle import _HANDLE_GRIP_PX, _HANDLE_RING_PX
 from verso.gui.widgets.canvas import ImageCanvas
 from verso.gui.widgets.navigator import NavigatorPanel, _SliceView
 
@@ -75,11 +76,12 @@ def test_align_handle_zones_and_visibility(_qapp):
     handle = canvas._align_handle
     assert handle.isVisible()  # align + overlay
 
-    # Centre is the overlay centre; classify at 1 view-unit per pixel.
+    # Centre is the overlay centre; classify at 1 view-unit per pixel. Offsets
+    # use the handle's own geometry constants so they track tuning changes.
     assert handle.zone_at(25.0, 20.0, 1.0) == "translate"  # inert centre → default
-    assert handle.zone_at(25.0 + 30.0, 20.0, 1.0) == "stretch_x"  # E grip
-    assert handle.zone_at(25.0, 20.0 + 30.0, 1.0) == "stretch_y"  # S grip
-    assert handle.zone_at(25.0 + 42.0, 20.0, 1.0) == "rotate"  # on the ring line
+    assert handle.zone_at(25.0 + _HANDLE_GRIP_PX, 20.0, 1.0) == "stretch_x"  # E grip
+    assert handle.zone_at(25.0, 20.0 + _HANDLE_GRIP_PX, 1.0) == "stretch_y"  # S grip
+    assert handle.zone_at(25.0 + _HANDLE_RING_PX, 20.0, 1.0) == "rotate"  # on the ring line
     assert handle.zone_at(25.0 + 20.0, 20.0, 1.0) == "translate"  # ring interior
     assert handle.zone_at(25.0 + 500.0, 20.0, 1.0) == "translate"  # far field
 

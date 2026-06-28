@@ -23,7 +23,8 @@ def _set_taskbar_identity() -> None:
             import ctypes
 
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(_APP_ID)
-        except Exception:
+        except (OSError, AttributeError):
+            # Cosmetic only (taskbar grouping); never block startup over it.
             pass
 
 
@@ -122,8 +123,8 @@ def run(project_path: Path | None = None) -> None:
 
     window = MainWindow()
     window.setWindowIcon(app_icon)
-    window.show()
     _center_on_screen(window)
+    window.show()
 
     if sys.platform == "win32":
         # On a cold first launch Windows creates the taskbar button slightly
@@ -133,7 +134,7 @@ def run(project_path: Path | None = None) -> None:
         # which is why this only ever bites the first run.) Re-applying the icon
         # once the event loop is running issues a WM_SETICON after the taskbar
         # button exists, forcing it to refresh.
-        QTimer.singleShot(10, lambda: window.setWindowIcon(app_icon))
+        QTimer.singleShot(100, lambda: window.setWindowIcon(app_icon))
 
     if project_path is not None:
         window.open_project_path(project_path)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from PyQt6.QtCore import QObject, Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import (
@@ -13,6 +15,7 @@ from PyQt6.QtWidgets import (
 )
 
 from verso.engine.io.image_io import WORKING_SCALE
+from verso.gui.utils import require
 
 _THUMB_SIZE = 80  # px long side
 _BORDER_W = 3
@@ -64,7 +67,7 @@ class _HScrollArea(QScrollArea):
 
     def wheelEvent(self, event) -> None:  # noqa: ANN001
         delta = event.angleDelta().y() or event.angleDelta().x()
-        bar = self.horizontalScrollBar()
+        bar = require(self.horizontalScrollBar())
         bar.setValue(bar.value() - delta)
         event.accept()
 
@@ -171,7 +174,7 @@ class Filmstrip(QWidget):
         # Height that exactly fits one row of thumbnails plus the horizontal
         # scrollbar — derived from the real scrollbar extent so there is no
         # vertical slop and the bottom dock has no resize handle.
-        scrollbar_h = scroll.horizontalScrollBar().sizeHint().height()
+        scrollbar_h = require(scroll.horizontalScrollBar()).sizeHint().height()
         strip_height = _THUMB_SIZE + 2 * _BORDER_W + 2 * _ROW_MARGIN + scrollbar_h
         self.setFixedHeight(strip_height)
         scroll.setFixedHeight(strip_height)
@@ -278,13 +281,13 @@ class Filmstrip(QWidget):
         if not (0 <= index < len(self._buttons)):
             return
         btn = self._buttons[index]
-        bar = self._scroll.horizontalScrollBar()
-        viewport_w = self._scroll.viewport().width()
+        bar = require(self._scroll.horizontalScrollBar())
+        viewport_w = require(self._scroll.viewport()).width()
         button_center = btn.x() + btn.width() // 2
         target = button_center - viewport_w // 2
         bar.setValue(max(bar.minimum(), min(bar.maximum(), target)))
 
-    def set_statuses(self, colors: list[str | None]) -> None:
+    def set_statuses(self, colors: Sequence[str | None]) -> None:
         """Set every thumbnail's status-dot colour from a per-section list."""
         for i, btn in enumerate(self._buttons):
             btn.set_status_color(colors[i] if i < len(colors) else None)

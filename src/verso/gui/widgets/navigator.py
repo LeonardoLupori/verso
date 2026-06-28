@@ -46,6 +46,7 @@ from PyQt6.QtWidgets import (
 )
 
 from verso.engine.registration import plane_tilt_deg
+from verso.gui.utils import require
 
 _ICONS_DIR = Path(__file__).parent.parent / "icons"
 
@@ -572,7 +573,7 @@ class _SliceView(QWidget):
     def _handle_rotate(self, cx: float, cy: float) -> None:
         if self._drag_start_anchoring is None or self._center_display is None:
             return
-        sx, sy = self._drag_start
+        sx, sy = require(self._drag_start)
         ccx, ccy = self._center_display
         start_angle = math.atan2(sy - ccy, sx - ccx)
         cur_angle = math.atan2(cy - ccy, cx - ccx)
@@ -611,7 +612,9 @@ class NavigatorPanel(QWidget):
         # only while the bar is actually visible (see eventFilter), so the panel
         # widens by exactly the bar when it appears and reclaims that space when
         # it doesn't — instead of permanently reserving an empty slot.
-        self._sb_extent = QApplication.style().pixelMetric(QStyle.PixelMetric.PM_ScrollBarExtent)
+        self._sb_extent = require(QApplication.style()).pixelMetric(
+            QStyle.PixelMetric.PM_ScrollBarExtent
+        )
         view_w = _VIEW_W + _SIDE_BTN_W + 4  # _SliceView total width
         margins = (2 + 2) + (4 + 4) + 2  # content + group margins + frame
         self._width_no_sb = view_w + margins
@@ -632,7 +635,7 @@ class NavigatorPanel(QWidget):
         outer.addWidget(scroll)
 
         # Grow the panel by the scrollbar's width only while the bar is shown.
-        self._vbar = scroll.verticalScrollBar()
+        self._vbar = require(scroll.verticalScrollBar())
         self._vbar.installEventFilter(self)
 
         content = QWidget()

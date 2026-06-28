@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
 )
 
 from verso.engine.model.alignment import Alignment, AlignmentStatus
+from verso.gui.utils import require
 from verso.gui.widgets.navigator import NavigatorPanel
 from verso.gui.widgets.section_canvas_panel import SectionCanvasPanel
 from verso.gui.widgets.view_chrome import make_view_status_bar
@@ -135,7 +136,7 @@ class AlignView(QWidget):
     def activate(self) -> None:
         """Reparent the shared panel into this view."""
         self._active = True
-        self._panel_slot.layout().addWidget(self._panel)
+        require(self._panel_slot.layout()).addWidget(self._panel)
         self._panel.canvas.set_interaction_mode("align")
         self._panel.canvas.clear_control_points()
         # Align view has no overlay post-processing

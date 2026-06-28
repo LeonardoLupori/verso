@@ -200,8 +200,9 @@ def _make_fake_itk(offset: float) -> types.ModuleType:
     ns.image_from_array = lambda arr: _Img(arr)
     ns.array_from_image = lambda img: img.array
     ns.transformix_filter = lambda image, tp: _Img(image.array + offset)
-    ns.elastix_registration_method = (
-        lambda fixed, moving, parameter_object=None, **kw: (None, _Transform())
+    ns.elastix_registration_method = lambda fixed, moving, parameter_object=None, **kw: (
+        None,
+        _Transform(),
     )
     return ns
 

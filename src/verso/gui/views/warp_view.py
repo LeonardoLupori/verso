@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
 )
 
 from verso.engine.model.alignment import AlignmentStatus, ControlPoint, WarpState
+from verso.gui.utils import require
 from verso.gui.widgets.section_canvas_panel import SectionCanvasPanel
 from verso.gui.widgets.view_chrome import make_view_status_bar
 
@@ -132,7 +133,7 @@ class WarpView(QWidget):
     def activate(self) -> None:
         """Reparent the shared panel into this view and install warp hooks."""
         self._active = True
-        self._panel_slot.layout().addWidget(self._panel)
+        require(self._panel_slot.layout()).addWidget(self._panel)
         self._panel.canvas.set_interaction_mode("warp")
         self._panel.overlay_post_processor = self._warp_overlay
         self._panel.cursor_to_atlas_mapper = self._cursor_to_src

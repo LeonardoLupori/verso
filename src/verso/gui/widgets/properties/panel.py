@@ -1,7 +1,7 @@
 """Context-sensitive right-side properties panel.
 
 Contains a QStackedWidget with one page per view mode.  Each page exposes
-its own sections as public attributes (e.g. ``panel.prep.mask``).  Wire
+its own sections as public attributes (e.g. ``panel.prep.mask_box``).  Wire
 signals directly to the sections — this class no longer re-exports them.
 """
 
