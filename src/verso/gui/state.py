@@ -46,12 +46,13 @@ class AppState(QObject):
         self._section_index: int = 0
         self._atlas: AtlasVolume | None = None
         self._atlas_thread: QThread | None = None
+        self._loader: _AtlasLoader | None = None
         # Persistent unsaved-edit bookkeeping, surviving slice/view navigation.
         # _dirty: which (section.id, step) pairs have unsaved edits.
         # _baselines: last-saved view-state snapshot for each dirty (id, step),
         #             so "Clear edits" can revert to it even after navigation.
         # _prep_drafts: resident slice-mask edits, keyed by section.id.
-        self._dirty: dict[tuple[str, str], bool] = {}
+        self._dirty: set[tuple[str, str]] = set()
         self._baselines: dict[tuple[str, str], object] = {}
         self._prep_drafts: dict[str, PrepDraft] = {}
 
@@ -86,19 +87,22 @@ class AppState(QObject):
 
     def mark_dirty(self, section_id: str, step: str) -> None:
         """Flag a section/step as having unsaved edits."""
-        if self._dirty.get((section_id, step)):
+        key = (section_id, step)
+        if key in self._dirty:
             return
-        self._dirty[(section_id, step)] = True
+        self._dirty.add(key)
         self.dirty_changed.emit(section_id, step)
 
     def clear_dirty(self, section_id: str, step: str) -> None:
         """Clear the unsaved-edit flag for a section/step (e.g. after save)."""
-        if self._dirty.pop((section_id, step), None) is None:
+        key = (section_id, step)
+        if key not in self._dirty:
             return
+        self._dirty.discard(key)
         self.dirty_changed.emit(section_id, step)
 
     def is_dirty(self, section_id: str, step: str) -> bool:
-        return bool(self._dirty.get((section_id, step)))
+        return (section_id, step) in self._dirty
 
     def any_dirty(self) -> bool:
         return bool(self._dirty)
@@ -127,8 +131,8 @@ class AppState(QObject):
             return []
         by_id = {s.id: s for s in self._project.sections}
         grouped: dict[str, set[str]] = {}
-        for (section_id, step), flag in self._dirty.items():
-            if flag and section_id in by_id:
+        for section_id, step in self._dirty:
+            if section_id in by_id:
                 grouped.setdefault(section_id, set()).add(step)
         return [(by_id[sid], steps) for sid, steps in grouped.items()]
 
