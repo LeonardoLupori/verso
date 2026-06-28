@@ -308,6 +308,12 @@ def auto_control_points(
         ry = int(np.clip(round(cy), 0, h - 1))
         dst_x = (2.0 * cx - float(mapped_x[ry, rx])) / w
         dst_y = (2.0 * cy - float(mapped_y[ry, rx])) / h
+        # Drop points the single-step inversion threw outside the image: near
+        # tissue edges or in poorly-registered regions the elastix displacement
+        # can be large and the destination lands far off-section (see module
+        # docstring). Such points are unreliable, so discard rather than clamp.
+        if not (0.0 <= dst_x <= 1.0 and 0.0 <= dst_y <= 1.0):
+            continue
         out.append(
             ControlPoint(src_x=float(s), src_y=float(t), dst_x=dst_x, dst_y=dst_y, auto=True)
         )

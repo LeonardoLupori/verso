@@ -9,8 +9,12 @@ subprocess in production; see ``verso.engine.elastix``).
 
 from __future__ import annotations
 
+import sys
+import types
+
 import numpy as np
 
+from verso.engine import elastix
 from verso.engine.elastix import (
     anchor_source_points,
     is_supported_atlas,
@@ -152,3 +156,80 @@ def test_degenerate_anchoring_returns_empty():
     # u and v parallel → zero normal → no crossings.
     bad = [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 2.0, 0.0, 0.0]
     assert len(anchor_source_points(bad, _SHAPE_25UM, 100, 100)) == 0
+
+
+# ---------------------------------------------------------------------------
+# auto_control_points: destination gating
+# ---------------------------------------------------------------------------
+
+
+def _make_fake_itk(offset: float) -> types.ModuleType:
+    """A minimal stand-in for the native ``itk`` module.
+
+    Models transformix on a coordinate ramp as a *uniform translation*: the
+    resampled value at each pixel is the input value plus ``offset``. With
+    ``offset == 0`` the recovered deformation is the identity (destinations land
+    back on their sources); a large ``offset`` shifts every destination far off
+    the section, which is what the real optimizer can do near tissue edges.
+    """
+    ns = types.ModuleType("itk")
+
+    class _Img:
+        def __init__(self, arr):
+            self.array = np.asarray(arr, dtype=np.float32)
+
+        def SetSpacing(self, spacing):  # noqa: N802 (itk camelCase API)
+            pass
+
+    class _ParamObj:
+        @staticmethod
+        def New():  # noqa: N802
+            return _ParamObj()
+
+        def GetDefaultParameterMap(self, name, n):  # noqa: N802
+            return {}
+
+        def AddParameterMap(self, m):  # noqa: N802
+            pass
+
+    class _Transform:
+        def SetParameter(self, idx, key, val):  # noqa: N802
+            pass
+
+    ns.ParameterObject = _ParamObj
+    ns.image_from_array = lambda arr: _Img(arr)
+    ns.array_from_image = lambda img: img.array
+    ns.transformix_filter = lambda image, tp: _Img(image.array + offset)
+    ns.elastix_registration_method = (
+        lambda fixed, moving, parameter_object=None, **kw: (None, _Transform())
+    )
+    return ns
+
+
+def test_auto_cps_inside_image_are_kept(monkeypatch):
+    # Identity deformation: every destination stays on the section, so all the
+    # plane-crossing source points survive as auto control points.
+    w, h = 120, 100
+    section = np.zeros((h, w), dtype=np.float32)
+    template = np.zeros((h, w), dtype=np.float32)
+    monkeypatch.setitem(sys.modules, "itk", _make_fake_itk(0.0))
+
+    cps = elastix.auto_control_points(section, template, _CORONAL_25UM, _SHAPE_25UM)
+
+    assert len(cps) > 0
+    for cp in cps:
+        assert cp.auto is True
+        assert 0.0 <= cp.dst_x <= 1.0 and 0.0 <= cp.dst_y <= 1.0
+
+
+def test_auto_cps_outside_image_are_dropped(monkeypatch):
+    # A large uniform displacement throws every destination far off-section; the
+    # destination gate must discard them all rather than emit off-image points.
+    w, h = 120, 100
+    section = np.zeros((h, w), dtype=np.float32)
+    template = np.zeros((h, w), dtype=np.float32)
+    monkeypatch.setitem(sys.modules, "itk", _make_fake_itk(10.0 * w))
+
+    cps = elastix.auto_control_points(section, template, _CORONAL_25UM, _SHAPE_25UM)
+
+    assert cps == []
