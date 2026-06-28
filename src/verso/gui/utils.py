@@ -7,7 +7,7 @@ from PyQt6.QtGui import QImage, QPixmap
 
 
 def ndarray_to_pixmap(image: np.ndarray) -> QPixmap:
-    """Convert a uint8 H×W×3 (or H×W) numpy array to a QPixmap.
+    """Convert a uint8 HxWx3 (or HxW) numpy array to a QPixmap.
 
     The array must be uint8 and C-contiguous.
     """
