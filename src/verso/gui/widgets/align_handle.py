@@ -24,15 +24,15 @@ _HANDLE_GRIP_HALF = 8.0  # half-size of a stretch grip's square hit box
 _HANDLE_ARROW_LEN = 9.0  # arrowhead length (along its axis)
 _HANDLE_ARROW_HALF = 7.0  # arrowhead half-width (across its axis)
 _HANDLE_CENTER_DOT_PX = 5.0  # inert centre dot radius (visual marker only)
-_HANDLE_RING_PX = 50.0  # rotation ring radius
+_HANDLE_RING_PX = 45.0  # rotation ring radius
 _HANDLE_RING_HALF = 9.0  # half-width of the ring's grab band
-_HANDLE_DIM = 0.35  # resting opacity
+_HANDLE_DIM = 0.55  # resting opacity
 _HANDLE_OPAQUE = 1.0  # hovered opacity
 
 # Stretch sensitivity: per-event scale ratios are raised to this power before
 # being applied. <1 makes grip dragging slower (the ratios compound across move
 # events, so this scales overall sensitivity).
-_STRETCH_GAIN = 0.25
+_STRETCH_GAIN = 0.35
 
 
 class AlignHandle(pg.GraphicsObject):
