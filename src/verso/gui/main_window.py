@@ -15,7 +15,6 @@ from PyQt6.QtWidgets import (
     QDockWidget,
     QFileDialog,
     QLabel,
-    
     QLineEdit,
     QMainWindow,
     QMessageBox,

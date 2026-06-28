@@ -21,6 +21,7 @@ def _set_taskbar_identity() -> None:
         # happen before any window is shown.
         try:
             import ctypes
+
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(_APP_ID)
         except (OSError, AttributeError):
             # Cosmetic only (taskbar grouping); never block startup over it.
