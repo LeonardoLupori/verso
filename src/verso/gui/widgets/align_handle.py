@@ -29,6 +29,11 @@ _HANDLE_RING_HALF = 9.0  # half-width of the ring's grab band
 _HANDLE_DIM = 0.35  # resting opacity
 _HANDLE_OPAQUE = 1.0  # hovered opacity
 
+# Stretch sensitivity: per-event scale ratios are raised to this power before
+# being applied. <1 makes grip dragging slower (the ratios compound across move
+# events, so this scales overall sensitivity).
+_STRETCH_GAIN = 0.5
+
 
 class AlignHandle(pg.GraphicsObject):
     """Centre manipulator drawn over the atlas overlay in the Align view.
@@ -104,6 +109,42 @@ class AlignHandle(pg.GraphicsObject):
         if abs(math.hypot(px, py) - _HANDLE_RING_PX) <= _HANDLE_RING_HALF:
             return "rotate"
         return "translate"
+
+    def rotate_delta(self, x1: float, y1: float, x2: float, y2: float) -> float:
+        """Degrees to rotate the overlay as the cursor moves ``(x1, y1)→(x2, y2)``.
+
+        The angle is measured about the handle centre, so this is the signed
+        change in polar angle between the two view-space points (used while
+        dragging the rotation ring).
+        """
+        c = self.pos()
+        a1 = math.atan2(y1 - c.y(), x1 - c.x())
+        a2 = math.atan2(y2 - c.y(), x2 - c.x())
+        return math.degrees(a2 - a1)
+
+    def stretch_delta(
+        self, zone: str, x1: float, y1: float, x2: float, y2: float, view_px: float
+    ) -> tuple[float, float]:
+        """``(scale_s, scale_t)`` multipliers for a stretch-grip drag in ``zone``.
+
+        ``zone`` is ``"stretch_x"`` or ``"stretch_y"``. The multiplier is the
+        inverse ratio of the cursor's distance from the handle centre along the
+        grip's axis (pulling a grip outward widens the sampled overlay), softened
+        by ``_STRETCH_GAIN`` and clamped to ``[0.5, 2.0]``. The off-axis factor is
+        left at ``1.0``. ``view_px`` (view units per screen pixel) sets a floor so
+        the ratio can't blow up when a point sits on the centre.
+        """
+        c = self.pos()
+        floor = max(view_px * 2.0, 1e-6)  # avoid blow-up near the centre
+        if zone == "stretch_x":
+            d1 = max(abs(x1 - c.x()), floor)
+            d2 = max(abs(x2 - c.x()), floor)
+            ratio = (d1 / d2) ** _STRETCH_GAIN
+            return (min(2.0, max(0.5, ratio)), 1.0)
+        d1 = max(abs(y1 - c.y()), floor)
+        d2 = max(abs(y2 - c.y()), floor)
+        ratio = (d1 / d2) ** _STRETCH_GAIN
+        return (1.0, min(2.0, max(0.5, ratio)))
 
     def paint(self, painter: QPainter, *_) -> None:
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)

@@ -21,7 +21,6 @@ outside Align mode and when no overlay is present.
 
 from __future__ import annotations
 
-import math
 from collections.abc import Sequence
 from typing import Literal
 
@@ -52,12 +51,6 @@ from verso.gui.widgets.key_state import (
     ensure_key_state_filter,
 )
 from verso.gui.widgets.orientation_overlay import OrientationOverlay
-
-# Stretch sensitivity: per-event scale ratios are raised to this power before
-# being applied. <1 makes grip dragging slower (the ratios compound across move
-# events, so this scales overall sensitivity).
-_STRETCH_GAIN = 0.5
-
 
 # ---------------------------------------------------------------------------
 # Custom ViewBox with overlay-pan support
@@ -125,43 +118,27 @@ class _OverlayViewBox(pg.ViewBox):
                     self.space_pan_changed.emit(False)
                 super().mouseDragEvent(ev, axis)
                 return
+            # Classify the gesture by the handle zone it started in, then defer
+            # the actual rotate/stretch math to the handle; the viewbox only
+            # routes the result to the matching signal.
+            view_px = self.viewPixelSize()[0]
             handle = self._align_handle
-            zone = None
-            if handle is not None:
-                start = self.mapSceneToView(ev.buttonDownScenePos())
-                view_px = self.viewPixelSize()[0]
-                zone = handle.zone_at(start.x(), start.y(), view_px)
+            start = self.mapSceneToView(ev.buttonDownScenePos())
+            zone = handle.zone_at(start.x(), start.y(), view_px) if handle is not None else None
+            p1 = self.mapSceneToView(ev.lastScenePos())
+            p2 = self.mapSceneToView(ev.scenePos())
+            ev.accept()
             if zone == "rotate":
-                ev.accept()
-                c = require(handle).pos()
-                p1 = self.mapSceneToView(ev.lastScenePos())
-                p2 = self.mapSceneToView(ev.scenePos())
-                a1 = math.atan2(p1.y() - c.y(), p1.x() - c.x())
-                a2 = math.atan2(p2.y() - c.y(), p2.x() - c.x())
-                self.overlay_rotated.emit(math.degrees(a2 - a1))
+                self.overlay_rotated.emit(
+                    require(handle).rotate_delta(p1.x(), p1.y(), p2.x(), p2.y())
+                )
             elif zone in ("stretch_x", "stretch_y"):
-                ev.accept()
-                c = require(handle).pos()
-                p1 = self.mapSceneToView(ev.lastScenePos())
-                p2 = self.mapSceneToView(ev.scenePos())
-                floor = max(view_px * 2.0, 1e-6)  # avoid blow-up near the centre
-                if zone == "stretch_x":
-                    d1 = max(abs(p1.x() - c.x()), floor)
-                    d2 = max(abs(p2.x() - c.x()), floor)
-                    # Inverse ratio: pulling the grip outward (d2 > d1) shrinks u,
-                    # which widens the sampled overlay (scale_anchoring multiplies u).
-                    ratio = (d1 / d2) ** _STRETCH_GAIN
-                    self.overlay_scaled.emit(min(2.0, max(0.5, ratio)), 1.0)
-                else:
-                    d1 = max(abs(p1.y() - c.y()), floor)
-                    d2 = max(abs(p2.y() - c.y()), floor)
-                    ratio = (d1 / d2) ** _STRETCH_GAIN
-                    self.overlay_scaled.emit(1.0, min(2.0, max(0.5, ratio)))
+                scale_s, scale_t = require(handle).stretch_delta(
+                    zone, p1.x(), p1.y(), p2.x(), p2.y(), view_px
+                )
+                self.overlay_scaled.emit(scale_s, scale_t)
             else:
                 # Default: drag anywhere else translates the atlas overlay.
-                ev.accept()
-                p1 = self.mapSceneToView(ev.lastScenePos())
-                p2 = self.mapSceneToView(ev.scenePos())
                 self.overlay_panned.emit(p2.x() - p1.x(), p2.y() - p1.y())
         elif (
             self._interaction_mode in ("warp", "prep")
