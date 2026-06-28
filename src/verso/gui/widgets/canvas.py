@@ -29,18 +29,11 @@ import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import QEvent, QObject, QRectF, Qt, pyqtSignal
 from PyQt6.QtGui import (
-    QColor,
-    QCursor,
-    QKeyEvent,
     QMouseEvent,
     QPainter,
-    QPen,
-    QPixmap,
     QWheelEvent,
 )
 from PyQt6.QtWidgets import (
-    QAbstractButton,
-    QApplication,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
@@ -48,145 +41,22 @@ from PyQt6.QtWidgets import (
 
 from verso.gui.utils import require
 from verso.gui.widgets.align_handle import AlignHandle
+from verso.gui.widgets.cursors import (
+    make_circle_cursor,
+    make_cross_cursor,
+    make_rotate_cursor,
+)
+from verso.gui.widgets.key_state import (
+    ShiftState,
+    SpaceState,
+    ensure_key_state_filter,
+)
 from verso.gui.widgets.orientation_overlay import OrientationOverlay
 
 # Stretch sensitivity: per-event scale ratios are raised to this power before
 # being applied. <1 makes grip dragging slower (the ratios compound across move
 # events, so this scales overall sensitivity).
 _STRETCH_GAIN = 0.5
-
-
-def _make_cross_cursor(rgb: tuple[int, int, int], size: int = 21) -> QCursor:
-    """Build a 1-px colored crosshair with a 1-px black outline, hotspot at center."""
-    pm = QPixmap(size, size)
-    pm.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pm)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
-    mid = size // 2
-    painter.setPen(QPen(QColor(0, 0, 0), 3))
-    painter.drawLine(1, mid, size - 2, mid)
-    painter.drawLine(mid, 1, mid, size - 2)
-    painter.setPen(QPen(QColor(*rgb), 1))
-    painter.drawLine(1, mid, size - 2, mid)
-    painter.drawLine(mid, 1, mid, size - 2)
-    painter.end()
-    return QCursor(pm, mid, mid)
-
-
-def _make_circle_cursor(rgb: tuple[int, int, int], diameter_px: int) -> QCursor:
-    """Build a 1-px colored circle with a 1-px black outline, hotspot at center.
-
-    ``diameter_px`` is the on-screen diameter; it is clamped to a sane range so
-    huge brushes at high zoom don't create an unusable pixmap.
-    """
-    d = int(min(max(diameter_px, 3), 1024))
-    pad = 2
-    sz = d + 2 * pad + 1
-    pm = QPixmap(sz, sz)
-    pm.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pm)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-    painter.setPen(QPen(QColor(0, 0, 0), 3))
-    painter.drawEllipse(pad, pad, d, d)
-    painter.setPen(QPen(QColor(*rgb), 1))
-    painter.drawEllipse(pad, pad, d, d)
-    mid = sz // 2
-    painter.setPen(QPen(QColor(0, 0, 0), 3))
-    painter.drawPoint(mid, mid)
-    painter.setPen(QPen(QColor(*rgb), 1))
-    painter.drawPoint(mid, mid)
-    painter.end()
-    return QCursor(pm, mid, mid)
-
-
-# lucide "rotate-ccw" glyph (circled arrow), parameterised by render size/colour/stroke.
-_ROTATE_CCW_SVG = (
-    '<svg xmlns="http://www.w3.org/2000/svg" width="{s}" height="{s}" '
-    'viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="{w}" '
-    'stroke-linecap="round" stroke-linejoin="round">'
-    '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>'
-    '<path d="M3 3v5h5"/></svg>'
-)
-
-
-def _make_rotate_cursor(rgb: tuple[int, int, int], size: int = 24) -> QCursor:
-    """Build a circled-arrow rotation cursor from the lucide ``rotate-ccw`` glyph.
-
-    Rendered with a dark halo pass under the coloured stroke for contrast, hotspot
-    at the pixmap centre.
-    """
-    hexc = "#{:02x}{:02x}{:02x}".format(*rgb)
-    pm = QPixmap(size, size)
-    pm.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pm)
-    for color, width in (("#000000", 3.5), (hexc, 2.0)):
-        layer = QPixmap()
-        layer.loadFromData(_ROTATE_CCW_SVG.format(s=size, c=color, w=width).encode())
-        painter.drawPixmap(0, 0, layer)
-    painter.end()
-    h = size // 2
-    return QCursor(pm, h, h)
-
-
-# ---------------------------------------------------------------------------
-# Application-level space-key tracker (singleton, installed once)
-# ---------------------------------------------------------------------------
-
-
-class _SpaceState:
-    held: bool = False
-    # ImageCanvas instances that want to be notified on Space change.
-    listeners: set = set()
-
-
-class _ShiftState:
-    held: bool = False
-    # ImageCanvas instances that want to be notified on Shift change.
-    listeners: set = set()
-
-
-class _SpaceFilter(QObject):
-    """Application event filter that tracks whether the spacebar is held.
-
-    Also tracks Shift for prep-mode cursor color so it stays synced even when
-    keyboard focus is on another widget (properties panel, main window, etc).
-    """
-
-    def eventFilter(self, _: QObject, event: QEvent) -> bool:
-        if not isinstance(event, QKeyEvent):
-            return False
-        t = event.type()
-        if t == QEvent.Type.KeyPress and not event.isAutoRepeat():
-            if event.key() == Qt.Key.Key_Space:
-                _SpaceState.held = True
-                for canvas in list(_SpaceState.listeners):
-                    canvas._on_space_changed()
-                # Consume the event when a button has focus so spacebar doesn't
-                # re-trigger the last clicked button while panning.
-                if isinstance(QApplication.focusWidget(), QAbstractButton):
-                    return True
-            elif event.key() == Qt.Key.Key_Shift:
-                _ShiftState.held = True
-                for canvas in list(_ShiftState.listeners):
-                    canvas._on_shift_changed()
-        elif t == QEvent.Type.KeyRelease and not event.isAutoRepeat():
-            if event.key() == Qt.Key.Key_Space:
-                _SpaceState.held = False
-                for canvas in list(_SpaceState.listeners):
-                    canvas._on_space_changed()
-            elif event.key() == Qt.Key.Key_Shift:
-                _ShiftState.held = False
-                for canvas in list(_ShiftState.listeners):
-                    canvas._on_shift_changed()
-        return False
-
-
-def _ensure_space_filter() -> None:
-    app = QApplication.instance()
-    if app is not None and getattr(app, "_verso_space_filter", None) is None:
-        filt = _SpaceFilter()
-        setattr(app, "_verso_space_filter", filt)
-        app.installEventFilter(filt)
 
 
 # ---------------------------------------------------------------------------
@@ -232,7 +102,7 @@ class _OverlayViewBox(pg.ViewBox):
         if (
             self._interaction_mode in ("warp", "prep")
             and ev.button() == Qt.MouseButton.LeftButton
-            and not _SpaceState.held
+            and not SpaceState.held
         ):
             pos = self.mapSceneToView(ev.scenePos())
             self.canvas_clicked.emit(pos.x(), pos.y())
@@ -248,7 +118,7 @@ class _OverlayViewBox(pg.ViewBox):
             # it the gesture is interpreted by the handle zone it started in —
             # ring rotates, arrowhead grips stretch, anywhere else translates the
             # atlas overlay.
-            if _SpaceState.held:
+            if SpaceState.held:
                 if ev.isStart():
                     self.space_pan_changed.emit(True)
                 elif ev.isFinish():
@@ -295,7 +165,7 @@ class _OverlayViewBox(pg.ViewBox):
                 self.overlay_panned.emit(p2.x() - p1.x(), p2.y() - p1.y())
         elif (
             self._interaction_mode in ("warp", "prep")
-            and not _SpaceState.held
+            and not SpaceState.held
             and ev.button() == Qt.MouseButton.LeftButton
         ):
             ev.accept()
@@ -344,7 +214,7 @@ class ImageCanvas(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        _ensure_space_filter()
+        ensure_key_state_filter()
         self._channel_items: list[pg.ImageItem] = []
         self._channel_shape: tuple[int, int] | None = None
         self._interaction_mode: ImageCanvas._InteractionMode = "align"
@@ -354,10 +224,10 @@ class ImageCanvas(QWidget):
         self._last_handle_zone: str | None = None
         self._space_panning: bool = False
         # Pre-built cursors swapped in/out by the prep-mode hover filter.
-        self._cursor_draw = _make_cross_cursor((120, 200, 255))  # bright sky-blue
-        self._cursor_erase = _make_cross_cursor((255, 140, 140))  # bright coral
+        self._cursor_draw = make_cross_cursor((120, 200, 255))  # bright sky-blue
+        self._cursor_erase = make_cross_cursor((255, 140, 140))  # bright coral
         # Rotation cursor shown over the align handle's ring.
-        self._cursor_rotate = _make_rotate_cursor((230, 230, 230))
+        self._cursor_rotate = make_rotate_cursor((230, 230, 230))
         # Brush mode: circular cursor sized to the brush footprint in image px.
         self._brush_mode: bool = False
         self._brush_radius_img: int = 20
@@ -496,12 +366,12 @@ class ImageCanvas(QWidget):
         self.view.installEventFilter(self)
         # Wheel events go to the scroll-area viewport, not the view itself.
         require(self.view.viewport()).installEventFilter(self)
-        _ShiftState.listeners.add(self)
-        _SpaceState.listeners.add(self)
+        ShiftState.listeners.add(self)
+        SpaceState.listeners.add(self)
 
         def _drop_listeners(_=None, s=self) -> None:
-            _ShiftState.listeners.discard(s)
-            _SpaceState.listeners.discard(s)
+            ShiftState.listeners.discard(s)
+            SpaceState.listeners.discard(s)
 
         self.destroyed.connect(_drop_listeners)
 
@@ -538,7 +408,7 @@ class ImageCanvas(QWidget):
             # are observed, never consumed, so pyqtgraph still does the pan.
             if (
                 t == QEvent.Type.MouseButtonPress
-                and _SpaceState.held
+                and SpaceState.held
                 and event.button() == Qt.MouseButton.LeftButton
             ):
                 self._space_panning = True
@@ -592,13 +462,13 @@ class ImageCanvas(QWidget):
             return
         if self._apply_pan_cursor():
             return
-        rgb = (255, 140, 140) if _ShiftState.held else (120, 200, 255)
+        rgb = (255, 140, 140) if ShiftState.held else (120, 200, 255)
         if self._brush_mode:
             px_per_img = 1.0 / max(self._vb.viewPixelSize()[0], 1e-9)
             diameter = int(round(2 * self._brush_radius_img * px_per_img))
-            self.view.setCursor(_make_circle_cursor(rgb, diameter))
+            self.view.setCursor(make_circle_cursor(rgb, diameter))
             return
-        self.view.setCursor(self._cursor_erase if _ShiftState.held else self._cursor_draw)
+        self.view.setCursor(self._cursor_erase if ShiftState.held else self._cursor_draw)
 
     def set_channel_planes(self, planes: Sequence[np.ndarray | None]) -> None:
         """Install the per-channel raw uint8 planes that drive the section view.
@@ -716,7 +586,7 @@ class ImageCanvas(QWidget):
         pressed and a pan is underway. Returns ``True`` when it took over the
         cursor so per-mode refreshers can bail out early.
         """
-        if not _SpaceState.held:
+        if not SpaceState.held:
             return False
         self.view.setCursor(
             Qt.CursorShape.ClosedHandCursor
