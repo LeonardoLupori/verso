@@ -469,9 +469,17 @@ class WarpView(QWidget):
         section = self._panel.section
         if section is None:
             return False
-        section.warp.status = (
-            AlignmentStatus.COMPLETE if section.warp.control_points else AlignmentStatus.NOT_STARTED
-        )
+        if section.warp.control_points:
+            # Accepting a warp also accepts the affine plane it sits on, so
+            # promote the alignment to COMPLETE (mirrors commit_warp). Without
+            # this the next save's auto-interpolation would re-guess the plane
+            # and the warp would land on a different one.
+            from verso.engine.drafts import commit_alignment
+
+            commit_alignment(section)
+            section.warp.status = AlignmentStatus.COMPLETE
+        else:
+            section.warp.status = AlignmentStatus.NOT_STARTED
         self._baseline_warp = copy.deepcopy(section.warp)
         self._state.pop_baseline(section.id, "warp")
         self._reset_undo()

@@ -126,12 +126,29 @@ def test_commit_alignment_noop_on_zero_plane():
     assert section.alignment.status == AlignmentStatus.NOT_STARTED
 
 
-def test_commit_warp_requires_complete_alignment():
+def test_commit_warp_requires_usable_plane():
     section = _section()
     assert commit_warp(section) is False
     section.alignment.status = AlignmentStatus.COMPLETE
     assert commit_warp(section) is True
     assert section.warp.status == AlignmentStatus.COMPLETE
+
+
+def test_commit_warp_promotes_proposal_plane():
+    # A warp placed on an uncommitted (e.g. quicknii_default) plane must promote
+    # that plane to COMPLETE so the next save's interpolation can't overwrite it.
+    section = _section(
+        alignment=Alignment(
+            anchoring=[1.0, 2.0] + [0.0] * 7,
+            status=AlignmentStatus.IN_PROGRESS,
+            source="quicknii_default",
+        ),
+        warp=WarpState(control_points=[ControlPoint(0, 0, 0, 0)]),
+    )
+    assert commit_warp(section) is True
+    assert section.warp.status == AlignmentStatus.COMPLETE
+    assert section.alignment.status == AlignmentStatus.COMPLETE
+    assert section.alignment.stored_anchoring == section.alignment.anchoring
 
 
 def test_wipe_alignment_for_flip_resets_everything():

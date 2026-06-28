@@ -88,9 +88,13 @@ class SectionCanvasPanel(QWidget):
         # if a thumbnail must be regenerated from the original (see
         # ensure_working_copy); kept in sync with the active project.
         self._working_scale: float = WORKING_SCALE
-        # (id(raw_image), flip_h, flip_v, n) — invalidated only by section /
+        # (planes_version, flip_h, flip_v, n) — invalidated only by section /
         # flip / channel-count changes; brightness/colour edits don't touch it.
+        # planes_version is bumped on every raw-image (re)load; it replaces
+        # id(raw_image), which CPython reuses across freed objects and could
+        # collide with the previous key, skipping the GPU texture update.
         self._channel_planes_key: tuple | None = None
+        self._planes_version: int = 0
         self._overlay_mode: str = "annotation"  # "annotation" | "outline" | "reference"
         self._outline_color: tuple[int, int, int] = (255, 255, 255)
         # Cache of the *pre*-post-processing atlas slice, keyed by everything it
@@ -230,6 +234,7 @@ class SectionCanvasPanel(QWidget):
 
         try:
             self._raw_image = ensure_working_copy(section, self._working_scale)
+            self._planes_version += 1
         except RuntimeError as exc:
             QMessageBox.warning(self, "Cannot load image", str(exc))
             self.section_loaded.emit(section)
@@ -265,7 +270,7 @@ class SectionCanvasPanel(QWidget):
 
         # Push raw planes only when section / flip / channel-count actually
         # changed; this is the only path that touches the GPU texture.
-        planes_key = (id(self._raw_image), flip_h, flip_v, n)
+        planes_key = (self._planes_version, flip_h, flip_v, n)
         if planes_key != self._channel_planes_key:
             planes = [np.ascontiguousarray(img[:, :, i]) for i in range(n)]
             self.canvas.set_channel_planes(planes)

@@ -100,8 +100,16 @@ def commit_alignment(section: Section) -> bool:
 
 
 def commit_warp(section: Section) -> bool:
-    """Mark the section's warp saved.  Requires a COMPLETE alignment."""
-    if section.alignment.status != AlignmentStatus.COMPLETE:
+    """Mark the section's warp saved, committing its alignment plane too.
+
+    Placing control points means the user accepted the section's affine plane,
+    so the alignment is promoted to COMPLETE via :func:`commit_alignment` when it
+    isn't already.  Without this the next save's auto-interpolation would treat
+    the plane as unfinished, re-guess it, and leave the warp sitting on a
+    different plane.  Returns False without changing state only when there is no
+    usable plane to commit (a zero/empty anchoring).
+    """
+    if section.alignment.status != AlignmentStatus.COMPLETE and not commit_alignment(section):
         return False
     section.warp.status = AlignmentStatus.COMPLETE
     return True

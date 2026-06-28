@@ -67,10 +67,14 @@ class PrepView(QWidget):
         self._negative_mask = False
         self._mask_visible = True
         self._channels: list[ChannelSpec] = []
-        # (id(raw_image), flip_h, flip_v, n) — tracks whether we still need to
+        # (planes_version, flip_h, flip_v, n) — tracks whether we still need to
         # re-push the per-channel uint8 planes to the canvas.  Brightness /
-        # colour / visibility changes never invalidate this key.
+        # colour / visibility changes never invalidate this key.  planes_version
+        # is bumped on every raw-image (re)load; it replaces id(raw_image),
+        # which CPython reuses across freed objects and could collide with the
+        # previous key, skipping the GPU texture update.
         self._channel_planes_key: tuple | None = None
+        self._planes_version: int = 0
         self._undo_stack: list[np.ndarray] = []
         self._stroke_points: list[tuple[float, float]] = []
         self._stroke_active = False
@@ -189,6 +193,7 @@ class PrepView(QWidget):
             self._raw_image = ensure_working_copy(
                 section, require(self._state.project).working_scale
             )
+            self._planes_version += 1
         except RuntimeError as exc:
             QMessageBox.warning(self, "Cannot load image", str(exc))
             return
@@ -538,7 +543,7 @@ class PrepView(QWidget):
 
         # Re-push raw planes only when section / flip / channel count changes;
         # this is the only path that touches the GPU texture.
-        planes_key = (id(self._raw_image), flip_h, flip_v, n)
+        planes_key = (self._planes_version, flip_h, flip_v, n)
         if planes_key != self._channel_planes_key:
             self._push_channel_planes(img, flip_h, flip_v, n)
             self._channel_planes_key = planes_key
