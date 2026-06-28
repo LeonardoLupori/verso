@@ -6,6 +6,19 @@ import numpy as np
 from PyQt6.QtGui import QImage, QPixmap
 
 
+def require[T](value: T | None) -> T:
+    """Narrow a value that the type stubs mark Optional but is never None here.
+
+    PyQt accessors such as ``QWidget.layout()``, ``QMainWindow.menuBar()`` and
+    ``QMainWindow.statusBar()`` are typed to return ``... | None`` even though
+    they always return a live object in our usage. Wrapping the call narrows the
+    type for the checker and fails loudly if the assumption is ever violated.
+    """
+    if value is None:  # pragma: no cover - defensive
+        raise RuntimeError("expected a non-None value")
+    return value
+
+
 def ndarray_to_pixmap(image: np.ndarray) -> QPixmap:
     """Convert a uint8 HxWx3 (or HxW) numpy array to a QPixmap.
 

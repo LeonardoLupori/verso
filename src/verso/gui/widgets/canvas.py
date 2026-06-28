@@ -37,6 +37,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from verso.gui.utils import require
 from verso.gui.widgets.orientation_overlay import OrientationOverlay
 
 # Align handle geometry (in screen pixels) and opacity.
@@ -255,7 +256,7 @@ class _OverlayViewBox(pg.ViewBox):
                 zone = handle.zone_at(start.x(), start.y(), view_px)
             if zone == "rotate":
                 ev.accept()
-                c = handle.pos()
+                c = require(handle).pos()
                 p1 = self.mapSceneToView(ev.lastScenePos())
                 p2 = self.mapSceneToView(ev.scenePos())
                 a1 = math.atan2(p1.y() - c.y(), p1.x() - c.x())
@@ -263,7 +264,7 @@ class _OverlayViewBox(pg.ViewBox):
                 self.overlay_rotated.emit(math.degrees(a2 - a1))
             elif zone in ("stretch_x", "stretch_y"):
                 ev.accept()
-                c = handle.pos()
+                c = require(handle).pos()
                 p1 = self.mapSceneToView(ev.lastScenePos())
                 p2 = self.mapSceneToView(ev.scenePos())
                 floor = max(view_px * 2.0, 1e-6)  # avoid blow-up near the centre
@@ -582,7 +583,7 @@ class ImageCanvas(QWidget):
     def _install_prep_cursor_filter(self) -> None:
         self.view.installEventFilter(self)
         # Wheel events go to the scroll-area viewport, not the view itself.
-        self.view.viewport().installEventFilter(self)
+        require(self.view.viewport()).installEventFilter(self)
         _ShiftState.listeners.add(self)
         _SpaceState.listeners.add(self)
 

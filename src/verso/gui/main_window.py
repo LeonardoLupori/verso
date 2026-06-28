@@ -1,16 +1,4 @@
 """Main application window.
-
-Layout:
-  ┌──────────────────────────────────────────────────────┐
-  │  [Overview] [Prep] [Align/Warp]          menubar     │
-  ├──────────────────────────────────────────────────────┤
-  │                                      │               │
-  │     central (QStackedWidget)         │  properties   │
-  │     OverviewView / PrepView /        │  (right dock) │
-  │     AlignView                        │               │
-  ├──────────────────────────────────────┴───────────────┤
-  │  filmstrip (bottom dock, hidden in Overview)         │
-  └──────────────────────────────────────────────────────┘
 """
 
 from __future__ import annotations
@@ -53,6 +41,7 @@ from verso.gui.dialogs.info import show_info_dialog
 from verso.gui.dialogs.new_project import NewProjectDialog
 from verso.gui.jobs import AutoCPWorker, BackgroundJob, BatchMaskWorker, DeepSliceWorker
 from verso.gui.state import AppState
+from verso.gui.utils import require
 from verso.gui.views.align_view import AlignView
 from verso.gui.views.overview_view import OverviewView
 from verso.gui.views.prep_view import PrepView
@@ -137,9 +126,9 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _build_menu(self) -> None:
-        mb = self.menuBar()
+        mb = require(self.menuBar())
 
-        file_menu = mb.addMenu("&File")
+        file_menu = require(mb.addMenu("&File"))
 
         act_new = QAction("&New Project…", self)
         act_new.setShortcut(QKeySequence.StandardKey.New)
@@ -187,7 +176,7 @@ class MainWindow(QMainWindow):
         act_quit.triggered.connect(self.close)
         file_menu.addAction(act_quit)
 
-        images_menu = mb.addMenu("&Image")
+        images_menu = require(mb.addMenu("&Image"))
         act_adjust = QAction("&Channels…", self)
         act_adjust.triggered.connect(self._open_brightness_dialog)
         images_menu.addAction(act_adjust)
@@ -199,9 +188,9 @@ class MainWindow(QMainWindow):
         act_add_images.triggered.connect(self._add_images_to_project)
         images_menu.addAction(act_add_images)
 
-        batch_menu = mb.addMenu("&Batch")
+        batch_menu = require(mb.addMenu("&Batch"))
 
-        preprocess_menu = batch_menu.addMenu("&Preprocess")
+        preprocess_menu = require(batch_menu.addMenu("&Preprocess"))
         act_batch_mask = QAction("Autodetect slice mask for &all slices", self)
         act_batch_mask.triggered.connect(self._batch_autodetect_masks)
         preprocess_menu.addAction(act_batch_mask)
@@ -211,7 +200,7 @@ class MainWindow(QMainWindow):
         self._act_clear_all_slice_masks.triggered.connect(self._clear_all_slice_masks)
         preprocess_menu.addAction(self._act_clear_all_slice_masks)
 
-        align_menu = batch_menu.addMenu("&Align")
+        align_menu = require(batch_menu.addMenu("&Align"))
         self._act_deepslice = QAction("Run &DeepSlice", self)
         self._act_deepslice.setEnabled(False)
         self._act_deepslice.triggered.connect(self._run_deepslice)
@@ -233,7 +222,7 @@ class MainWindow(QMainWindow):
         self._act_clear_all_alignments.triggered.connect(self._clear_all_alignments)
         align_menu.addAction(self._act_clear_all_alignments)
 
-        warp_menu = batch_menu.addMenu("&Warp")
+        warp_menu = require(batch_menu.addMenu("&Warp"))
         self._act_batch_auto_cp = QAction("&Auto-generate control points for all slices…", self)
         self._act_batch_auto_cp.setEnabled(False)
         self._act_batch_auto_cp.triggered.connect(self._batch_auto_generate_warps)
@@ -248,7 +237,7 @@ class MainWindow(QMainWindow):
         self._act_clear_auto_cps.triggered.connect(self._clear_all_auto_cps)
         warp_menu.addAction(self._act_clear_auto_cps)
 
-        export_menu = mb.addMenu("&Export")
+        export_menu = require(mb.addMenu("&Export"))
         act_export_images = QAction("Export images with atlas &overlay…", self)
         act_export_images.triggered.connect(self._export_images_with_overlay)
         export_menu.addAction(act_export_images)
@@ -271,7 +260,7 @@ class MainWindow(QMainWindow):
         act_export_va.triggered.connect(self._export_visualign)
         export_menu.addAction(act_export_va)
 
-        help_menu = mb.addMenu("&Help")
+        help_menu = require(mb.addMenu("&Help"))
         act_atlas_info = QAction("&Atlas info…", self)
         act_atlas_info.triggered.connect(self._show_atlas_info)
         help_menu.addAction(act_atlas_info)
@@ -410,7 +399,8 @@ class MainWindow(QMainWindow):
         here reserves the space from launch so it is always visible.  The font
         is shrunk a point and the size grip dropped to keep it compact.
         """
-        bar = self.statusBar()
+        bar = require(self.statusBar())
+        self._statusbar = bar
         bar.setSizeGripEnabled(False)
         font = bar.font()
         font.setPointSizeF(max(1.0, font.pointSizeF() - 1.0))
@@ -679,7 +669,7 @@ class MainWindow(QMainWindow):
         if self._state.project_path is not None:
             self._write_project(self._state.project_path)
 
-        self.statusBar().showMessage(f"Imported settings from {Path(path).name}", 3000)
+        self._statusbar.showMessage(f"Imported settings from {Path(path).name}", 3000)
 
     def _save_all(self) -> bool:
         """Persist every unsaved edit across all slices/steps (Ctrl+S / menu).
@@ -770,7 +760,7 @@ class MainWindow(QMainWindow):
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             project.save(path)
-            self.statusBar().showMessage(f"Saved project to {path}", 3000)
+            self._statusbar.showMessage(f"Saved project to {path}", 3000)
         except Exception as exc:
             QMessageBox.critical(self, "Cannot save project", str(exc))
 
@@ -1302,7 +1292,7 @@ class MainWindow(QMainWindow):
             if pos is not None:
                 self._state.set_section(pos)
         self._on_sections_reordered()
-        self.statusBar().showMessage(f"Added {len(new_sections)} image(s) to the project", 3000)
+        self._statusbar.showMessage(f"Added {len(new_sections)} image(s) to the project", 3000)
 
     def _warn_channel_mismatch(self, new_sections: list, project) -> None:
         """Warn (do not block) if added images differ in channel count."""
@@ -1402,7 +1392,7 @@ class MainWindow(QMainWindow):
         # reload of the active view and properties.
         if pos == old_index:
             self._state.section_changed.emit(pos)
-        self.statusBar().showMessage(
+        self._statusbar.showMessage(
             f"Removed {n} image{'s' if n != 1 else ''} from the project", 3000
         )
 
@@ -1544,7 +1534,7 @@ class MainWindow(QMainWindow):
             self._prep.load_section(self._state.current_section)
         self._refresh_properties()
         self._refresh_filmstrip_dots()
-        self.statusBar().showMessage(f"Auto-detected {completed} slice masks", 5000)
+        self._statusbar.showMessage(f"Auto-detected {completed} slice masks", 5000)
         self._warn_errors(
             "Some masks failed", errors, f"{len(errors)} sections could not be processed:"
         )
@@ -1771,7 +1761,7 @@ class MainWindow(QMainWindow):
         self._reverse_axis_proposal = dlg.reverse_section_order()
 
         self._update_deepslice_enabled(running=True)
-        self.statusBar().showMessage("Running DeepSlice suggestions...")
+        self._statusbar.showMessage("Running DeepSlice suggestions...")
 
         self._deepslice_job = BackgroundJob(
             self,
@@ -1825,11 +1815,11 @@ class MainWindow(QMainWindow):
         self._on_section_changed(self._state.section_index)
         self._refresh_filmstrip_dots()
         self._update_slicing_position()
-        self.statusBar().showMessage(f"Applied {applied} DeepSlice suggestions", 5000)
+        self._statusbar.showMessage(f"Applied {applied} DeepSlice suggestions", 5000)
 
     def _on_deepslice_error(self, message: str) -> None:
         QMessageBox.warning(self, "DeepSlice failed", message)
-        self.statusBar().showMessage("DeepSlice failed", 5000)
+        self._statusbar.showMessage("DeepSlice failed", 5000)
 
     def _on_deepslice_finished(self) -> None:
         self._deepslice_job = None
@@ -1852,7 +1842,7 @@ class MainWindow(QMainWindow):
         self._overview.refresh()
         self._on_section_changed(self._state.section_index)
         self._update_slicing_position()
-        self.statusBar().showMessage(f"Restored {changed} default proposals", 3000)
+        self._statusbar.showMessage(f"Restored {changed} default proposals", 3000)
 
     def _clear_all_alignments(self) -> None:
         project = self._state.project
@@ -1884,7 +1874,7 @@ class MainWindow(QMainWindow):
         )
         self._sync_position_mm(project.sections)
         self._after_batch_clear()
-        self.statusBar().showMessage(
+        self._statusbar.showMessage(
             f"Cleared all alignments and restored {changed} default proposals",
             5000,
         )
@@ -1916,7 +1906,7 @@ class MainWindow(QMainWindow):
                 removed += 1
             section.preprocessing.slice_mask_path = None
         self._after_batch_clear()
-        self.statusBar().showMessage(f"Cleared {removed} slice masks", 5000)
+        self._statusbar.showMessage(f"Cleared {removed} slice masks", 5000)
 
     def _clear_all_manual_cps(self) -> None:
         """Batch: drop every hand-placed control point, keeping auto ones."""
@@ -1956,7 +1946,7 @@ class MainWindow(QMainWindow):
             else:
                 section.warp.status = AlignmentStatus.IN_PROGRESS
         self._after_batch_clear()
-        self.statusBar().showMessage(f"Cleared {kind} control points on {cleared} sections", 5000)
+        self._statusbar.showMessage(f"Cleared {kind} control points on {cleared} sections", 5000)
 
     def _after_batch_clear(self) -> None:
         """Refresh dependent UI + write project after a batch wipe."""
@@ -1999,7 +1989,7 @@ class MainWindow(QMainWindow):
             project.elastix_params = dialog.get_params()
             if self._state.project_path is not None:
                 self._write_project(self._state.project_path)
-            self.statusBar().showMessage("Saved automatic registration parameters", 4000)
+            self._statusbar.showMessage("Saved automatic registration parameters", 4000)
 
     def _auto_generate_warp_cps(self) -> None:
         """Generate control points for the current section (Warp view button)."""
@@ -2102,7 +2092,7 @@ class MainWindow(QMainWindow):
                 n = len(cps)
                 self._warp.apply_auto_control_points(cps)
         self._refresh_current_step_dot()
-        self.statusBar().showMessage(f"Generated {n} control points", 5000)
+        self._statusbar.showMessage(f"Generated {n} control points", 5000)
         self._warn_errors(
             "Some sections failed", errors, f"{len(errors)} sections could not be processed:"
         )
@@ -2128,7 +2118,7 @@ class MainWindow(QMainWindow):
                     section.warp.status = AlignmentStatus.IN_PROGRESS
                 total += len(cps)
         self._after_batch_clear()  # refresh dependent UI + persist project
-        self.statusBar().showMessage(
+        self._statusbar.showMessage(
             f"Generated {total} control points across {completed} sections", 6000
         )
         self._warn_errors(

@@ -27,6 +27,7 @@ from verso.engine.preprocessing import (
     mask_to_rgba,
     morph_mask,
 )
+from verso.gui.utils import require
 from verso.gui.widgets.canvas import ImageCanvas
 from verso.gui.widgets.view_chrome import make_view_status_bar
 
@@ -185,7 +186,9 @@ class PrepView(QWidget):
         from verso.engine.io.image_io import ensure_working_copy
 
         try:
-            self._raw_image = ensure_working_copy(section, self._state.project.working_scale)
+            self._raw_image = ensure_working_copy(
+                section, require(self._state.project).working_scale
+            )
         except RuntimeError as exc:
             QMessageBox.warning(self, "Cannot load image", str(exc))
             return
@@ -670,7 +673,7 @@ class PrepView(QWidget):
         self._push_undo()
         pts = self._stroke_points_to_mask_coords(self._stroke_points)
         self._current_mask = apply_freehand_stroke(
-            self._current_mask,
+            require(self._current_mask),
             pts,
             add=not self._stroke_erase,
         )
@@ -683,7 +686,7 @@ class PrepView(QWidget):
         """Stamp the brush along ``display_points`` into the live mask."""
         pts = self._stroke_points_to_mask_coords(display_points)
         self._current_mask = apply_brush_stroke(
-            self._current_mask,
+            require(self._current_mask),
             pts,
             radius=self._brush_radius,
             add=not self._stroke_erase,
