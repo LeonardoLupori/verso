@@ -10,7 +10,7 @@ Item stack (low z to high):
   cp_item          — warp control points (z=20).
   stroke_item      — live freehand mask preview (z=30).
 
-Align handle: in Align mode a centre gizmo (``_AlignHandle``) is drawn over the
+Align handle: in Align mode a centre gizmo (``AlignHandle``) is drawn over the
 overlay.  Dragging the N/E/S/W arrowhead grips emits
 ``overlay_scaled(scale_s, scale_t)`` to stretch width/height; dragging the ring
 emits ``overlay_rotated(deg)`` to spin it in-plane; dragging anywhere else emits
@@ -27,7 +27,7 @@ from typing import Literal
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtCore import QEvent, QObject, QPointF, QRectF, Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, QObject, QRectF, Qt, pyqtSignal
 from PyQt6.QtGui import (
     QColor,
     QCursor,
@@ -36,31 +36,20 @@ from PyQt6.QtGui import (
     QPainter,
     QPen,
     QPixmap,
-    QPolygonF,
     QWheelEvent,
 )
 from PyQt6.QtWidgets import (
     QAbstractButton,
     QApplication,
-    QGraphicsItem,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
 
 from verso.gui.utils import require
+from verso.gui.widgets.align_handle import AlignHandle
 from verso.gui.widgets.orientation_overlay import OrientationOverlay
 
-# Align handle geometry (in screen pixels) and opacity.
-_HANDLE_GRIP_PX = 30.0  # distance of the arrowhead stretch grips along each axis
-_HANDLE_GRIP_HALF = 8.0  # half-size of a stretch grip's square hit box
-_HANDLE_ARROW_LEN = 9.0  # arrowhead length (along its axis)
-_HANDLE_ARROW_HALF = 7.0  # arrowhead half-width (across its axis)
-_HANDLE_CENTER_DOT_PX = 6.0  # inert centre dot radius (visual marker only)
-_HANDLE_RING_PX = 42.0  # rotation ring radius
-_HANDLE_RING_HALF = 9.0  # half-width of the ring's grab band
-_HANDLE_DIM = 0.35  # resting opacity
-_HANDLE_OPAQUE = 1.0  # hovered opacity
 # Stretch sensitivity: per-event scale ratios are raised to this power before
 # being applied. <1 makes grip dragging slower (the ratios compound across move
 # events, so this scales overall sensitivity).
@@ -227,12 +216,12 @@ class _OverlayViewBox(pg.ViewBox):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._interaction_mode: _OverlayViewBox._InteractionMode = "align"
-        self._align_handle: _AlignHandle | None = None
+        self._align_handle: AlignHandle | None = None
 
     def set_interaction_mode(self, mode: _InteractionMode) -> None:
         self._interaction_mode = mode
 
-    def set_align_handle(self, handle: _AlignHandle) -> None:
+    def set_align_handle(self, handle: AlignHandle) -> None:
         self._align_handle = handle
 
     def mouseClickEvent(self, ev) -> None:
@@ -322,103 +311,6 @@ class _OverlayViewBox(pg.ViewBox):
             ev.accept()  # suppress default right-drag zoom
         else:
             super().mouseDragEvent(ev, axis)
-
-
-# ---------------------------------------------------------------------------
-# Align centre handle
-# ---------------------------------------------------------------------------
-
-
-class _AlignHandle(pg.GraphicsObject):
-    """Centre manipulator drawn over the atlas overlay in the Align view.
-
-    Painted at the overlay centre at a fixed on-screen size (it ignores the
-    view transform), it shows a crosshair inside an outer ring.  It is purely a
-    visual + hit-test helper: the :class:`_OverlayViewBox` reads :meth:`zone_at`
-    to route a drag — inner crosshair → translate, outer ring → rotate — and the
-    canvas toggles :meth:`set_hovered` so it brightens when the cursor is over it.
-    """
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
-        self.setZValue(18)
-        self._hovered = False
-        self.setOpacity(_HANDLE_DIM)
-        self.setVisible(False)
-
-    def boundingRect(self) -> QRectF:
-        r = _HANDLE_RING_PX + 2.0
-        return QRectF(-r, -r, 2.0 * r, 2.0 * r)
-
-    def set_center(self, x: float, y: float) -> None:
-        """Place the handle at ``(x, y)`` in view/image-pixel coordinates."""
-        self.setPos(x, y)
-
-    def set_hovered(self, hovered: bool) -> None:
-        if hovered == self._hovered:
-            return
-        self._hovered = hovered
-        self.setOpacity(_HANDLE_OPAQUE if hovered else _HANDLE_DIM)
-
-    def set_active(self, active: bool) -> None:
-        """Show/hide the handle (Align mode with an overlay present)."""
-        self.setVisible(active)
-        if not active:
-            self.set_hovered(False)
-
-    def zone_at(self, view_x: float, view_y: float, view_px: float) -> str | None:
-        """Classify a view-space point relative to the handle.
-
-        Returns ``"stretch_x"``/``"stretch_y"`` over an arrowhead grip,
-        ``"rotate"`` over the ring's grab band, ``"translate"`` anywhere else
-        (the default drag), or ``None`` when the handle is hidden.  ``view_px``
-        is view units per screen pixel (``ViewBox.viewPixelSize()[0]``); pixel
-        thresholds are scaled by it so hit-testing matches the painted,
-        screen-fixed size at any zoom level.
-        """
-        if not self.isVisible() or view_px <= 0:
-            return None
-        c = self.pos()
-        px = (view_x - c.x()) / view_px
-        py = (view_y - c.y()) / view_px
-        # Stretch grips sit on each axis at _HANDLE_GRIP_PX; their square hit
-        # boxes take priority over the rotation ring band they overlap.
-        if abs(py) <= _HANDLE_GRIP_HALF and abs(abs(px) - _HANDLE_GRIP_PX) <= _HANDLE_GRIP_HALF:
-            return "stretch_x"
-        if abs(px) <= _HANDLE_GRIP_HALF and abs(abs(py) - _HANDLE_GRIP_PX) <= _HANDLE_GRIP_HALF:
-            return "stretch_y"
-        # Rotate only on the ring line itself; everything else translates.
-        if abs(math.hypot(px, py) - _HANDLE_RING_PX) <= _HANDLE_RING_HALF:
-            return "rotate"
-        return "translate"
-
-    def paint(self, painter: QPainter, *_) -> None:
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        gray = QColor(200, 200, 200)
-        halo = QColor(0, 0, 0, 160)
-        g = _HANDLE_GRIP_PX
-        hl = _HANDLE_ARROW_LEN
-        hw = _HANDLE_ARROW_HALF
-        # Outer rotation ring (gray, with a dark halo for contrast)
-        painter.setPen(QPen(halo, 5.0))
-        painter.drawEllipse(QPointF(0.0, 0.0), _HANDLE_RING_PX, _HANDLE_RING_PX)
-        painter.setPen(QPen(gray, 3.0))
-        painter.drawEllipse(QPointF(0.0, 0.0), _HANDLE_RING_PX, _HANDLE_RING_PX)
-        # Arrowhead stretch grips at N/E/S/W, each pointing outward along its axis
-        painter.setPen(QPen(halo, 1.5))
-        painter.setBrush(gray)
-        for dx, dy in ((1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)):
-            tip = QPointF(g * dx, g * dy)
-            bx, by = (g - hl) * dx, (g - hl) * dy
-            px, py = -dy, dx  # unit perpendicular to the axis
-            c1 = QPointF(bx + hw * px, by + hw * py)
-            c2 = QPointF(bx - hw * px, by - hw * py)
-            painter.drawPolygon(QPolygonF([tip, c1, c2]))
-        # Translate centre dot
-        painter.drawEllipse(QPointF(0.0, 0.0), _HANDLE_CENTER_DOT_PX, _HANDLE_CENTER_DOT_PX)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
 
 
 # ---------------------------------------------------------------------------
@@ -529,7 +421,7 @@ class ImageCanvas(QWidget):
         self.stroke_item.setZValue(30)
 
         # Align centre handle (translate/rotate manipulator), hidden until Align.
-        self._align_handle = _AlignHandle()
+        self._align_handle = AlignHandle()
 
         self.plot.addItem(self.overlay_item)
         self.plot.addItem(self.disp_halo_item)
@@ -638,7 +530,7 @@ class ImageCanvas(QWidget):
                 self._refresh_cursor()
             elif t == QEvent.Type.Leave:
                 self.view.unsetCursor()
-                self._align_handle.set_hovered(False)
+                self._align_handle.set_hover_zone(None)
         elif obj is self.view.viewport() and isinstance(event, QMouseEvent):
             # Closed-hand feedback the instant a space-pan grab begins (on press,
             # not only once a drag starts) and back to open hand on release. Works
@@ -806,9 +698,9 @@ class ImageCanvas(QWidget):
             view_px = self._vb.viewPixelSize()[0]
             zone = self._align_handle.zone_at(vb_pos.x(), vb_pos.y(), view_px)
             self._last_handle_zone = zone
-            # Brighten only over the gizmo itself (ring/grips), not the broad
-            # translate field that covers the whole canvas.
-            self._align_handle.set_hovered(zone in ("rotate", "stretch_x", "stretch_y"))
+            # Brighten only the hovered element (ring or a stretch-arrow pair);
+            # the handle treats the broad translate field as no hover.
+            self._align_handle.set_hover_zone(zone)
             self._refresh_align_cursor()
         self.mouse_position_changed.emit(vb_pos.x(), vb_pos.y())
 
