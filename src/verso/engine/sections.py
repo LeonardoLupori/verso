@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import re
+from collections.abc import Sequence
 from pathlib import Path
 
 from verso.engine.drafts import slice_mask_path_for
@@ -66,7 +67,7 @@ def next_section_ids(existing_ids: list[str], count: int) -> list[str]:
 
 def make_added_sections(
     existing_sections: list[Section],
-    new_paths: list[str | Path],
+    new_paths: Sequence[str | Path],
     thumbnails_dir: Path,
 ) -> tuple[list[Section], list[str]]:
     """Build :class:`Section` objects for images added to an existing project.

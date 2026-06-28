@@ -159,7 +159,7 @@ class _ChannelRow(QWidget):
         self._index = index
         self._spec = ChannelSpec(
             name=spec.name,
-            color=tuple(spec.color),
+            color=spec.color,
             scale=spec.scale,
             visible=spec.visible,
         )
@@ -199,7 +199,7 @@ class _ChannelRow(QWidget):
     def spec(self) -> ChannelSpec:
         return ChannelSpec(
             name=self._spec.name,
-            color=tuple(self._spec.color),
+            color=self._spec.color,
             scale=self._spec.scale,
             visible=self._spec.visible,
         )
@@ -212,7 +212,7 @@ class _ChannelRow(QWidget):
         """
         self._spec = ChannelSpec(
             name=spec.name,
-            color=tuple(spec.color),
+            color=spec.color,
             scale=spec.scale,
             visible=spec.visible,
         )
@@ -307,7 +307,7 @@ class BrightnessControls(QWidget):
         new_specs = [
             ChannelSpec(
                 name=c.name,
-                color=tuple(c.color),
+                color=c.color,
                 scale=c.scale,
                 visible=c.visible,
             )
@@ -347,7 +347,7 @@ class BrightnessControls(QWidget):
         return [
             ChannelSpec(
                 name=c.name,
-                color=tuple(c.color),
+                color=c.color,
                 scale=c.scale,
                 visible=c.visible,
             )

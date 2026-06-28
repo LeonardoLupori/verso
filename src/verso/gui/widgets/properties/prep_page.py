@@ -32,10 +32,10 @@ class PrepPage(QWidget):
         scroll.setWidget(content)
 
         self.flip = FlipBox()
-        self.mask = MaskBox()
+        self.mask_box = MaskBox()
 
         layout.addWidget(self.flip)
-        layout.addWidget(self.mask)
+        layout.addWidget(self.mask_box)
         layout.addStretch()
 
         self.save_bar = SaveBarBox()

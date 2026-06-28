@@ -10,17 +10,18 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
-from PyQt6.QtCore import QObject, QThread, pyqtBoundSignal, pyqtSignal
+from PyQt6.QtCore import QObject, QThread, pyqtSignal
 from PyQt6.QtWidgets import QProgressDialog, QWidget
-
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
     import numpy as np
-    from verso.engine.model.project import Project
+
     from verso.engine.elastix import ElastixWorker
     from verso.engine.model.alignment import ControlPoint
     from verso.engine.model.elastix import ElastixParams
+    from verso.engine.model.project import Project
 
 
 class DeepSliceWorker(QObject):
@@ -138,16 +139,20 @@ class JobWorker(Protocol):
     Satisfied by any ``QObject`` exposing a ``done`` signal and a ``run`` slot
     (the three workers above). An optional ``error`` signal is discovered at
     runtime via ``getattr``, so it is not part of the protocol.
+
+    ``done`` is typed as ``pyqtSignal`` (the class-level descriptor type the
+    workers actually declare) so the structural match succeeds; accessing it on
+    an instance resolves through the descriptor to a ``pyqtBoundSignal``.
     """
 
-    done: pyqtBoundSignal
+    done: pyqtSignal
 
     def run(self) -> None: ...
     def moveToThread(self, thread: QThread) -> None: ...
     def deleteLater(self) -> None: ...
 
 
-class BackgroundJob:
+class BackgroundJob[W: JobWorker]:
     """Runs a worker ``QObject`` on a ``QThread`` behind a progress dialog.
 
     Wires the standard lifecycle: ``started`` → ``worker.run``, the worker's
@@ -159,14 +164,14 @@ class BackgroundJob:
     def __init__(
         self,
         parent: QWidget,
-        worker: JobWorker,
+        worker: W,
         *,
         title: str,
         message: str,
         modal: bool = False,
         min_width: int | None = None,
     ) -> None:
-        self.worker = worker
+        self.worker: W = worker
         self._thread = QThread(parent)
         worker.moveToThread(self._thread)
 

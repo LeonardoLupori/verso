@@ -22,12 +22,22 @@ outside Align mode and when no overlay is present.
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from typing import Literal
 
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import QEvent, QObject, QPointF, QRectF, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QCursor, QPainter, QPen, QPixmap, QPolygonF
+from PyQt6.QtGui import (
+    QColor,
+    QCursor,
+    QKeyEvent,
+    QPainter,
+    QPen,
+    QPixmap,
+    QPolygonF,
+    QWheelEvent,
+)
 from PyQt6.QtWidgets import (
     QAbstractButton,
     QApplication,
@@ -149,6 +159,8 @@ class _SpaceFilter(QObject):
     """
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:
+        if not isinstance(event, QKeyEvent):
+            return False
         t = event.type()
         if t == QEvent.Type.KeyPress and not event.isAutoRepeat():
             if event.key() == Qt.Key.Key_Space:
@@ -177,9 +189,10 @@ class _SpaceFilter(QObject):
 
 def _ensure_space_filter() -> None:
     app = QApplication.instance()
-    if app is not None and not hasattr(app, "_verso_space_filter"):
-        app._verso_space_filter = _SpaceFilter()
-        app.installEventFilter(app._verso_space_filter)
+    if app is not None and getattr(app, "_verso_space_filter", None) is None:
+        filt = _SpaceFilter()
+        setattr(app, "_verso_space_filter", filt)
+        app.installEventFilter(filt)
 
 
 # ---------------------------------------------------------------------------
@@ -473,9 +486,9 @@ class ImageCanvas(QWidget):
         self._vb.overlay_rotated.connect(self.overlay_rotated)
         self._vb.overlay_scaled.connect(self.overlay_scaled)
 
-        self.plot = self.view.addPlot(viewBox=self._vb)
-        self.plot.setAspectLocked(True)
-        self.plot.invertY(True)  # image coords: row 0 at top
+        self.plot = self.view.ci.addPlot(viewBox=self._vb)
+        self._vb.setAspectLocked(True)
+        self._vb.invertY(True)  # image coords: row 0 at top
         self.plot.hideAxis("left")
         self.plot.hideAxis("bottom")
         self.plot.setMenuEnabled(False)
@@ -601,7 +614,11 @@ class ImageCanvas(QWidget):
         # reports delta()==0 — which silently broke brush resizing while erasing
         # (Shift held). angleDelta() exposes both axes, so fall back to the
         # horizontal delta when the vertical one is zero.
-        if t == QEvent.Type.Wheel and (event.modifiers() & Qt.KeyboardModifier.AltModifier):
+        if (
+            t == QEvent.Type.Wheel
+            and isinstance(event, QWheelEvent)
+            and (event.modifiers() & Qt.KeyboardModifier.AltModifier)
+        ):
             ad = event.angleDelta()
             delta = ad.y() or ad.x()
             if delta:
@@ -665,7 +682,7 @@ class ImageCanvas(QWidget):
             return
         self.view.setCursor(self._cursor_erase if _ShiftState.held else self._cursor_draw)
 
-    def set_channel_planes(self, planes: list[np.ndarray | None]) -> None:
+    def set_channel_planes(self, planes: Sequence[np.ndarray | None]) -> None:
         """Install the per-channel raw uint8 planes that drive the section view.
 
         Call this once per section load (and again after a flip). Each plane
@@ -703,7 +720,7 @@ class ImageCanvas(QWidget):
             self._channel_shape = None
             return
         if first_shape != self._channel_shape:
-            self.plot.autoRange()
+            self._vb.autoRange()
             self._channel_shape = first_shape
 
     def set_channel_lut(self, index: int, lut: np.ndarray | None) -> None:
@@ -794,7 +811,7 @@ class ImageCanvas(QWidget):
         if zone == "rotate":
             self.view.setCursor(self._cursor_rotate)
             return
-        shape = self._HANDLE_CURSORS.get(zone)
+        shape = self._HANDLE_CURSORS.get(zone) if zone is not None else None
         if shape is None:
             self.view.unsetCursor()
         else:

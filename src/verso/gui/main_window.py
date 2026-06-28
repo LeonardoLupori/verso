@@ -1,5 +1,4 @@
-"""Main application window.
-"""
+"""Main application window."""
 
 from __future__ import annotations
 
@@ -16,6 +15,7 @@ from PyQt6.QtWidgets import (
     QDockWidget,
     QFileDialog,
     QLabel,
+    
     QLineEdit,
     QMainWindow,
     QMessageBox,
@@ -68,9 +68,9 @@ class MainWindow(QMainWindow):
         self._state = AppState(self)
         self._current_mode = "overview"
         self._reverse_axis_proposal = False
-        self._deepslice_job: BackgroundJob | None = None
-        self._batch_mask_job: BackgroundJob | None = None
-        self._auto_cp_job: BackgroundJob | None = None
+        self._deepslice_job: BackgroundJob[DeepSliceWorker] | None = None
+        self._batch_mask_job: BackgroundJob[BatchMaskWorker] | None = None
+        self._auto_cp_job: BackgroundJob[AutoCPWorker] | None = None
         self._auto_cp_batch = False
         # Persistent warm child process for elastix registrations (see ElastixWorker).
         self._elastix_worker = ElastixWorker()
@@ -429,7 +429,7 @@ class MainWindow(QMainWindow):
         flip = self._props.prep.flip
         flip.flip_h_changed.connect(self._on_flip_h_changed)
         flip.flip_v_changed.connect(self._on_flip_v_changed)
-        mask = self._props.prep.mask
+        mask = self._props.prep.mask_box
         mask.visibility_changed.connect(self._prep.set_mask_visible)
         mask.opacity_changed.connect(self._prep.set_mask_opacity)
         mask.color_changed.connect(self._prep.set_mask_color)
