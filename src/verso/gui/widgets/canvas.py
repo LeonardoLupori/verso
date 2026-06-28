@@ -32,6 +32,7 @@ from PyQt6.QtGui import (
     QColor,
     QCursor,
     QKeyEvent,
+    QMouseEvent,
     QPainter,
     QPen,
     QPixmap,
@@ -162,7 +163,7 @@ class _SpaceFilter(QObject):
     keyboard focus is on another widget (properties panel, main window, etc).
     """
 
-    def eventFilter(self, obj: QObject, event: QEvent) -> bool:
+    def eventFilter(self, _: QObject, event: QEvent) -> bool:
         if not isinstance(event, QKeyEvent):
             return False
         t = event.type()
@@ -392,7 +393,7 @@ class _AlignHandle(pg.GraphicsObject):
             return "rotate"
         return "translate"
 
-    def paint(self, painter: QPainter, *args) -> None:
+    def paint(self, painter: QPainter, *_) -> None:
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.setBrush(Qt.BrushStyle.NoBrush)
         gray = QColor(200, 200, 200)
@@ -638,7 +639,7 @@ class ImageCanvas(QWidget):
             elif t == QEvent.Type.Leave:
                 self.view.unsetCursor()
                 self._align_handle.set_hovered(False)
-        elif obj is self.view.viewport():
+        elif obj is self.view.viewport() and isinstance(event, QMouseEvent):
             # Closed-hand feedback the instant a space-pan grab begins (on press,
             # not only once a drag starts) and back to open hand on release. Works
             # in every mode since space+drag pans the view everywhere. The events
@@ -672,7 +673,7 @@ class ImageCanvas(QWidget):
         if self._interaction_mode == "prep" and self.view.underMouse():
             self._refresh_prep_cursor()
 
-    def _on_view_range_changed(self, *_args: object) -> None:
+    def _on_view_range_changed(self, *_: object) -> None:
         if self._brush_mode and self._interaction_mode == "prep" and self.view.underMouse():
             self._refresh_prep_cursor()
         self.view_range_changed.emit()
