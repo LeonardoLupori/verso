@@ -19,8 +19,6 @@ SCHEMA_VERSION = "1.2"
 # QuickNII voxel space ordering is (LR=0, AP=1, DV=2); "ML" is the storage name
 # for the mediolateral / LR axis.
 AXIS_NAME_TO_INDEX: dict[str, int] = {"AP": 1, "ML": 0, "DV": 2}
-AXIS_INDEX_TO_NAME: dict[int, str] = {v: k for k, v in AXIS_NAME_TO_INDEX.items()}
-
 # Slicing orientation used in the New Project dialog. Each orientation declares
 # which atlas axis the cutting series runs along (= which axis interpolation
 # should target).
@@ -29,25 +27,6 @@ SLICING_ORIENTATION_TO_AXIS: dict[str, str] = {
     "sagittal": "ML",
     "horizontal": "DV",
 }
-AXIS_TO_SLICING_ORIENTATION: dict[str, str] = {v: k for k, v in SLICING_ORIENTATION_TO_AXIS.items()}
-
-
-def _wh(value: Any) -> tuple[int, int]:
-    """Parse a stored ``[width, height]`` pair, defaulting to ``(0, 0)``."""
-    if not value:
-        return (0, 0)
-    return (int(value[0]), int(value[1]))
-
-
-def _version_tuple(version: str) -> tuple[int, ...]:
-    """Parse a dotted schema version like ``"1.2"`` into ``(1, 2)`` for ordering."""
-    parts: list[int] = []
-    for token in str(version).split("."):
-        try:
-            parts.append(int(token))
-        except ValueError:
-            parts.append(0)
-    return tuple(parts)
 
 
 @dataclass
@@ -149,10 +128,6 @@ class Section:
     slice_index: int
     original_path: str
     thumbnail_path: str
-    # Pixel dimensions ``[width, height]`` of the original (full-resolution)
-    # image and of the working-resolution thumbnail. Cached so the project file
-    # alone can map pixels <-> atlas voxels. ``(0, 0)`` until populated (see
-    # ``backfill_metadata``).
     resolution_original_wh: tuple[int, int] = (0, 0)
     resolution_thumbnail_wh: tuple[int, int] = (0, 0)
     preprocessing: Preprocessing = field(default_factory=Preprocessing)
@@ -179,22 +154,13 @@ class Section:
             slice_index=d["slice_index"],
             original_path=d["original_path"],
             thumbnail_path=d["thumbnail_path"],
-            resolution_original_wh=_wh(d.get("resolution_original_wh")),
-            resolution_thumbnail_wh=_wh(d.get("resolution_thumbnail_wh")),
+            resolution_original_wh=tuple(d["resolution_original_wh"]),
+            resolution_thumbnail_wh=tuple(d["resolution_thumbnail_wh"]),
             preprocessing=Preprocessing.from_dict(d.get("preprocessing", {})),
             alignment=Alignment.from_dict(d.get("alignment", {})),
             warp=WarpState.from_dict(d.get("warp", {})),
         )
 
-
-_LEGACY_CP_COLORS: dict[str, str] = {
-    "Orange": "#ff6000",
-    "Cyan": "#00ffff",
-    "Yellow": "#fff500",
-    "Red": "#ff2020",
-    "White": "#ffffff",
-    "Magenta": "#ff00ff",
-}
 
 
 @dataclass
@@ -209,9 +175,7 @@ class Project:
     cp_shape: str = "Cross"
     cp_color: str = "#fff500"
     interpolation_axis: str = "AP"
-    # Ratio working_long_side / original_long_side, uniform across all sections.
     # Derived once at import from the largest image (see compute_working_scale);
-    # full-resolution export scales back up by this factor.
     working_scale: float = 0.2
     # Per-project parameters for automatic elastix control-point generation.
     # None means "use the built-in ElastixParams defaults" until edited.
@@ -255,10 +219,7 @@ class Project:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Project:
-        raw_color = str(d.get("cp_color", "#fff500"))
-        cp_color = (
-            raw_color if raw_color.startswith("#") else _LEGACY_CP_COLORS.get(raw_color, "#fff500")
-        )
+        cp_color = str(d.get("cp_color", "#fff500"))
         raw_axis = str(d.get("interpolation_axis", "AP")).upper()
         interpolation_axis = raw_axis if raw_axis in AXIS_NAME_TO_INDEX else "AP"
         raw_elastix = d.get("elastix_params")
@@ -281,29 +242,14 @@ class Project:
 
     @classmethod
     def load(cls, path: Path) -> Project:
-        """Load a project from disk, migrating older schema versions in place.
-
-        Pre-1.2 files lack per-section pixel dimensions and atlas
-        resolution/shape; these are backfilled from the image files and the
-        atlas so the in-memory project is self-contained. The new fields persist
-        on the next :meth:`save`.
+        """Load a project from disk.
 
         Args:
             path: Path to a project JSON file.
 
         Returns:
-            The loaded (and, if needed, migrated) project.
+            The loaded project.
         """
         path = Path(path)
         data = json.loads(path.read_text(encoding="utf-8"))
-        project = cls.from_dict(data)
-        if _version_tuple(project.version) < _version_tuple(SCHEMA_VERSION):
-            # Pre-1.2 file: backfill image dims + atlas meta so the project is
-            # self-contained. Local import — the backfill reads image files and
-            # the atlas, which would create a model -> io/atlas import cycle at
-            # module load.
-            from verso.engine.io.project_io import backfill_metadata
-
-            backfill_metadata(project, path.parent)
-            project.version = SCHEMA_VERSION
-        return project
+        return cls.from_dict(data)
