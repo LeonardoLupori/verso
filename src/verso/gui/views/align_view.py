@@ -36,6 +36,9 @@ if TYPE_CHECKING:
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 
+# Maximum in-plane spin (degrees) from axis-aligned allowed via the align handle.
+_MAX_INPLANE_DEG = 45.0
+
 
 class AlignView(QWidget):
     """Canvas view for atlas alignment (affine anchoring)."""
@@ -285,6 +288,17 @@ class AlignView(QWidget):
         anchoring = section.alignment.anchoring
         if not anchoring or all(v == 0.0 for v in anchoring):
             return
+
+        from verso.engine.registration import rotate_anchoring
+
+        # In-plane spin about the section centre. A clockwise drag on the ring
+        # spins the overlay clockwise (canvas y points down, so a positive
+        # screen-space sweep maps straight onto the rotation). Cap it so the
+        # overlay never spins more than ±_MAX_INPLANE_DEG from axis-aligned.
+        angle_rad = self._clamp_inplane_rotation(anchoring, float(np.radians(d_deg)))
+        if angle_rad == 0.0:
+            return  # already at the rotation limit — ignore further outward spin
+
         # Coalesce the whole ring drag into a single undo step, mirroring the pan
         # gesture: snapshot once, keep the idle timer alive, sample the outline
         # cheaper while dragging.
@@ -296,17 +310,45 @@ class AlignView(QWidget):
             self._panel.set_overlay_fast(True)
         self._pan_coalesce_timer.start()
 
-        from verso.engine.registration import rotate_anchoring
-
-        # In-plane spin about the section centre. A clockwise drag on the ring
-        # spins the overlay clockwise (canvas y points down, so a positive
-        # screen-space sweep maps straight onto the rotation).
-        new_anchoring = rotate_anchoring(anchoring, np.radians(d_deg))
+        new_anchoring = rotate_anchoring(anchoring, angle_rad)
         section.alignment.anchoring = new_anchoring
         self._sync_position_from_anchoring(new_anchoring)
         self._panel.update_overlay()
         self._set_dirty(True)
         self.anchoring_changed.emit(new_anchoring)
+
+    def _clamp_inplane_rotation(self, anchoring: list[float], angle_rad: float) -> float:
+        """Shorten an in-plane rotation so the overlay stays within ±45° of upright.
+
+        The spin is the signed angle of ``u`` projected onto the two in-plane atlas
+        axes (0° = axis-aligned). Each event is first capped to ±90° so a fast flick
+        can't leap across the ±180° branch cut and land the plane upside-down. The
+        boundary is then found by bisection — the spin's magnitude is monotonic over
+        the feasible prefix of ``[0, angle_rad]`` — and if the plane is already past
+        the limit only steps that reduce the spin are allowed. Uses only the public
+        ``rotate_anchoring`` so the limit lives entirely in the GUI.
+        """
+        from verso.engine.registration import rotate_anchoring
+
+        u_axis, v_axis = sorted(i for i in (0, 1, 2) if i != self._interpolation_axis)
+        angle_rad = max(-np.pi / 2.0, min(np.pi / 2.0, angle_rad))
+
+        def spin_after(a: float) -> float:
+            u = np.asarray(rotate_anchoring(anchoring, a)[3:6])
+            return abs(float(np.degrees(np.arctan2(u[v_axis], u[u_axis]))))
+
+        if angle_rad == 0.0 or spin_after(angle_rad) <= _MAX_INPLANE_DEG:
+            return angle_rad
+        if spin_after(0.0) > _MAX_INPLANE_DEG:
+            return angle_rad if spin_after(angle_rad) < spin_after(0.0) else 0.0
+        lo, hi = 0.0, angle_rad
+        for _ in range(24):
+            mid = 0.5 * (lo + hi)
+            if spin_after(mid) <= _MAX_INPLANE_DEG:
+                lo = mid
+            else:
+                hi = mid
+        return lo
 
     # ------------------------------------------------------------------
     # Overlay stretch (handle grip drag)

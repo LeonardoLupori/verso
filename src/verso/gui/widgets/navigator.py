@@ -217,6 +217,8 @@ class _SliceView(QWidget):
         self._drag_mode: str | None = None
         self._drag_start: tuple[float, float] | None = None
         self._drag_start_anchoring: list[float] | None = None
+        # Last cursor polar angle (rad) about the center, for incremental rotation.
+        self._drag_last_angle: float | None = None
 
         self.setStyleSheet("background: #1a1a1a;")
 
@@ -590,9 +592,13 @@ class _SliceView(QWidget):
             self._drag_mode = "translate" if dist <= _TRANSLATE_RADIUS else "rotate"
         else:
             self._drag_mode = "translate"
-        # For translate: apply immediately so a single click moves the plane
+        # For translate: apply immediately so a single click moves the plane.
+        # For rotate: seed the incremental angle from the press point.
         if self._drag_mode == "translate":
             self._handle_translate(cx, cy)
+        elif self._center_display is not None:
+            ccx, ccy = self._center_display
+            self._drag_last_angle = math.atan2(cy - ccy, cx - ccx)
 
     def _on_canvas_moved(self, cx: float, cy: float) -> None:
         if self._drag_mode is None or self._drag_start is None:
@@ -606,6 +612,7 @@ class _SliceView(QWidget):
         self._drag_mode = None
         self._drag_start = None
         self._drag_start_anchoring = None
+        self._drag_last_angle = None
 
     def _handle_translate(self, cx: float, cy: float) -> None:
         """Absolute placement: move cut-plane center to the cursor's atlas position."""
@@ -634,22 +641,31 @@ class _SliceView(QWidget):
         self.anchoring_changed.emit(new_o.tolist() + anchoring[3:])
 
     def _handle_rotate(self, cx: float, cy: float) -> None:
-        if self._drag_start_anchoring is None or self._center_display is None:
+        if (
+            self._anchoring is None
+            or self._center_display is None
+            or self._drag_last_angle is None
+        ):
             return
-        sx, sy = require(self._drag_start)
         ccx, ccy = self._center_display
-        start_angle = math.atan2(sy - ccy, sx - ccx)
         cur_angle = math.atan2(cy - ccy, cx - ccx)
-        deg = math.degrees(cur_angle - start_angle) * self._ANGLE_SIGNS[self._axis]
+        # Incremental step since the last cursor position, wrapped into
+        # (-180°, 180°]. Applying the small step to the *current* anchoring (not
+        # the press-time one) means sweeping the cursor past a half-turn just
+        # accumulates smoothly instead of snapping to the opposite rotation, and
+        # the tilt clamp simply stops further travel at the limit.
+        d = (cur_angle - self._drag_last_angle + math.pi) % (2.0 * math.pi) - math.pi
+        self._drag_last_angle = cur_angle
+        deg = math.degrees(d) * self._ANGLE_SIGNS[self._axis]
         # The two views that aren't perpendicular to the slicing axis rotate
         # around axes that tilt the plane along the slicing direction —
         # invert when the series is reversed.
         if self._reverse_axis and self._axis != self._interpolation_axis:
             deg = -deg
 
-        o = np.array(self._drag_start_anchoring[:3])
-        u = np.array(self._drag_start_anchoring[3:6])
-        v = np.array(self._drag_start_anchoring[6:9])
+        o = np.array(self._anchoring[:3])
+        u = np.array(self._anchoring[3:6])
+        v = np.array(self._anchoring[6:9])
         center = o + u / 2.0 + v / 2.0
 
         rot_axis = self._ROTATION_AXES[self._axis]

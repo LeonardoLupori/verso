@@ -115,12 +115,16 @@ class AlignHandle(pg.GraphicsObject):
 
         The angle is measured about the handle centre, so this is the signed
         change in polar angle between the two view-space points (used while
-        dragging the rotation ring).
+        dragging the rotation ring).  The difference is wrapped into
+        ``(-180°, 180°]`` so sweeping the cursor across the ``atan2`` branch cut
+        (the centre's +x axis) yields the true small step instead of a ~±360°
+        jump that would otherwise snap the overlay to the opposite rotation.
         """
         c = self.pos()
         a1 = math.atan2(y1 - c.y(), x1 - c.x())
         a2 = math.atan2(y2 - c.y(), x2 - c.x())
-        return math.degrees(a2 - a1)
+        d = (a2 - a1 + math.pi) % (2.0 * math.pi) - math.pi
+        return math.degrees(d)
 
     def stretch_delta(
         self, zone: str, x1: float, y1: float, x2: float, y2: float, view_px: float
