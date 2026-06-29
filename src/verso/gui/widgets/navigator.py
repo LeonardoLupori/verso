@@ -1,7 +1,9 @@
 """Three-panel orthogonal atlas navigator for the Align/Warp view.
 
 Displays coronal, sagittal, and horizontal reference slices with the
-current cut-plane quadrilateral drawn as a coloured outline.  Interaction:
+current cut plane drawn as a single coloured line through the frame
+center, lettered at each end (e.g. D/V, L/R) to mark the edges.
+Interaction:
 
 - Drag near the crosshair center  → translate cut plane
 - Drag away from the crosshair    → rotate cut plane around that view's axis
@@ -23,12 +25,12 @@ import numpy as np
 from PyQt6.QtCore import QEvent, QPointF, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import (
     QColor,
+    QFont,
     QIcon,
     QImage,
     QPainter,
     QPen,
     QPixmap,
-    QPolygonF,
 )
 from PyQt6.QtWidgets import (
     QApplication,
@@ -79,10 +81,16 @@ _MOVE_STEP_FAST = 10
 # Per-click rotation step (degrees)
 _ROTATE_STEP_DEG = 1.0
 # Maximum plane tilt (degrees) from the slicing axis allowed via navigator views
-_MAX_TILT_DEG = 45.0
+_MAX_TILT_DEG = 44.0
 
 _OUTLINE_COLOR = QColor(255, 80, 80, 220)
 _CENTER_COLOR = QColor(255, 255, 0, 220)
+_LABEL_COLOR = QColor(255, 255, 0, 235)
+# Anatomical letters at the two ends of the cut-plane line, keyed by the atlas
+# axis the line runs along: (letter at low coordinate, letter at high coordinate).
+#   axis 0 = LR → Left / Right;  axis 1 = AP → Anterior / Posterior;
+#   axis 2 = DV → Dorsal / Ventral.  Matches the canvas orientation conventions.
+_AXIS_LETTERS = {0: ("L", "R"), 1: ("A", "P"), 2: ("D", "V")}
 
 # Radius (px) within which a press counts as "near center" → translate mode
 _TRANSLATE_RADIUS = 14
@@ -317,7 +325,9 @@ class _SliceView(QWidget):
         self.setFixedSize(total_w, total_h)
 
         self._base_pixmap: QPixmap | None = None
-        self._corners: list[tuple[float, float]] = []
+        # Cut-plane line: two display-space endpoints, each paired with its end letter.
+        self._line: tuple[tuple[float, float], tuple[float, float]] | None = None
+        self._line_labels: tuple[tuple[str, tuple[float, float]], ...] = ()
         self._center_display: tuple[float, float] | None = None
 
     def _make_btn(self, icon_name: str, tooltip: str, w: int, h: int) -> QPushButton:
@@ -379,8 +389,28 @@ class _SliceView(QWidget):
         o = np.array(anchoring[:3])
         u = np.array(anchoring[3:6])
         v = np.array(anchoring[6:9])
-        self._corners = [self._proj(c) for c in [o, o + u, o + u + v, o + v]]
-        self._center_display = self._proj(o + u / 2.0 + v / 2.0)
+        center = o + u / 2.0 + v / 2.0
+
+        # The cut plane is edge-on in this view, so it reads as a line. Draw the
+        # plane's midline along whichever spanning vector lies in the view (the
+        # one most perpendicular to the into-screen axis — which is the atlas
+        # axis whose index equals this view's axis).
+        in_plane = u if abs(u[self._axis]) < abs(v[self._axis]) else v
+        p_lo = center - in_plane / 2.0
+        p_hi = center + in_plane / 2.0
+
+        # End letters come from the atlas axis the line runs along; order the
+        # endpoints by that coordinate so the "low" letter sits at the low end.
+        dom = int(np.argmax(np.abs(in_plane)))
+        lo_letter, hi_letter = _AXIS_LETTERS[dom]
+        if p_lo[dom] > p_hi[dom]:
+            p_lo, p_hi = p_hi, p_lo
+
+        d_lo = self._proj(p_lo)
+        d_hi = self._proj(p_hi)
+        self._line = (d_lo, d_hi)
+        self._line_labels = ((lo_letter, d_lo), (hi_letter, d_hi))
+        self._center_display = self._proj(center)
         self._redraw()
 
     # ------------------------------------------------------------------
@@ -485,10 +515,11 @@ class _SliceView(QWidget):
         painter = QPainter(pm)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        if self._corners:
+        if self._line is not None:
+            (x0, y0), (x1, y1) = self._line
             painter.setPen(QPen(_OUTLINE_COLOR, 1.5))
-            poly = QPolygonF([QPointF(x, y) for x, y in self._corners])
-            painter.drawPolygon(poly)
+            painter.drawLine(QPointF(x0, y0), QPointF(x1, y1))
+            self._draw_end_labels(painter, x0, y0, x1, y1)
 
         if self._center_display:
             cx, cy = self._center_display
@@ -501,6 +532,38 @@ class _SliceView(QWidget):
 
         painter.end()
         self._canvas.setPixmap(pm)
+
+    def _draw_end_labels(
+        self, painter: QPainter, x0: float, y0: float, x1: float, y1: float
+    ) -> None:
+        """Draw the anatomical end letters just inside each line endpoint.
+
+        The line usually spans the whole frame, so letters are nudged inward
+        (toward the line center) and offset perpendicular, then clamped inside
+        the canvas so they never clip at the edges.
+        """
+        if not self._line_labels:
+            return
+        font = QFont(painter.font())
+        font.setPointSize(9)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.setPen(QPen(_LABEL_COLOR, 1))
+
+        cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+        dx, dy = x1 - x0, y1 - y0
+        length = math.hypot(dx, dy) or 1.0
+        # Perpendicular unit vector for a small sideways offset.
+        nx, ny = -dy / length, dx / length
+
+        for letter, (ex, ey) in self._line_labels:
+            inx, iny = cx - ex, cy - ey
+            inl = math.hypot(inx, iny) or 1.0
+            px = ex + inx / inl * 11.0 + nx * 7.0
+            py = ey + iny / inl * 11.0 + ny * 7.0
+            px = min(max(px, 3.0), _VIEW_W - 9.0)
+            py = min(max(py, 11.0), self._view_h - 3.0)
+            painter.drawText(QPointF(px, py), letter)
 
     # ------------------------------------------------------------------
     # Mouse interaction (anchored to the canvas widget itself)
