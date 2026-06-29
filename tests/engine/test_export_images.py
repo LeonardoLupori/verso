@@ -44,7 +44,7 @@ def _make_section(*, flip_h: bool = False, flip_v: bool = False) -> Section:
         thumbnail_path="thumb.png",
         preprocessing=Preprocessing(flip_horizontal=flip_h, flip_vertical=flip_v),
         alignment=Alignment(anchoring=anchoring),
-        warp=WarpState(control_points=[ControlPoint(0.3, 0.3, 0.55, 0.45)]),
+        warp=WarpState(control_points=[ControlPoint(60.0, 45.0, 110.0, 67.5)]),
     )
 
 

@@ -3,24 +3,26 @@
 Algorithm (VisuAlign-compatible backward mapping)
 -------------------------------------------------
 Control points define pairs (src, dst) where:
-  src_x/y : normalised [0,1] position in the *affine* atlas overlay
-  dst_x/y : normalised [0,1] position in the section image
+  src_x/y : position in the *affine* atlas overlay (working-resolution pixels)
+  dst_x/y : position in the section image (working-resolution pixels)
 
 Warp steps:
-  1. Add four invisible corner anchors (src == dst, identity) positioned 10%
+  1. Normalise control-point pixel coords to [0, 1] using the working image
+     dimensions so internal math is resolution-independent.
+  2. Add four invisible corner anchors (src == dst, identity) positioned 10%
      outside the image on every side, matching VisuAlign's triangulation
      (data/Slice.java). The convex hull then covers the whole frame with a
      margin, so every in-image pixel falls strictly inside a triangle and is
      interpolated rather than clamped at the border.
-  2. Build a Delaunay triangulation on the DST (section) points.
-  3. For every pixel in the output (atlas overlay resolution):
+  3. Build a Delaunay triangulation on the DST (section) points.
+  4. For every pixel in the output (atlas overlay resolution):
        a. Normalise its pixel coords to [0, 1] — these are "section space"
           fractions since the overlay is displayed stretched to section size.
        b. Find the enclosing Delaunay triangle in DST space.
        c. Compute barycentric coordinates inside that triangle.
        d. Interpolate the corresponding SRC (atlas) normalised coords.
        e. Convert to pixel coords and record in the remap array.
-  4. Apply the remap with cv2.remap to the affine atlas overlay.  RGBA atlas
+  5. Apply the remap with cv2.remap to the affine atlas overlay.  RGBA atlas
      overlays use nearest-neighbour sampling so outline/fill opacity stays
      constant instead of being averaged with transparent pixels.
 
@@ -75,9 +77,10 @@ def _tri_scale(aspect: float) -> np.ndarray:
 def find_atlas_position(
     s: float,
     t: float,
-    src_norm: np.ndarray,
-    dst_norm: np.ndarray,
-    aspect: float = 1.0,
+    src_px: np.ndarray,
+    dst_px: np.ndarray,
+    work_w: int,
+    work_h: int,
 ) -> tuple[float, float]:
     """Given a section position (s, t) in [0,1], return the atlas (u, v) [0,1].
 
@@ -88,14 +91,19 @@ def find_atlas_position(
     Args:
         s: Normalised section x in [0, 1].
         t: Normalised section y in [0, 1].
-        src_norm: (N, 2) existing control-point atlas positions (without corners).
-        dst_norm: (N, 2) existing control-point section positions (without corners).
-        aspect: Section ``width / height``.  Triangulation is performed in this
-            aspect-corrected space for VisuAlign parity (see :func:`_tri_scale`).
+        src_px: (N, 2) control-point atlas positions in working-resolution pixels.
+        dst_px: (N, 2) control-point section positions in working-resolution pixels.
+        work_w: Working image width in pixels (used to normalise control points).
+        work_h: Working image height in pixels.
 
     Returns:
         (u, v) atlas normalised position clipped to [0, 1].
     """
+    wh = np.array([work_w, work_h], dtype=np.float64)
+    src_norm = np.asarray(src_px, dtype=np.float64).reshape(-1, 2) / wh
+    dst_norm = np.asarray(dst_px, dtype=np.float64).reshape(-1, 2) / wh
+    aspect = work_w / work_h
+
     src_all = _with_corners(src_norm) if len(src_norm) else _CORNERS
     dst_all = _with_corners(dst_norm) if len(dst_norm) else _CORNERS
 
@@ -120,9 +128,10 @@ def find_atlas_position(
 
 def warp_points_atlas_to_section(
     points_norm: np.ndarray,
-    src_norm: np.ndarray,
-    dst_norm: np.ndarray,
-    aspect: float = 1.0,
+    src_px: np.ndarray,
+    dst_px: np.ndarray,
+    work_w: int,
+    work_h: int,
 ) -> np.ndarray:
     """Map atlas-space points into section-space via the Delaunay warp.
 
@@ -133,17 +142,19 @@ def warp_points_atlas_to_section(
 
     Args:
         points_norm: (M, 2) normalised atlas-space points in ``[0, 1]``.
-        src_norm: (N, 2) atlas-space control points (no corner anchors).
-        dst_norm: (N, 2) section-space control points (no corner anchors).
-        aspect: Section ``width / height``.  Triangulation is performed in this
-            aspect-corrected space for VisuAlign parity (see :func:`_tri_scale`).
+        src_px: (N, 2) atlas-space control points in working-resolution pixels.
+        dst_px: (N, 2) section-space control points in working-resolution pixels.
+        work_w: Working image width in pixels (used to normalise control points).
+        work_h: Working image height in pixels.
 
     Returns:
         (M, 2) normalised section-space points.
     """
     pts = np.asarray(points_norm, dtype=np.float64).reshape(-1, 2)
-    src_norm = np.asarray(src_norm, dtype=np.float64).reshape(-1, 2)
-    dst_norm = np.asarray(dst_norm, dtype=np.float64).reshape(-1, 2)
+    wh = np.array([work_w, work_h], dtype=np.float64)
+    src_norm = np.asarray(src_px, dtype=np.float64).reshape(-1, 2) / wh
+    dst_norm = np.asarray(dst_px, dtype=np.float64).reshape(-1, 2) / wh
+    aspect = work_w / work_h
 
     if len(src_norm) == 0 or np.allclose(src_norm, dst_norm):
         return np.clip(pts, 0.0, 1.0)
@@ -176,9 +187,10 @@ def warp_points_atlas_to_section(
 def build_backward_remap(
     h: int,
     w: int,
-    src_norm: np.ndarray,
-    dst_norm: np.ndarray,
-    aspect: float = 1.0,
+    src_px: np.ndarray,
+    dst_px: np.ndarray,
+    work_w: int,
+    work_h: int,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Build (map_x, map_y) float32 arrays for cv2.remap using the backward Delaunay warp.
 
@@ -190,14 +202,19 @@ def build_backward_remap(
     Args:
         h: Output image height in pixels.
         w: Output image width in pixels.
-        src_norm: (N, 2) float64 — atlas-space control points (no corner anchors).
-        dst_norm: (N, 2) float64 — section-space control points (no corner anchors).
-        aspect: Section ``width / height``.  Triangulation is performed in this
-            aspect-corrected space for VisuAlign parity (see :func:`_tri_scale`).
+        src_px: (N, 2) float64 — atlas-space control points in working-resolution pixels.
+        dst_px: (N, 2) float64 — section-space control points in working-resolution pixels.
+        work_w: Working image width in pixels (used to normalise control points).
+        work_h: Working image height in pixels.
 
     Returns:
         ``(map_x, map_y)`` each of shape ``(h, w)`` float32.
     """
+    wh = np.array([work_w, work_h], dtype=np.float64)
+    src_norm = np.asarray(src_px, dtype=np.float64).reshape(-1, 2) / wh
+    dst_norm = np.asarray(dst_px, dtype=np.float64).reshape(-1, 2) / wh
+    aspect = work_w / work_h
+
     src_all = _with_corners(src_norm) if len(src_norm) else _CORNERS.copy()
     dst_all = _with_corners(dst_norm) if len(dst_norm) else _CORNERS.copy()
 
@@ -259,33 +276,32 @@ def build_backward_remap(
 
 def warp_overlay(
     overlay: np.ndarray,
-    src_norm: np.ndarray,
-    dst_norm: np.ndarray,
-    aspect: float = 1.0,
+    src_px: np.ndarray,
+    dst_px: np.ndarray,
+    work_w: int,
+    work_h: int,
 ) -> np.ndarray:
     """Warp the affine atlas overlay using piecewise-affine Delaunay interpolation.
 
     Args:
         overlay: (H, W) or (H, W, C) uint8 array — the affine atlas overlay.
-        src_norm: (N, 2) float64 — control-point positions in atlas overlay
-            normalised space [0, 1].  Do *not* include corner anchors.
-        dst_norm: (N, 2) float64 — control-point positions in section image
-            normalised space [0, 1].  Do *not* include corner anchors.
-        aspect: Section ``width / height``.  Triangulation is performed in this
-            aspect-corrected space for VisuAlign parity (see :func:`_tri_scale`).
-            Pass the section's working ``width / height``; the default ``1.0``
-            assumes a square section.
+        src_px: (N, 2) float64 — control-point positions in atlas overlay
+            working-resolution pixel space.  Do *not* include corner anchors.
+        dst_px: (N, 2) float64 — control-point positions in section image
+            working-resolution pixel space.  Do *not* include corner anchors.
+        work_w: Working image width in pixels (used to normalise control points).
+        work_h: Working image height in pixels.
 
     Returns:
         Warped overlay, same shape and dtype as ``overlay``.
     """
     h, w = overlay.shape[:2]
-    src_norm = np.asarray(src_norm, dtype=np.float64).reshape(-1, 2)
-    dst_norm = np.asarray(dst_norm, dtype=np.float64).reshape(-1, 2)
-    if len(src_norm) == 0 or np.allclose(src_norm, dst_norm):
+    src_px = np.asarray(src_px, dtype=np.float64).reshape(-1, 2)
+    dst_px = np.asarray(dst_px, dtype=np.float64).reshape(-1, 2)
+    if len(src_px) == 0 or np.allclose(src_px, dst_px):
         return overlay.copy()
 
-    map_x, map_y = build_backward_remap(h, w, src_norm, dst_norm, aspect=aspect)
+    map_x, map_y = build_backward_remap(h, w, src_px, dst_px, work_w, work_h)
 
     interpolation = (
         cv2.INTER_NEAREST if overlay.ndim == 3 and overlay.shape[2] == 4 else cv2.INTER_LINEAR

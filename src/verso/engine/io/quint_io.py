@@ -102,58 +102,61 @@ def _markers_to_control_points(
     where coordinates are in image pixels at the working resolution.
 
     Also accepts the legacy VERSO dict format ``{"x", "y", "dx", "dy"}``
-    in normalised coords for backward compatibility when loading old exports.
+    in normalised [0,1] coords for backward compatibility when loading old exports.
 
     Args:
         markers: List of 4-element arrays or legacy dicts.
-        width: Section image width in pixels (for normalisation).
-        height: Section image height in pixels (for normalisation).
+        width: Section image width in pixels.
+        height: Section image height in pixels.
 
     Returns:
-        List of :class:`ControlPoint` with normalised [0, 1] coordinates.
+        List of :class:`ControlPoint` with working-resolution pixel coordinates.
     """
     cps: list[ControlPoint] = []
     for m in markers:
         if isinstance(m, (list, tuple)) and len(m) == 4:
             sx, sy, dx, dy = float(m[0]), float(m[1]), float(m[2]), float(m[3])
-            w = float(width) if width else 1.0
-            h = float(height) if height else 1.0
-            cps.append(ControlPoint(src_x=sx / w, src_y=sy / h, dst_x=dx / w, dst_y=dy / h))
+            cps.append(ControlPoint(src_x=sx, src_y=sy, dst_x=dx, dst_y=dy))
         elif isinstance(m, dict):
             x, y = float(m["x"]), float(m["y"])
             ddx, ddy = float(m["dx"]), float(m["dy"])
-            cps.append(ControlPoint(src_x=x, src_y=y, dst_x=x + ddx, dst_y=y + ddy))
+            w = float(width) if width else 1.0
+            h = float(height) if height else 1.0
+            cps.append(
+                ControlPoint(
+                    src_x=x * w,
+                    src_y=y * h,
+                    dst_x=(x + ddx) * w,
+                    dst_y=(y + ddy) * h,
+                )
+            )
     return cps
 
 
 def _control_points_to_markers(
     control_points: list[ControlPoint],
-    width: int,
-    height: int,
 ) -> list[list[float]]:
     """Convert VERSO control points to VisuAlign pixel-coordinate markers.
 
     VisuAlign stores markers as 4-element arrays:
         [src_x_px, src_y_px, dst_x_px, dst_y_px]
-    in image pixels at the working resolution.
+    in image pixels at the working resolution.  Control points are already
+    stored in working-resolution pixel coordinates, so no conversion is needed.
 
     Args:
-        control_points: List of :class:`ControlPoint` with normalised coords.
-        width: Section image width in pixels.
-        height: Section image height in pixels.
+        control_points: List of :class:`ControlPoint` with pixel coordinates.
 
     Returns:
         List of ``[src_x_px, src_y_px, dst_x_px, dst_y_px]`` arrays.
     """
-    w, h = float(width), float(height)
     markers: list[list[float]] = []
     for cp in control_points:
         markers.append(
             [
-                round(cp.src_x * w, 6),
-                round(cp.src_y * h, 6),
-                round(cp.dst_x * w, 6),
-                round(cp.dst_y * h, 6),
+                round(cp.src_x, 6),
+                round(cp.src_y, 6),
+                round(cp.dst_x, 6),
+                round(cp.dst_y, 6),
             ]
         )
     return markers
@@ -668,7 +671,7 @@ def save_visualign(
             # control points in — with no flip applied. Flips are represented
             # outside the alignment (e.g. baked into the exported images), never
             # by mirroring the saved coordinates.
-            entry["markers"] = _control_points_to_markers(section.warp.control_points, w, h)
+            entry["markers"] = _control_points_to_markers(section.warp.control_points)
         slices_out.append(entry)
 
     va_target, va_resolution = _visualign_target(project.atlas.name if project.atlas else "")

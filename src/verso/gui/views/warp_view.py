@@ -61,7 +61,7 @@ class WarpView(QWidget):
         # CP interaction state
         self._cp_hovered: int = -1
         self._cp_dragging: int = -1
-        self._cp_drag_start_norm: tuple[float, float] | None = None
+        self._cp_drag_start_px: tuple[float, float] | None = None
         self._cp_drag_start_dst: tuple[float, float] | None = None
         self._cp_size = 10
         self._cp_shape = "Cross"
@@ -166,7 +166,7 @@ class WarpView(QWidget):
         self._panel.cursor_to_atlas_mapper = None
         self._warp_timer.stop()
         self._cp_dragging = -1
-        self._cp_drag_start_norm = None
+        self._cp_drag_start_px = None
         self._cp_drag_start_dst = None
         self._panel.canvas.clear_control_points()
 
@@ -211,12 +211,16 @@ class WarpView(QWidget):
         cps = section.warp.control_points
         if not cps:
             return rgba
+        raw = self._panel.raw_image
+        if raw is None:
+            return rgba
         from verso.engine.warping import warp_overlay
 
+        work_h, work_w = raw.shape[:2]
         src = np.array([[cp.src_x, cp.src_y] for cp in cps])
         dst = np.array([[cp.dst_x, cp.dst_y] for cp in cps])
         try:
-            return warp_overlay(rgba, src, dst, aspect=self._section_aspect())
+            return warp_overlay(rgba, src, dst, work_w, work_h)
         except Exception:
             return rgba
 
@@ -225,23 +229,15 @@ class WarpView(QWidget):
         cps = section.warp.control_points if section else []
         if not cps:
             return s, t
+        raw = self._panel.raw_image
+        if raw is None:
+            return s, t
         from verso.engine.warping import find_atlas_position
 
+        work_h, work_w = raw.shape[:2]
         src = np.array([[cp.src_x, cp.src_y] for cp in cps])
         dst = np.array([[cp.dst_x, cp.dst_y] for cp in cps])
-        return find_atlas_position(s, t, src, dst, aspect=self._section_aspect())
-
-    def _section_aspect(self) -> float:
-        """Section working ``width / height`` for VisuAlign-parity triangulation.
-
-        Taken from the in-memory working image (same dimensions QuickNII/VisuAlign
-        read from the exported ``width``/``height``), so the warp triangulation
-        matches VisuAlign exactly.  Falls back to ``1.0`` before the image loads.
-        """
-        raw = self._panel.raw_image
-        if raw is None or raw.shape[0] == 0:
-            return 1.0
-        return raw.shape[1] / raw.shape[0]
+        return find_atlas_position(s, t, src, dst, work_w, work_h)
 
     # ------------------------------------------------------------------
     # Panel events
@@ -257,7 +253,7 @@ class WarpView(QWidget):
             return
         self._cp_hovered = -1
         self._cp_dragging = -1
-        self._cp_drag_start_norm = None
+        self._cp_drag_start_px = None
         self._cp_drag_start_dst = None
         self._reset_undo()
         if section is None:
@@ -304,14 +300,14 @@ class WarpView(QWidget):
         h_bg, w_bg = raw.shape[:2]
         cps = section.warp.control_points
         self._panel.canvas.set_control_points(
-            [(cp.dst_x, cp.dst_y) for cp in cps],
+            [(cp.dst_x / w_bg, cp.dst_y / h_bg) for cp in cps],
             w_bg,
             h_bg,
             self._cp_hovered,
             cp_size=self._cp_size,
             cp_shape=self._cp_shape,
             cp_color=self._cp_color,
-            src_pts=[(cp.src_x, cp.src_y) for cp in cps],
+            src_pts=[(cp.src_x / w_bg, cp.src_y / h_bg) for cp in cps],
             auto_flags=[cp.auto for cp in cps],
         )
 
@@ -328,28 +324,23 @@ class WarpView(QWidget):
             return None
         return x / w, y / h
 
-    def _clamped_norm_pos(self, x: float, y: float) -> tuple[float, float] | None:
+    def _clamped_pixel_pos(self, x: float, y: float) -> tuple[float, float] | None:
         raw = self._panel.raw_image
         if raw is None:
             return None
         h, w = raw.shape[:2]
-        x = min(max(x, 0.0), float(w))
-        y = min(max(y, 0.0), float(h))
-        return x / w, y / h
+        return min(max(x, 0.0), float(w)), min(max(y, 0.0), float(h))
 
     def _pick_cp(self, x: float, y: float) -> int:
         section = self._panel.section
-        raw = self._panel.raw_image
-        if section is None or raw is None:
+        if section is None:
             return -1
         cps = section.warp.control_points
         if not cps:
             return -1
-        h, w = raw.shape[:2]
-        px, py = x / w, y / h
-        best, best_d2 = -1, (self._CP_PICK_RADIUS / w) ** 2 + (self._CP_PICK_RADIUS / h) ** 2
+        best, best_d2 = -1, float(self._CP_PICK_RADIUS**2)
         for i, cp in enumerate(cps):
-            d2 = (cp.dst_x - px) ** 2 + (cp.dst_y - py) ** 2
+            d2 = (cp.dst_x - x) ** 2 + (cp.dst_y - y) ** 2
             if d2 < best_d2:
                 best_d2, best = d2, i
         return best
@@ -361,17 +352,19 @@ class WarpView(QWidget):
         if self._cp_dragging >= len(section.warp.control_points):
             self._cp_dragging = -1
             return
-        cur = self._clamped_norm_pos(x, y)
+        cur = self._clamped_pixel_pos(x, y)
         if cur is None:
             return
         cp = section.warp.control_points[self._cp_dragging]
-        if self._cp_drag_start_norm is None or self._cp_drag_start_dst is None:
+        raw = self._panel.raw_image
+        if self._cp_drag_start_px is None or self._cp_drag_start_dst is None or raw is None:
             cp.dst_x, cp.dst_y = cur
             return
-        sx, sy = self._cp_drag_start_norm
+        sx, sy = self._cp_drag_start_px
         bx, by = self._cp_drag_start_dst
-        cp.dst_x = min(max(bx + cur[0] - sx, 0.0), 1.0)
-        cp.dst_y = min(max(by + cur[1] - sy, 0.0), 1.0)
+        h, w = raw.shape[:2]
+        cp.dst_x = min(max(bx + cur[0] - sx, 0.0), float(w))
+        cp.dst_y = min(max(by + cur[1] - sy, 0.0), float(h))
 
     # ------------------------------------------------------------------
     # Canvas click / drag handlers
@@ -388,8 +381,12 @@ class WarpView(QWidget):
         if self._pick_cp(x, y) >= 0:
             return
         u, v = self._cursor_to_src(s, t)
+        raw = self._panel.raw_image
+        if raw is None:
+            return
+        work_h, work_w = raw.shape[:2]
         self._push_undo()
-        section.warp.control_points.append(ControlPoint(u, v, s, t))
+        section.warp.control_points.append(ControlPoint(u * work_w, v * work_h, x, y))
         self._cp_hovered = len(section.warp.control_points) - 1
         self._panel.update_overlay()
         self._set_dirty(True)
@@ -397,7 +394,7 @@ class WarpView(QWidget):
 
     def _on_canvas_drag_started(self, x: float, y: float) -> None:
         self._cp_dragging = self._pick_cp(x, y)
-        self._cp_drag_start_norm = self._clamped_norm_pos(x, y)
+        self._cp_drag_start_px = self._clamped_pixel_pos(x, y)
         self._cp_drag_start_dst = None
         section = self._panel.section
         if section is not None and self._cp_dragging >= 0:
@@ -426,7 +423,7 @@ class WarpView(QWidget):
         self._move_dragged_cp_to(x, y)
         self._cp_hovered = self._cp_dragging
         self._cp_dragging = -1
-        self._cp_drag_start_norm = None
+        self._cp_drag_start_px = None
         self._cp_drag_start_dst = None
         self._panel.update_overlay()
         self._set_dirty(True)

@@ -122,8 +122,7 @@ def build_canonical_remap(
     if cps:
         src = np.array([[cp.src_x, cp.src_y] for cp in cps], dtype=np.float64)
         dst = np.array([[cp.dst_x, cp.dst_y] for cp in cps], dtype=np.float64)
-        aspect = work_w / work_h if work_h else 1.0
-        sec = warp_points_atlas_to_section(st.reshape(-1, 2), src, dst, aspect)
+        sec = warp_points_atlas_to_section(st.reshape(-1, 2), src, dst, work_w, work_h)
         sec = sec.reshape(out_h, out_w, 2)
     else:
         sec = st

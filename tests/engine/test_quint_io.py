@@ -74,16 +74,16 @@ VISUALIGN_JSON = {
 
 
 def test_markers_to_control_points_pixel_array():
-    """Native VisuAlign format: pixel-coordinate arrays."""
+    """Native VisuAlign format: pixel-coordinate arrays stored as-is."""
     markers = [[500.0, 200.0, 600.0, 180.0]]
     cps = _markers_to_control_points(markers, width=1000, height=800)
 
     assert len(cps) == 1
     cp = cps[0]
-    assert abs(cp.src_x - 0.5) < 1e-6  # 500 / 1000
-    assert abs(cp.src_y - 0.25) < 1e-6  # 200 / 800
-    assert abs(cp.dst_x - 0.6) < 1e-6  # 600 / 1000
-    assert abs(cp.dst_y - 0.225) < 1e-6  # 180 / 800
+    assert abs(cp.src_x - 500.0) < 1e-6
+    assert abs(cp.src_y - 200.0) < 1e-6
+    assert abs(cp.dst_x - 600.0) < 1e-6
+    assert abs(cp.dst_y - 180.0) < 1e-6
 
 
 def test_markers_to_control_points_legacy_dict():
@@ -101,16 +101,16 @@ def test_markers_to_control_points_legacy_dict():
 
 def test_control_points_to_markers():
     """Output should be pixel-coordinate arrays matching VisuAlign native format."""
-    cps = [ControlPoint(src_x=0.5, src_y=0.25, dst_x=0.6, dst_y=0.20)]
-    markers = _control_points_to_markers(cps, width=1000, height=800)
+    cps = [ControlPoint(src_x=500.0, src_y=200.0, dst_x=600.0, dst_y=160.0)]
+    markers = _control_points_to_markers(cps)
 
     assert len(markers) == 1
     m = markers[0]
     assert isinstance(m, list)
-    assert abs(m[0] - 500.0) < 1e-3  # src_x * 1000
-    assert abs(m[1] - 200.0) < 1e-3  # src_y * 800
-    assert abs(m[2] - 600.0) < 1e-3  # dst_x * 1000
-    assert abs(m[3] - 160.0) < 1e-3  # dst_y * 800
+    assert abs(m[0] - 500.0) < 1e-3
+    assert abs(m[1] - 200.0) < 1e-3
+    assert abs(m[2] - 600.0) < 1e-3
+    assert abs(m[3] - 160.0) < 1e-3
 
 
 def test_marker_control_point_round_trip():
@@ -121,7 +121,7 @@ def test_marker_control_point_round_trip():
         [800.0, 80.0, 770.0, 136.0],
     ]
     cps = _markers_to_control_points(original, width=W, height=H)
-    restored = _control_points_to_markers(cps, width=W, height=H)
+    restored = _control_points_to_markers(cps)
 
     for orig, res in zip(original, restored):
         for i in range(4):
@@ -206,7 +206,7 @@ def test_load_visualign_section_without_markers(tmp_path: Path):
 
 
 def test_load_visualign_marker_values(tmp_path: Path):
-    """Pixel-array markers are correctly normalised on load."""
+    """Pixel-array markers are stored as-is (working-resolution pixels) on load."""
     p = tmp_path / "va.json"
     p.write_text(json.dumps(VISUALIGN_JSON))
 
@@ -214,11 +214,11 @@ def test_load_visualign_marker_values(tmp_path: Path):
     s0 = project.sections[0]
     cp0 = s0.warp.control_points[0]
 
-    # First marker: [500, 240, 520, 232] at 1000×800
-    assert abs(cp0.src_x - 0.5) < 1e-5  # 500 / 1000
-    assert abs(cp0.src_y - 0.3) < 1e-5  # 240 / 800
-    assert abs(cp0.dst_x - 0.52) < 1e-5  # 520 / 1000
-    assert abs(cp0.dst_y - 0.29) < 1e-5  # 232 / 800
+    # First marker: [500, 240, 520, 232] — stored directly as pixels
+    assert abs(cp0.src_x - 500.0) < 1e-5
+    assert abs(cp0.src_y - 240.0) < 1e-5
+    assert abs(cp0.dst_x - 520.0) < 1e-5
+    assert abs(cp0.dst_y - 232.0) < 1e-5
 
 
 # ---------------------------------------------------------------------------

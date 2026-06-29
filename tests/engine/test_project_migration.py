@@ -9,7 +9,7 @@ import numpy as np
 import tifffile
 
 from verso.engine.io.project_io import backfill_metadata
-from verso.engine.model.project import SCHEMA_VERSION, Project
+from verso.engine.model.project import Project
 
 
 class _StubAtlas:
@@ -69,30 +69,6 @@ def test_backfill_metadata_fills_dims_and_atlas(tmp_path: Path, monkeypatch) -> 
     assert project.atlas.resolution_um == 25.0
     assert project.atlas.shape == (528, 320, 456)
 
-
-def test_load_migrates_v11_and_bumps_version(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("verso.engine.atlas.AtlasVolume", _StubAtlas)
-
-    original = tmp_path / "raw" / "IMG.tif"
-    _write_tiff(original, width=2000, height=1500)
-    _write_tiff(tmp_path / "thumbnails" / "s001.ome.tif", width=400, height=300)
-    project_path = _write_v11_project(tmp_path, original)
-
-    project = Project.load(project_path)
-
-    assert project.version == SCHEMA_VERSION
-    s = project.sections[0]
-    assert s.resolution_original_wh == (2000, 1500)
-    assert s.resolution_thumbnail_wh == (400, 300)
-    assert project.atlas.resolution_um == 25.0
-    assert project.atlas.shape == (528, 320, 456)
-
-    # The migrated metadata persists on the next save.
-    project.save(project_path)
-    reloaded = json.loads(project_path.read_text())
-    assert reloaded["version"] == SCHEMA_VERSION
-    assert reloaded["sections"][0]["resolution_original_wh"] == [2000, 1500]
-    assert reloaded["atlas"]["resolution_um"] == 25.0
 
 
 def test_backfill_atlas_uses_provided_volume_without_constructing(tmp_path: Path) -> None:

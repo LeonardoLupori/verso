@@ -245,8 +245,7 @@ def render_overlay_rgba(
     if cps:
         src = np.array([[cp.src_x, cp.src_y] for cp in cps], dtype=np.float64)
         dst = np.array([[cp.dst_x, cp.dst_y] for cp in cps], dtype=np.float64)
-        aspect = out_w / out_h if out_h else 1.0
-        map_x, map_y = build_backward_remap(base_h, base_w, src, dst, aspect=aspect)
+        map_x, map_y = build_backward_remap(base_h, base_w, src, dst, out_w, out_h)
         labels = cv2.remap(
             labels.astype(np.float32),
             map_x,

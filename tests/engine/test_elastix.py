@@ -122,11 +122,13 @@ def test_anchor_lines_mirror_reflects_ml():
 # ---------------------------------------------------------------------------
 
 
-def test_source_points_in_unit_square():
-    src = anchor_source_points(_CORONAL_25UM, _SHAPE_25UM, 456, 320)
+def test_source_points_in_working_pixel_range():
+    out_w, out_h = 456, 320
+    src = anchor_source_points(_CORONAL_25UM, _SHAPE_25UM, out_w, out_h)
     assert src.ndim == 2 and src.shape[1] == 2
     assert len(src) > 0
-    assert ((src >= 0.0) & (src <= 1.0)).all()
+    assert (src[:, 0] >= 0.0).all() and (src[:, 0] <= out_w).all()
+    assert (src[:, 1] >= 0.0).all() and (src[:, 1] <= out_h).all()
 
 
 def test_source_points_respect_mask_gate():
@@ -136,9 +138,9 @@ def test_source_points_respect_mask_gate():
     gated = anchor_source_points(_CORONAL_25UM, _SHAPE_25UM, 456, 320, cp_mask=mask)
     assert len(gated) <= len(full)
     # Every gated crossing lands inside the mask.
-    for s, t in gated:
-        rx = int(round(s * 456))
-        ry = int(round(t * 320))
+    for cx, cy in gated:
+        rx = int(round(cx))
+        ry = int(round(cy))
         assert mask[min(ry, 319), min(rx, 455)]
 
 
@@ -149,7 +151,8 @@ def test_source_points_scale_to_other_resolution():
     coronal_10um = [0.0, 660.0, 0.0, 1140.0, 0.0, 0.0, 0.0, 0.0, 800.0]
     src = anchor_source_points(coronal_10um, shape_10um, 1140, 800)
     assert len(src) > 0
-    assert ((src >= 0.0) & (src <= 1.0)).all()
+    assert (src[:, 0] >= 0.0).all() and (src[:, 0] <= 1140.0).all()
+    assert (src[:, 1] >= 0.0).all() and (src[:, 1] <= 800.0).all()
 
 
 def test_degenerate_anchoring_returns_empty():
@@ -220,7 +223,7 @@ def test_auto_cps_inside_image_are_kept(monkeypatch):
     assert len(cps) > 0
     for cp in cps:
         assert cp.auto is True
-        assert 0.0 <= cp.dst_x <= 1.0 and 0.0 <= cp.dst_y <= 1.0
+        assert 0.0 <= cp.dst_x <= w and 0.0 <= cp.dst_y <= h
 
 
 def test_auto_cps_outside_image_are_dropped(monkeypatch):

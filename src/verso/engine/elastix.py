@@ -108,7 +108,7 @@ def anchor_source_points(
         cp_mask: optional bool ``(out_h, out_w)`` gating mask.
 
     Returns:
-        ``(K, 2)`` float64 array of normalised ``(s, t)`` source positions.
+        ``(K, 2)`` float64 array of working-resolution pixel ``(x, y)`` source positions.
     """
     res = load_anchor_lines()
     curated_shape = np.asarray(res["shape"], dtype=np.float64)  # [AP, DV, ML]
@@ -145,7 +145,7 @@ def anchor_source_points(
                 ry = int(np.clip(round(t * out_h), 0, out_h - 1))
                 if not cp_mask[ry, rx]:
                     continue
-            src_list.append([s, t])
+            src_list.append([s * out_w, t * out_h])
 
     return np.array(src_list, dtype=np.float64) if src_list else np.zeros((0, 2))
 
@@ -269,9 +269,10 @@ def auto_control_points(
     with tempfile.TemporaryDirectory() as tmp:
         if manual_cps:
             # Same anatomical feature: fixed = section (dst), moving = template (src).
-            # Points are in working-resolution pixels = the registration's physical space.
-            fixed_pts = np.array([[cp.dst_x * w, cp.dst_y * h] for cp in manual_cps])
-            moving_pts = np.array([[cp.src_x * w, cp.src_y * h] for cp in manual_cps])
+            # Control points are stored in working-resolution pixels = the registration's
+            # physical space; pass them directly.
+            fixed_pts = np.array([[cp.dst_x, cp.dst_y] for cp in manual_cps])
+            moving_pts = np.array([[cp.src_x, cp.src_y] for cp in manual_cps])
             fixed_file = Path(tmp) / "fixed_points.txt"
             moving_file = Path(tmp) / "moving_points.txt"
             _write_point_file(fixed_file, fixed_pts)
@@ -286,8 +287,8 @@ def auto_control_points(
     # Source positions: curated anchor lines crossing the plane, gated by a
     # (larger) dilated mask so points only appear on/near tissue.
     cp_mask = morph_mask(mask, params.mask_dilation_cp, "expand") if mask is not None else None
-    src_norm = anchor_source_points(anchoring, atlas_shape, w, h, cp_mask=cp_mask)
-    if len(src_norm) == 0:
+    src_px = anchor_source_points(anchoring, atlas_shape, w, h, cp_mask=cp_mask)
+    if len(src_px) == 0:
         return []
 
     # Destination positions: apply the transform at working resolution to the
@@ -302,20 +303,19 @@ def auto_control_points(
     mapped_y = itk.array_from_image(itk.transformix_filter(itk.image_from_array(y_img), tp))
 
     out: list[ControlPoint] = []
-    for s, t in src_norm:
-        cx, cy = s * w, t * h
+    for cx, cy in src_px:
         rx = int(np.clip(round(cx), 0, w - 1))
         ry = int(np.clip(round(cy), 0, h - 1))
-        dst_x = (2.0 * cx - float(mapped_x[ry, rx])) / w
-        dst_y = (2.0 * cy - float(mapped_y[ry, rx])) / h
+        dst_x = 2.0 * cx - float(mapped_x[ry, rx])
+        dst_y = 2.0 * cy - float(mapped_y[ry, rx])
         # Drop points the single-step inversion threw outside the image: near
         # tissue edges or in poorly-registered regions the elastix displacement
         # can be large and the destination lands far off-section (see module
         # docstring). Such points are unreliable, so discard rather than clamp.
-        if not (0.0 <= dst_x <= 1.0 and 0.0 <= dst_y <= 1.0):
+        if not (0.0 <= dst_x <= w and 0.0 <= dst_y <= h):
             continue
         out.append(
-            ControlPoint(src_x=float(s), src_y=float(t), dst_x=dst_x, dst_y=dst_y, auto=True)
+            ControlPoint(src_x=float(cx), src_y=float(cy), dst_x=dst_x, dst_y=dst_y, auto=True)
         )
     return out
 

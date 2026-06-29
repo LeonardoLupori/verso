@@ -55,7 +55,7 @@ def _make_warp_mock(section: Section, state: AppState) -> SimpleNamespace:
         _active=False,
         _cp_hovered=-1,
         _cp_dragging=-1,
-        _cp_drag_start_norm=None,
+        _cp_drag_start_px=None,
         _cp_drag_start_dst=None,
         _baseline_warp=None,
         _dirty=False,
@@ -82,7 +82,7 @@ def test_clear_edits_discards_cps_after_navigating_away_and_back(_qapp):
     assert mock._dirty is False
 
     # User adds a control point → dirty. _set_dirty stashes the clean baseline.
-    section.warp.control_points.append(ControlPoint(0.5, 0.5, 0.6, 0.6))
+    section.warp.control_points.append(ControlPoint(500.0, 400.0, 600.0, 400.0))
     state.mark_dirty(section.id, "warp")
     mock._set_dirty(True)
 
@@ -126,7 +126,7 @@ def test_inactive_view_ignores_shared_panel_section_loaded(_qapp):
 
     # Warp is dirty on `section`.
     WarpView.activate(mock)
-    section.warp.control_points.append(ControlPoint(0.5, 0.5, 0.6, 0.6))
+    section.warp.control_points.append(ControlPoint(500.0, 400.0, 600.0, 400.0))
     state.mark_dirty(section.id, "warp")
     mock._set_dirty(True)
     saved_baseline = mock._baseline_warp
