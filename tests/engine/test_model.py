@@ -153,6 +153,34 @@ def test_section_round_trip():
     assert Section.from_dict(s.to_dict()) == s
 
 
+def test_section_dims_default_to_zero():
+    s = Section(id="s001", slice_index=1, original_path="a.tif", thumbnail_path="t.ome.tif")
+    assert s.resolution_original_wh == (0, 0)
+    assert s.resolution_thumbnail_wh == (0, 0)
+
+
+def test_section_round_trip_preserves_dims():
+    s = _make_section()
+    s.resolution_original_wh = (2000, 1500)
+    s.resolution_thumbnail_wh = (400, 300)
+    loaded = Section.from_dict(s.to_dict())
+    assert loaded.resolution_original_wh == (2000, 1500)
+    assert loaded.resolution_thumbnail_wh == (400, 300)
+    assert loaded == s
+
+
+def test_atlas_ref_defaults_and_round_trip():
+    ref = AtlasRef(name="allen_mouse_25um")
+    assert ref.resolution_um == 0.0
+    assert ref.shape == (0, 0, 0)
+
+    ref = AtlasRef(name="allen_mouse_25um", resolution_um=25.0, shape=(528, 320, 456))
+    loaded = AtlasRef.from_dict(ref.to_dict())
+    assert loaded.resolution_um == 25.0
+    assert loaded.shape == (528, 320, 456)
+    assert loaded == ref
+
+
 # ---------------------------------------------------------------------------
 # Project — save / load from disk
 # ---------------------------------------------------------------------------
@@ -208,7 +236,7 @@ def test_project_json_is_valid(tmp_path: Path):
     p.save(json_path)
 
     data = json.loads(json_path.read_text())
-    assert data["version"] == "1.1"
+    assert data["version"] == "1.2"
     assert data["interpolation_axis"] == "AP"
     assert len(data["sections"]) == 1
     assert data["sections"][0]["id"] == "s001"
@@ -228,15 +256,17 @@ def test_project_round_trips_non_coronal_axis():
     assert loaded.interpolation_axis_index == 0
 
 
-def test_project_legacy_v1_0_dict_loads_with_default_axis_and_upgrades_version():
+def test_project_legacy_v1_0_dict_loads_with_default_axis_and_preserves_version():
     p = _make_project()
     legacy = p.to_dict()
     legacy.pop("interpolation_axis")
     legacy["version"] = "1.0"
 
+    # from_dict is pure: it preserves the stored version so Project.load can
+    # detect that a pre-1.2 file needs metadata backfill.
     loaded = Project.from_dict(legacy)
     assert loaded.interpolation_axis == "AP"
-    assert loaded.version == "1.1"
+    assert loaded.version == "1.0"
 
 
 def test_project_invalid_axis_falls_back_to_ap():

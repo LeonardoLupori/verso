@@ -45,6 +45,7 @@ from verso.engine.io.image_io import (
     probe_channels,
     thumbnail_filename,
 )
+from verso.engine.io.project_io import backfill_metadata
 from verso.engine.model.alignment import Alignment, AlignmentStatus, WarpState
 from verso.engine.model.project import (
     DEFAULT_PROJECT_FILENAME,
@@ -504,6 +505,15 @@ class NewProjectDialog(QDialog):
 
         # Generate working-resolution thumbnails now so all views load quickly.
         self._generate_thumbnails(self._project.sections, self._project.working_scale)
+
+        # Cache image dimensions and atlas resolution/shape so the saved project
+        # is self-contained for pixel <-> atlas voxel mapping. If the atlas
+        # cannot be fetched yet (offline / first download), leave the file
+        # pre-1.2 so the next load completes the migration.
+        try:
+            backfill_metadata(self._project, folder_path)
+        except Exception:
+            self._project.version = "1.1"
         self._project.save(self._project_path)
 
         self.accept()

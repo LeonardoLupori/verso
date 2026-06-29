@@ -10,6 +10,11 @@ from verso.engine.model.elastix import ElastixParams
 
 DEFAULT_PROJECT_FILENAME = "project-verso.json"
 
+# Current project-schema version. Bumped to 1.2 when per-section pixel
+# dimensions and atlas resolution/shape were added so the file is self-contained
+# for pixel <-> atlas voxel mapping. Older files are migrated on load.
+SCHEMA_VERSION = "1.2"
+
 # Mapping between the stored axis-name field and the QuickNII voxel axis index.
 # QuickNII voxel space ordering is (LR=0, AP=1, DV=2); "ML" is the storage name
 # for the mediolateral / LR axis.
@@ -27,19 +32,56 @@ SLICING_ORIENTATION_TO_AXIS: dict[str, str] = {
 AXIS_TO_SLICING_ORIENTATION: dict[str, str] = {v: k for k, v in SLICING_ORIENTATION_TO_AXIS.items()}
 
 
+def _wh(value: Any) -> tuple[int, int]:
+    """Parse a stored ``[width, height]`` pair, defaulting to ``(0, 0)``."""
+    if not value:
+        return (0, 0)
+    return (int(value[0]), int(value[1]))
+
+
+def _version_tuple(version: str) -> tuple[int, ...]:
+    """Parse a dotted schema version like ``"1.2"`` into ``(1, 2)`` for ordering."""
+    parts: list[int] = []
+    for token in str(version).split("."):
+        try:
+            parts.append(int(token))
+        except ValueError:
+            parts.append(0)
+    return tuple(parts)
+
+
 @dataclass
 class AtlasRef:
-    """Reference to a brainglobe atlas."""
+    """Reference to a brainglobe atlas.
+
+    ``resolution_um`` (isotropic, microns per voxel) and ``shape`` (voxel
+    dimensions in QuickNII/brainglobe order) are cached here so the project file
+    is self-contained for coordinate work without re-fetching the atlas. They
+    are ``0.0`` / ``(0, 0, 0)`` until populated (see ``backfill_metadata``).
+    """
 
     name: str
     source: str = "brainglobe"
+    resolution_um: float = 0.0
+    shape: tuple[int, int, int] = (0, 0, 0)
 
-    def to_dict(self) -> dict[str, str]:
-        return {"name": self.name, "source": self.source}
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "source": self.source,
+            "resolution_um": self.resolution_um,
+            "shape": list(self.shape),
+        }
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> AtlasRef:
-        return cls(name=d["name"], source=d.get("source", "brainglobe"))
+        raw_shape = d.get("shape") or (0, 0, 0)
+        return cls(
+            name=d["name"],
+            source=d.get("source", "brainglobe"),
+            resolution_um=float(d.get("resolution_um", 0.0)),
+            shape=(int(raw_shape[0]), int(raw_shape[1]), int(raw_shape[2])),
+        )
 
 
 @dataclass
@@ -107,6 +149,12 @@ class Section:
     slice_index: int
     original_path: str
     thumbnail_path: str
+    # Pixel dimensions ``[width, height]`` of the original (full-resolution)
+    # image and of the working-resolution thumbnail. Cached so the project file
+    # alone can map pixels <-> atlas voxels. ``(0, 0)`` until populated (see
+    # ``backfill_metadata``).
+    resolution_original_wh: tuple[int, int] = (0, 0)
+    resolution_thumbnail_wh: tuple[int, int] = (0, 0)
     preprocessing: Preprocessing = field(default_factory=Preprocessing)
     alignment: Alignment = field(default_factory=Alignment)
     warp: WarpState = field(default_factory=WarpState)
@@ -117,6 +165,8 @@ class Section:
             "slice_index": self.slice_index,
             "original_path": self.original_path,
             "thumbnail_path": self.thumbnail_path,
+            "resolution_original_wh": list(self.resolution_original_wh),
+            "resolution_thumbnail_wh": list(self.resolution_thumbnail_wh),
             "preprocessing": self.preprocessing.to_dict(),
             "alignment": self.alignment.to_dict(),
             "warp": self.warp.to_dict(),
@@ -129,6 +179,8 @@ class Section:
             slice_index=d["slice_index"],
             original_path=d["original_path"],
             thumbnail_path=d["thumbnail_path"],
+            resolution_original_wh=_wh(d.get("resolution_original_wh")),
+            resolution_thumbnail_wh=_wh(d.get("resolution_thumbnail_wh")),
             preprocessing=Preprocessing.from_dict(d.get("preprocessing", {})),
             alignment=Alignment.from_dict(d.get("alignment", {})),
             warp=WarpState.from_dict(d.get("warp", {})),
@@ -164,7 +216,7 @@ class Project:
     # Per-project parameters for automatic elastix control-point generation.
     # None means "use the built-in ElastixParams defaults" until edited.
     elastix_params: ElastixParams | None = None
-    version: str = "1.1"
+    version: str = SCHEMA_VERSION
 
     @property
     def interpolation_axis_index(self) -> int:
@@ -222,13 +274,36 @@ class Project:
             interpolation_axis=interpolation_axis,
             working_scale=float(d.get("working_scale", 0.2)),
             elastix_params=elastix_params,
-            version="1.1",
+            version=str(d.get("version", "1.1")),
         )
         project.sort_sections()
         return project
 
     @classmethod
     def load(cls, path: Path) -> Project:
-        """Load a project from disk."""
+        """Load a project from disk, migrating older schema versions in place.
+
+        Pre-1.2 files lack per-section pixel dimensions and atlas
+        resolution/shape; these are backfilled from the image files and the
+        atlas so the in-memory project is self-contained. The new fields persist
+        on the next :meth:`save`.
+
+        Args:
+            path: Path to a project JSON file.
+
+        Returns:
+            The loaded (and, if needed, migrated) project.
+        """
+        path = Path(path)
         data = json.loads(path.read_text(encoding="utf-8"))
-        return cls.from_dict(data)
+        project = cls.from_dict(data)
+        if _version_tuple(project.version) < _version_tuple(SCHEMA_VERSION):
+            # Pre-1.2 file: backfill image dims + atlas meta so the project is
+            # self-contained. Local import — the backfill reads image files and
+            # the atlas, which would create a model -> io/atlas import cycle at
+            # module load.
+            from verso.engine.io.project_io import backfill_metadata
+
+            backfill_metadata(project, path.parent)
+            project.version = SCHEMA_VERSION
+        return project
