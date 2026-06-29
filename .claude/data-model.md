@@ -28,9 +28,14 @@ Top level:
 
 ```json
 {
-  "version": "1.1",
+  "version": "1.2",
   "name": "My Experiment",
-  "atlas": { "name": "allen_mouse_25um", "source": "brainglobe" },
+  "atlas": {
+    "name": "allen_mouse_25um",
+    "source": "brainglobe",
+    "resolution_um": 25.0,
+    "shape": [528, 320, 456]
+  },
   "interpolation_axis": "AP",
   "channels": [ ... ],
   "cp_size": 10,
@@ -43,14 +48,26 @@ Top level:
 
 | Field | Type | Notes |
 |---|---|---|
-| `version` | str | Schema version. Current `"1.1"`; older `"1.0"` files load with default `interpolation_axis="AP"` and are upgraded on next save. |
+| `version` | str | Schema version. Current `"1.2"`. Older files load and are **migrated on load** (see "Schema migration" below): `"1.0"` defaults `interpolation_axis="AP"`; pre-`1.2` files backfill per-section pixel dimensions and atlas `resolution_um`/`shape`. Migrated state persists on the next save. |
 | `name` | str | Project display name. |
-| `atlas` | `AtlasRef` | `{name, source}`. Source defaults to `"brainglobe"`. |
+| `atlas` | `AtlasRef` | `{name, source, resolution_um, shape}`. `source` defaults to `"brainglobe"`. `resolution_um` is the isotropic atlas voxel size (microns); `shape` is the atlas voxel grid `[x, y, z]` in QuickNII/brainglobe order. Both are cached so the project file is self-contained for pixel ↔ atlas voxel mapping without re-fetching the atlas; `0.0` / `[0, 0, 0]` until populated. |
 | `interpolation_axis` | str | Brain axis the cutting series runs along: `"AP"` (coronal, default), `"ML"` (sagittal), or `"DV"` (horizontal). Set at project creation; drives the QuickNII voxel axis used by `quicknii_series_anchorings`. See "Interpolation axis" below. |
 | `channels` | `list[ChannelSpec]` | Project-wide channel display settings (shared across all sections). |
 | `cp_size` / `cp_shape` / `cp_color` | int / str / hex | Warp control-point drawing style, project-wide. |
 | `working_scale` | float | Ratio `working_long_side / original_long_side`, **uniform across all sections**. Derived once at import from the largest image so its longest side fits within `THUMBNAIL_MAX_SIDE` (2000 px); see `compute_working_scale` in `engine/io/image_io.py`. Full-resolution export scales back up by this factor. Default `0.2`. |
 | `sections` | `list[Section]` | Sections in the cutting series. |
+
+### Schema migration
+
+`Project.from_dict` is pure and **preserves** the stored `version` (no I/O). `Project.load`
+performs migration: when the file's version is older than the current `SCHEMA_VERSION`
+(`"1.2"`), it calls `backfill_metadata` (`engine/io/project_io.py`) to populate the new
+per-section pixel dimensions (from the image files, regenerating a missing thumbnail via
+`ensure_working_copy`) and the atlas `resolution_um`/`shape` (from the loaded
+`AtlasVolume`), then bumps the in-memory version. The migrated fields persist on the next
+`save`. New projects are populated at import (in the New Project flow) so they are written
+complete; if the atlas cannot be fetched at creation, the file is left pre-`1.2` so the next
+load completes it.
 
 ### `ChannelSpec`
 
@@ -71,6 +88,8 @@ Top level:
   "slice_index": 17,
   "original_path": "/data/raw/IMG_0234.tif",
   "thumbnail_path": "thumbnails/IMG_0234-thumb.ome.tif",
+  "resolution_original_wh": [20000, 15000],
+  "resolution_thumbnail_wh": [1200, 900],
   "preprocessing": { ... },
   "alignment": { ... },
   "warp": { ... }
@@ -83,6 +102,8 @@ Top level:
 | `slice_index` | int | Section's physical position along the project's interpolation axis (e.g. AP). Ground truth for ordering everywhere (overview / filmstrip / interpolation). **Need not be contiguous** (1, 2, 18, 19 encodes a gap) and **may repeat** (a slice that broke into several images shares one index). Guessed from filenames on import via `guess_slice_indices` and editable afterwards in the overview `#` column. |
 | `original_path` | str | Absolute path to the full-resolution source image. |
 | `thumbnail_path` | str | Path to the working-resolution OME-TIFF (relative or absolute). |
+| `resolution_original_wh` | `[int, int]` | Pixel dimensions `[width, height]` of the original (full-resolution) image. Cached so the file alone maps pixels ↔ atlas voxels; `[0, 0]` until populated (added in v1.2). |
+| `resolution_thumbnail_wh` | `[int, int]` | Pixel dimensions `[width, height]` of the working-resolution thumbnail. `[0, 0]` until populated (added in v1.2). |
 
 ### `Preprocessing`
 
