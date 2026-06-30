@@ -191,8 +191,13 @@ class OverviewView(QWidget):
         vheader = require(t.verticalHeader())
 
         hheader.setSectionResizeMode(_COL_FILE, QHeaderView.ResizeMode.Stretch)
+        # Content columns are fitted once per rebuild (resizeColumnsToContents)
+        # and then left Fixed: the user can't drag the dividers, and — unlike
+        # live ResizeToContents, which re-measures every row in a column on each
+        # cell write (O(rows^2) status refreshes, seconds at a few hundred
+        # sections) — cell writes no longer trigger any re-measure.
         for col in [_COL_SERIAL, _COL_DIMS, _COL_AP] + list(range(_COL_STEPS_START, n_cols)):
-            hheader.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
+            hheader.setSectionResizeMode(col, QHeaderView.ResizeMode.Fixed)
 
         t.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         t.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -340,6 +345,11 @@ class OverviewView(QWidget):
         self._suppress_edits = False
 
         self._set_summary(len(p.sections), complete, in_progress)
+
+        # One-shot fit for the Interactive content columns (the Stretch File
+        # column is unaffected).  Doing this only on a structural rebuild keeps
+        # the frequent status-only refreshes cheap.
+        t.resizeColumnsToContents()
 
         # Restore the highlight and scroll position for the selected section.
         idx = self._state.section_index
