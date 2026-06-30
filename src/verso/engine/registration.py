@@ -289,6 +289,29 @@ def _display_space_anchoring(section) -> list[float]:
     return list(section.alignment.anchoring)
 
 
+def _has_user_owned_alignment(section) -> bool:
+    """True when a section's alignment is user-owned and must never be replaced
+    by auto-interpolation or duplicate-slice mirroring.
+
+    Protects two cases: a saved plane (``status == COMPLETE``), and a manual,
+    still-uncommitted edit (a non-zero anchoring that is past ``NOT_STARTED`` and
+    not tagged as an auto proposal). Sections that are ``NOT_STARTED`` or carry an
+    auto ``"quicknii_default"`` plane are *not* protected, so they remain free to
+    receive an interpolated proposal or a mirror of a stored same-index sibling.
+    """
+    from verso.engine.model.alignment import AlignmentStatus
+
+    al = section.alignment
+    if al.status == AlignmentStatus.COMPLETE:
+        return True
+    return bool(
+        al.anchoring
+        and any(v != 0.0 for v in al.anchoring)
+        and al.status != AlignmentStatus.NOT_STARTED
+        and al.source != "quicknii_default"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Pixel ↔ Normalised (convenience wrappers for the GUI)
 # ---------------------------------------------------------------------------
@@ -724,7 +747,7 @@ def interpolate_anchorings(
         )
 
         for (section, _, _), anchoring in zip(sorted_usable, propagated_anchorings):
-            if section.alignment.status == AlignmentStatus.COMPLETE:
+            if _has_user_owned_alignment(section):
                 continue
             section.alignment.anchoring = anchoring
             section.alignment.status = AlignmentStatus.IN_PROGRESS
@@ -783,7 +806,7 @@ def interpolate_anchorings(
 
     for idx, unpacked in propagated.items():
         section, w, h = sorted_usable[idx]
-        if section.alignment.status == AlignmentStatus.COMPLETE:
+        if _has_user_owned_alignment(section):
             continue
         section.alignment.anchoring = quicknii_pack_anchoring(unpacked, w, h)
         section.alignment.status = AlignmentStatus.IN_PROGRESS

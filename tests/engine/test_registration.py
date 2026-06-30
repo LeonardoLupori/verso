@@ -633,6 +633,68 @@ def test_interpolate_anchorings_duplicate_serial_strips_inplane_rotation_keeps_t
     assert sections[0].alignment.status == AlignmentStatus.IN_PROGRESS
 
 
+def test_interpolate_anchorings_keeps_manual_edit_on_duplicate_slice(tmp_path):
+    """A manual, uncommitted plane must survive interpolation even when it shares
+    a slice_index with a COMPLETE sibling (regression: duplicates were clobbered
+    by the stored sibling's mirror, then a save promoted the default to green)."""
+    from PIL import Image
+
+    atlas_shape = (528, 320, 456)
+    paths = []
+    for i in range(3):
+        path = tmp_path / f"s{i + 1}.png"
+        Image.new("RGB", (1000, 800)).save(path)
+        paths.append(path)
+
+    base = quicknii_series_anchorings(
+        image_sizes=[(1000, 800)] * 3,
+        slice_indices=[10, 10, 20],
+        atlas_shape=atlas_shape,
+        interpolation_axis=1,
+    )
+    custom_stored = rotate_anchoring(base[0], math.radians(15))
+    custom_manual = rotate_anchoring(base[0], math.radians(-30))
+
+    sections = [
+        Section(
+            id="s001",
+            slice_index=10,
+            original_path=str(paths[0]),
+            thumbnail_path=str(paths[0]),
+            alignment=Alignment(
+                anchoring=list(custom_stored),
+                stored_anchoring=list(custom_stored),
+                status=AlignmentStatus.COMPLETE,
+                source="manual",
+            ),
+        ),
+        # Same slice_index as the COMPLETE sibling, but a manual in-progress edit.
+        Section(
+            id="s002",
+            slice_index=10,
+            original_path=str(paths[1]),
+            thumbnail_path=str(paths[1]),
+            alignment=Alignment(
+                anchoring=list(custom_manual),
+                status=AlignmentStatus.IN_PROGRESS,
+                source="manual",
+            ),
+        ),
+        Section(
+            id="s003",
+            slice_index=20,
+            original_path=str(paths[2]),
+            thumbnail_path=str(paths[2]),
+        ),
+    ]
+
+    interpolate_anchorings(sections, atlas_shape=atlas_shape, interpolation_axis=1)
+
+    np.testing.assert_allclose(sections[1].alignment.anchoring, custom_manual)
+    assert sections[1].alignment.source == "manual"
+    assert sections[1].alignment.status == AlignmentStatus.IN_PROGRESS
+
+
 def test_interpolate_anchorings_without_atlas_shape_keeps_legacy_one_keyframe_noop(
     tmp_path,
 ):

@@ -1714,28 +1714,17 @@ class MainWindow(QMainWindow):
             center_proposals=True,
         )
 
-        stored_indices = {
-            section.slice_index
-            for (section, _, _), anch in zip(usable, display_anchorings)
-            if anch is not None
-        }
+        from verso.engine.registration import _has_user_owned_alignment
 
         for (section, _, _), anchoring, anch in zip(usable, propagated, display_anchorings):
             if anch is not None:
                 continue
-            # Always sync sections that share a slice index with a stored
-            # section — they are the same physical slice and must show the same
-            # image.
-            is_index_duplicate = section.slice_index in stored_indices
-            has_existing = section.alignment.anchoring and any(
-                v != 0.0 for v in section.alignment.anchoring
-            )
-            if (
-                not is_index_duplicate
-                and has_existing
-                and section.alignment.status != AlignmentStatus.NOT_STARTED
-                and section.alignment.source != "quicknii_default"
-            ):
+            # Never replace a user-owned alignment — manual or saved — with an
+            # auto proposal, even when another section shares this slice index.
+            # A NOT_STARTED or auto ("quicknii_default") section is still free to
+            # receive the proposal, which for a duplicate slice mirrors its
+            # stored same-index sibling so the same physical slice reads alike.
+            if _has_user_owned_alignment(section):
                 continue
             section.alignment.anchoring = anchoring
             if section.alignment.status == AlignmentStatus.NOT_STARTED:
