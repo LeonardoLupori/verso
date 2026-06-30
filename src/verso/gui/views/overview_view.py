@@ -322,6 +322,15 @@ class OverviewView(QWidget):
             f"  {total} sections  ·  {complete} complete  ·  {in_progress} in progress"
         )
 
+        # Restore the highlight and scroll position for the currently selected
+        # section.
+        idx = self._state.section_index
+        if 0 <= idx < t.rowCount():
+            t.blockSignals(True)
+            t.setCurrentCell(idx, 0)
+            t.blockSignals(False)
+            t.scrollTo(t.model().index(idx, 0))
+
         # Read image dimensions in the background; update each cell as it arrives.
         loader = _DimensionLoader(p.sections)
         thread = QThread()  # No parent — we control lifetime explicitly via shutdown()
@@ -365,6 +374,7 @@ class OverviewView(QWidget):
         not_started = AlignmentStatus.NOT_STARTED
         in_progress = AlignmentStatus.IN_PROGRESS
 
+        prep_dirty = self._state.is_dirty(section.id, "prep")
         draft = self._state.get_prep_draft(section.id)
         if draft is not None:
             # The flushed draft carries per-sub-step dirty flags, so colour each
@@ -375,22 +385,20 @@ class OverviewView(QWidget):
                 draft.base_flip_h != section.preprocessing.flip_horizontal
                 or draft.base_flip_v != section.preprocessing.flip_vertical
             )
-
-            def prep_status(is_done: bool, sub_dirty: bool) -> AlignmentStatus:
-                if sub_dirty:
-                    return in_progress
-                return done if is_done else not_started
         else:
             # No draft — the section is the one currently open in Prep, whose
             # live edits aren't flushed yet, so we only know the aggregate prep
             # flag.  Fall back to it for any not-yet-saved sub-step.
-            prep_dirty = self._state.is_dirty(section.id, "prep")
             mask_dirty = flip_dirty = False
 
-            def prep_status(is_done: bool, _sub_dirty: bool) -> AlignmentStatus:
-                if is_done:
-                    return done
-                return in_progress if prep_dirty else not_started
+        def prep_status(is_done: bool, sub_dirty: bool) -> AlignmentStatus:
+            if draft is not None:
+                if sub_dirty:
+                    return in_progress
+                return done if is_done else not_started
+            if is_done:
+                return done
+            return in_progress if prep_dirty else not_started
 
         # Flip is a state, not a task: both flipped and un-flipped are valid end
         # states, so it gets a plain H / V / H+V label (regular colour) instead

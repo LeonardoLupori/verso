@@ -56,7 +56,14 @@ from verso.engine.io.quint_io import (
 )
 from verso.engine.model.alignment import Alignment, AlignmentStatus, ControlPoint, WarpState
 from verso.engine.model.elastix import ElastixParams
-from verso.engine.model.project import AtlasRef, ChannelSpec, DialogPrefs, Preprocessing, Project, Section
+from verso.engine.model.project import (
+    AtlasRef,
+    ChannelSpec,
+    DialogPrefs,
+    Preprocessing,
+    Project,
+    Section,
+)
 from verso.engine.registration import (
     anchoring_center,
     anchoring_to_vectors,

@@ -70,6 +70,7 @@ def _make_window_mock() -> SimpleNamespace:
         _refresh_filmstrip_dots=lambda: None,
     )
     mock._clear_alignment_view_state = lambda s: MainWindow._clear_alignment_view_state(mock, s)
+    mock._seed_alignment_to_quicknii_default = lambda s: None
     mock._invalidate_alignment_for_flip = lambda s: MainWindow._invalidate_alignment_for_flip(
         mock, s
     )
