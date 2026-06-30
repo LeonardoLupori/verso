@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import QObject, QPoint, QRectF, Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QColor, QPainter, QPen
+from PyQt6.QtCore import QPoint, QRectF, Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QPainter, QPen, QShowEvent
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QHeaderView,
@@ -31,14 +32,10 @@ if TYPE_CHECKING:
 
 _STEPS = ("Flip", "Slice mask", "Align", "Warp")
 
-# Every step shows a dot; the colour carries the meaning, matching the
+# Every step renders the same dot; the colour carries the meaning, matching the
 # filmstrip convention (gray = not started, yellow = unsaved edits, green =
 # saved).  See verso.engine.model.status.STATUS_COLOR.
-_STATUS_SYMBOL = {
-    AlignmentStatus.NOT_STARTED: "●",
-    AlignmentStatus.IN_PROGRESS: "●",
-    AlignmentStatus.COMPLETE: "●",
-}
+_DOT = "●"
 
 _COL_SERIAL = 0
 _COL_FILE = 1
@@ -128,40 +125,16 @@ class _SliceIndexDelegate(QStyledItemDelegate):
         painter.restore()
 
 
-class _DimensionLoader(QObject):
-    """Background worker: reads image dimensions for overview table rows.
-
-    Emits ``dimension_ready(row, dims_text)`` for each section as it completes.
-    """
-
-    dimension_ready = pyqtSignal(int, str)  # (row_index, "W x H")
-    finished = pyqtSignal()
-
-    def __init__(self, sections: list) -> None:
-        super().__init__()
-        self._sections = list(sections)  # snapshot — avoid races with caller
-        self._abort = False
-
-    def stop(self) -> None:
-        """Request cancellation. Safe to call from any thread."""
-        self._abort = True
-
-    def run(self) -> None:
-        from verso.engine.io.image_io import registration_dimensions
-
-        for row, section in enumerate(self._sections):
-            if self._abort:
-                break
-            try:
-                w, h = registration_dimensions(section)
-                self.dimension_ready.emit(row, f"{w} x {h}")
-            except Exception:
-                pass
-        self.finished.emit()
-
-
 class OverviewView(QWidget):
-    """Table-based overview of all sections and their pipeline status."""
+    """Table-based overview of all sections and their pipeline status.
+
+    The table is split into *static* columns (slice index, file, dimensions)
+    that change only when the section list changes, and *dynamic* columns (AP
+    position, flip label, status dots) that track per-step edit/save state.
+    ``refresh()`` updates only the dynamic cells unless the section list itself
+    changed (add / remove / reorder), in which case it rebuilds the whole table.
+    Work is skipped entirely while the view is hidden and flushed on show.
+    """
 
     section_activated = pyqtSignal(int)  # double-click → open in Prep
     section_selected = pyqtSignal(int)  # single click → update properties
@@ -172,9 +145,8 @@ class OverviewView(QWidget):
         super().__init__(parent)
         self._state = state
         self._project: Project | None = None
-        self._dim_loader: _DimensionLoader | None = None
-        self._dim_thread: QThread | None = None
         self._suppress_edits = False  # ignore cellChanged during programmatic fills
+        self._pending_refresh = False  # a refresh was requested while hidden
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -224,8 +196,9 @@ class OverviewView(QWidget):
 
         t.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         t.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        # Only the "#" (slice index) cell is editable — see _fill_row. Editing
-        # any other cell is blocked by stripping ItemIsEditable in _make_cell.
+        # Only the "#" (slice index) cell is editable — see _fill_static_cells.
+        # Editing any other cell is blocked by stripping ItemIsEditable in
+        # _make_cell.
         t.setEditTriggers(
             QAbstractItemView.EditTrigger.DoubleClicked
             | QAbstractItemView.EditTrigger.EditKeyPressed
@@ -259,71 +232,116 @@ class OverviewView(QWidget):
     ) -> QTableWidgetItem:
         item = QTableWidgetItem(text)
         item.setTextAlignment(align)
-        # Non-editable by default; _fill_row re-enables only the slice-index cell.
+        # Non-editable by default; _fill_static_cells re-enables only the
+        # slice-index cell.
         item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         return item
 
-    def _stop_dim_loader(self) -> None:
-        if self._dim_loader is not None:
-            self._dim_loader.stop()
-        if self._dim_thread is not None:
-            try:
-                if self._dim_thread.isRunning():
-                    self._dim_thread.quit()
-                    self._dim_thread.wait()
-            except RuntimeError:
-                pass  # C++ object already deleted — thread has already finished
-        self._dim_loader = None
-        self._dim_thread = None
+    @staticmethod
+    def _dims_text(section: Section) -> str:
+        """Return "W x H" for a section's registration image.
 
-    def shutdown(self) -> None:
-        """Stop the background loader. Must be called before the widget is destroyed."""
-        self._stop_dim_loader()
+        Read from the section's cached ``resolution_thumbnail_wh`` (populated by
+        ``backfill_metadata`` at import and persisted in the project file).
+        """
+        w, h = section.resolution_thumbnail_wh
+        return f"{w} x {h}"
+
+    # -- public API ---------------------------------------------------------
 
     def load_project(self, project: Project) -> None:
         self._project = project
         axis_name = project.interpolation_axis if project is not None else "AP"
         require(self._table.horizontalHeaderItem(_COL_AP)).setText(f"{axis_name} (mm)")
-        self._populate()
+        # A new project never matches the current rows, so refresh() rebuilds.
+        self.refresh()
 
-    def _populate(self) -> None:
+    def refresh(self) -> None:
+        """Update the table — incrementally when only statuses changed.
+
+        Deferred while the view is hidden (many callers fire from Prep / Align /
+        Warp); the pending refresh is flushed in ``showEvent``.
+        """
+        if not self.isVisible():
+            self._pending_refresh = True
+            return
+        self._pending_refresh = False
+
         p = self._project
         if p is None or not p.sections:
-            self._stop_dim_loader()
-            self._empty.setVisible(True)
-            self._table.setVisible(False)
-            self._summary.setText("  —")
+            self._show_empty()
             return
+        if self._structure_matches():
+            self._refresh_status()
+        else:
+            self._rebuild()
 
-        self._stop_dim_loader()
+    def refresh_row(self, section_index: int) -> None:
+        """Update a single row's status cells (e.g. after a flip or align edit)."""
+        if self._project is None:
+            return
+        if not self.isVisible():
+            self._pending_refresh = True
+            return
+        self._suppress_edits = True
+        self._fill_status_cells(section_index, self._project.sections[section_index])
+        self._suppress_edits = False
 
+    def selected_rows(self) -> list[int]:
+        """Return the sorted indices of all currently selected sections."""
+        if not self._table.isVisible():
+            return []
+        rows = {idx.row() for idx in require(self._table.selectionModel()).selectedRows()}
+        return sorted(rows)
+
+    def showEvent(self, event: QShowEvent) -> None:
+        super().showEvent(event)
+        if self._pending_refresh:
+            self.refresh()
+
+    # -- table building -----------------------------------------------------
+
+    def _show_empty(self) -> None:
+        self._empty.setVisible(True)
+        self._table.setVisible(False)
+        self._summary.setText("  —")
+
+    def _structure_matches(self) -> bool:
+        """True when the table's rows still mirror the project's sections.
+
+        A mismatch (different count, or a row whose stored id no longer lines up)
+        means a section was added, removed, or reordered, so the table must be
+        rebuilt rather than updated in place.
+        """
+        sections = self._project.sections
+        if self._table.rowCount() != len(sections):
+            return False
+        return all(
+            self._section_id_for_row(row) == section.id for row, section in enumerate(sections)
+        )
+
+    def _rebuild(self) -> None:
+        """Full structural rebuild — static + dynamic cells for every row."""
+        p = self._project
         self._empty.setVisible(False)
         self._table.setVisible(True)
 
         t = self._table
         self._suppress_edits = True
         t.setRowCount(len(p.sections))
-
-        complete = 0
-        in_progress = 0
-
+        complete, in_progress = 0, 0
         for row, section in enumerate(p.sections):
-            self._fill_row(row, section)
-            warp_dirty = self._state.is_dirty(section.id, "warp")
-            ws = section_step_status(section, "warp", dirty=warp_dirty)
-            if ws == AlignmentStatus.COMPLETE:
+            self._fill_static_cells(row, section)
+            status = self._fill_status_cells(row, section)
+            if status == AlignmentStatus.COMPLETE:
                 complete += 1
-            elif ws == AlignmentStatus.IN_PROGRESS:
+            elif status == AlignmentStatus.IN_PROGRESS:
                 in_progress += 1
         self._suppress_edits = False
 
-        total = len(p.sections)
-        self._summary.setText(
-            f"  {total} sections  ·  {complete} complete  ·  {in_progress} in progress"
-        )
+        self._set_summary(len(p.sections), complete, in_progress)
 
-        # Restore the highlight and scroll position for the currently selected
-        # section.
+        # Restore the highlight and scroll position for the selected section.
         idx = self._state.section_index
         if 0 <= idx < t.rowCount():
             t.blockSignals(True)
@@ -331,21 +349,28 @@ class OverviewView(QWidget):
             t.blockSignals(False)
             t.scrollTo(t.model().index(idx, 0))
 
-        # Read image dimensions in the background; update each cell as it arrives.
-        loader = _DimensionLoader(p.sections)
-        thread = QThread()  # No parent — we control lifetime explicitly via shutdown()
-        loader.moveToThread(thread)
-        thread.started.connect(loader.run)
-        loader.dimension_ready.connect(self._on_dimension_ready)
-        loader.finished.connect(thread.quit)
-        self._dim_loader = loader
-        self._dim_thread = thread
-        thread.start()
+    def _refresh_status(self) -> None:
+        """Update only the dynamic cells (and the summary) — no static churn."""
+        p = self._project
+        self._suppress_edits = True
+        complete, in_progress = 0, 0
+        for row, section in enumerate(p.sections):
+            status = self._fill_status_cells(row, section)
+            if status == AlignmentStatus.COMPLETE:
+                complete += 1
+            elif status == AlignmentStatus.IN_PROGRESS:
+                in_progress += 1
+        self._suppress_edits = False
+        self._set_summary(len(p.sections), complete, in_progress)
 
-    def _fill_row(self, row: int, section: Section) -> None:
+    def _set_summary(self, total: int, complete: int, in_progress: int) -> None:
+        self._summary.setText(
+            f"  {total} sections  ·  {complete} complete  ·  {in_progress} in progress"
+        )
+
+    def _fill_static_cells(self, row: int, section: Section) -> None:
+        """Fill the columns that change only when the section list changes."""
         t = self._table
-
-        import os
 
         serial_cell = self._make_cell(str(section.slice_index))
         serial_cell.setFlags(serial_cell.flags() | Qt.ItemFlag.ItemIsEditable)
@@ -354,25 +379,25 @@ class OverviewView(QWidget):
         # how rows are later re-sorted.
         serial_cell.setData(Qt.ItemDataRole.UserRole, section.id)
         t.setItem(row, _COL_SERIAL, serial_cell)
+
         file_align = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
         t.setItem(
-            row,
-            _COL_FILE,
-            self._make_cell(os.path.basename(section.original_path), file_align),
+            row, _COL_FILE, self._make_cell(os.path.basename(section.original_path), file_align)
         )
-        # Dimensions are loaded asynchronously by _DimensionLoader.
-        t.setItem(row, _COL_DIMS, self._make_cell("—"))
+        t.setItem(row, _COL_DIMS, self._make_cell(self._dims_text(section)))
+
+    def _fill_status_cells(self, row: int, section: Section) -> AlignmentStatus:
+        """Fill the dynamic columns; return the warp status for the summary tally.
+
+        Prep splits into flip / slice sub-columns: the registry tracks a single
+        "prep" dirty flag, but a flushed draft tells us which sub-step actually
+        changed so an unsaved edit to an already-saved mask still shows yellow
+        (matching the filmstrip dot).  Align / Warp map 1:1 to their step status.
+        """
+        t = self._table
+
         pos = section.alignment.position_mm
         t.setItem(row, _COL_AP, self._make_cell(f"{pos:.2f}" if pos is not None else "—"))
-
-        # Status columns.  Prep splits into flip / slice / L-R sub-columns; the
-        # registry tracks a single "prep" dirty flag, but a flushed draft tells
-        # us which sub-step actually changed so an unsaved edit to an already-
-        # saved mask still shows yellow (matching the filmstrip dot).  Align /
-        # Warp map 1:1 to their step status.
-        done = AlignmentStatus.COMPLETE
-        not_started = AlignmentStatus.NOT_STARTED
-        in_progress = AlignmentStatus.IN_PROGRESS
 
         prep_dirty = self._state.is_dirty(section.id, "prep")
         draft = self._state.get_prep_draft(section.id)
@@ -394,11 +419,11 @@ class OverviewView(QWidget):
         def prep_status(is_done: bool, sub_dirty: bool) -> AlignmentStatus:
             if draft is not None:
                 if sub_dirty:
-                    return in_progress
-                return done if is_done else not_started
+                    return AlignmentStatus.IN_PROGRESS
+                return AlignmentStatus.COMPLETE if is_done else AlignmentStatus.NOT_STARTED
             if is_done:
-                return done
-            return in_progress if prep_dirty else not_started
+                return AlignmentStatus.COMPLETE
+            return AlignmentStatus.IN_PROGRESS if prep_dirty else AlignmentStatus.NOT_STARTED
 
         # Flip is a state, not a task: both flipped and un-flipped are valid end
         # states, so it gets a plain H / V / H+V label (regular colour) instead
@@ -408,54 +433,26 @@ class OverviewView(QWidget):
         flip_text = "H+V" if (fh and fv) else "H" if fh else "V" if fv else "—"
         flip_item = self._make_cell(flip_text)
         if flip_dirty:
-            flip_item.setForeground(QColor(_STATUS_COLOR[in_progress]))
+            flip_item.setForeground(QColor(_STATUS_COLOR[AlignmentStatus.IN_PROGRESS]))
         t.setItem(row, _COL_STEPS_START, flip_item)
 
         # The remaining steps are genuine tasks — render them as status dots.
+        warp_status = section_step_status(
+            section, "warp", dirty=self._state.is_dirty(section.id, "warp")
+        )
         dot_statuses = [
             prep_status(bool(section.preprocessing.slice_mask_path), mask_dirty),
             section_step_status(section, "align", dirty=self._state.is_dirty(section.id, "align")),
-            section_step_status(section, "warp", dirty=self._state.is_dirty(section.id, "warp")),
+            warp_status,
         ]
         for i, status in enumerate(dot_statuses):
-            col = _COL_STEPS_START + 1 + i
-            item = self._make_cell(_STATUS_SYMBOL[status])
+            item = self._make_cell(_DOT)
             item.setForeground(QColor(_STATUS_COLOR[status]))
-            t.setItem(row, col, item)
+            t.setItem(row, _COL_STEPS_START + 1 + i, item)
 
-    def _on_dimension_ready(self, row: int, dims_text: str) -> None:
-        """Slot: called on the main thread when the loader reads one section's dims."""
-        if not self._table.isVisible():
-            return
-        # Guard against stale signals arriving after a new _populate() cleared the table.
-        if 0 <= row < self._table.rowCount():
-            self._table.setItem(row, _COL_DIMS, self._make_cell(dims_text))
+        return warp_status
 
-    def refresh_row(self, section_index: int) -> None:
-        if self._project is None:
-            return
-        section = self._project.sections[section_index]
-        self._suppress_edits = True
-        self._fill_row(section_index, section)
-        self._suppress_edits = False
-        # Single-row refresh: read dims synchronously (~5–20 ms, acceptable).
-        try:
-            from verso.engine.io.image_io import registration_dimensions
-
-            w, h = registration_dimensions(section)
-            self._table.setItem(section_index, _COL_DIMS, self._make_cell(f"{w} x {h}"))
-        except Exception:
-            pass
-
-    def refresh(self) -> None:
-        self._populate()
-
-    def selected_rows(self) -> list[int]:
-        """Return the sorted indices of all currently selected sections."""
-        if not self._table.isVisible():
-            return []
-        rows = {idx.row() for idx in require(self._table.selectionModel()).selectedRows()}
-        return sorted(rows)
+    # -- events / interaction ----------------------------------------------
 
     def _section_id_for_row(self, row: int) -> str | None:
         """Return the section id stored on a row, or None."""
@@ -526,7 +523,7 @@ class OverviewView(QWidget):
 
         section.slice_index = new_index
         self._project.sort_sections()
-        self._populate()
+        self.refresh()
 
         if keep_id is not None:
             new_pos = next(

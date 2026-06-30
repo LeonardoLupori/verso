@@ -116,7 +116,6 @@ class MainWindow(QMainWindow):
             return
         self._elastix_worker.shutdown()
         self._filmstrip.shutdown()
-        self._overview.shutdown()
         self._state.shutdown()
         super().closeEvent(event)
 
