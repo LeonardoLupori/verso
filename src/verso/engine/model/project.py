@@ -13,7 +13,7 @@ DEFAULT_PROJECT_FILENAME = "project-verso.json"
 # Current project-schema version. Bumped to 1.2 when per-section pixel
 # dimensions and atlas resolution/shape were added so the file is self-contained
 # for pixel <-> atlas voxel mapping. Older files are migrated on load.
-SCHEMA_VERSION = "1.2"
+SCHEMA_VERSION = "1.3"
 
 # Mapping between the stored axis-name field and the QuickNII voxel axis index.
 # QuickNII voxel space ordering is (LR=0, AP=1, DV=2); "ML" is the storage name
@@ -164,6 +164,40 @@ class Section:
 
 
 @dataclass
+class DialogPrefs:
+    """Per-project flags controlling which dialogs are shown.
+
+    Each flag is ``True`` (show the dialog) by default; the GUI sets it to
+    ``False`` when the user ticks "do not show again".
+    """
+
+    show_align_deletion: bool = True
+    show_overview_tutorial: bool = True
+    show_preprocessing_tutorial: bool = True
+    show_align_tutorial: bool = True
+    show_warp_tutorial: bool = True
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "show_align_deletion": self.show_align_deletion,
+            "show_overview_tutorial": self.show_overview_tutorial,
+            "show_preprocessing_tutorial": self.show_preprocessing_tutorial,
+            "show_align_tutorial": self.show_align_tutorial,
+            "show_warp_tutorial": self.show_warp_tutorial,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> DialogPrefs:
+        return cls(
+            show_align_deletion=d.get("show_align_deletion", True),
+            show_overview_tutorial=d.get("show_overview_tutorial", True),
+            show_preprocessing_tutorial=d.get("show_preprocessing_tutorial", True),
+            show_align_tutorial=d.get("show_align_tutorial", True),
+            show_warp_tutorial=d.get("show_warp_tutorial", True),
+        )
+
+
+@dataclass
 class Project:
     """Top-level project container."""
 
@@ -180,6 +214,7 @@ class Project:
     # Per-project parameters for automatic elastix control-point generation.
     # None means "use the built-in ElastixParams defaults" until edited.
     elastix_params: ElastixParams | None = None
+    dialog_prefs: DialogPrefs = field(default_factory=DialogPrefs)
     version: str = SCHEMA_VERSION
 
     @property
@@ -201,6 +236,7 @@ class Project:
             "elastix_params": (
                 self.elastix_params.to_dict() if self.elastix_params is not None else None
             ),
+            "dialog_prefs": self.dialog_prefs.to_dict(),
             "sections": [s.to_dict() for s in self.sections],
         }
 
@@ -235,6 +271,7 @@ class Project:
             interpolation_axis=interpolation_axis,
             working_scale=float(d.get("working_scale", 0.2)),
             elastix_params=elastix_params,
+            dialog_prefs=DialogPrefs.from_dict(d.get("dialog_prefs", {})),
             version=str(d.get("version", "1.1")),
         )
         project.sort_sections()
