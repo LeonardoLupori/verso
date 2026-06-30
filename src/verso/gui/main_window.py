@@ -808,6 +808,7 @@ class MainWindow(QMainWindow):
         if section is None:
             return
         self._clear_alignment_view_state(section)
+        self._seed_alignment_to_quicknii_default(section)
 
     def _clear_alignment_view_state(self, section) -> None:
         """Drop registry dirty + stashed baselines for a section whose alignment
@@ -816,6 +817,21 @@ class MainWindow(QMainWindow):
         self._state.clear_dirty(section.id, "warp")
         self._state.pop_baseline(section.id, "align")
         self._state.pop_baseline(section.id, "warp")
+
+    def _seed_alignment_to_quicknii_default(self, section) -> None:
+        """Re-seed a wiped section with the QuickNII interpolated proposal.
+
+        After a flip or prep reset the anchoring is all-zeros. This produces the
+        same result as clicking the Align "Reset" button: re-running the QuickNII
+        series interpolation so the section gets the best available positional
+        guess based on its neighbours. Without a non-zero anchoring every canvas
+        drag handler bails out silently.
+        """
+        project = self._state.project
+        if project is None or self._state.atlas is None:
+            return
+        self._initialize_quicknii_anchorings(project.sections)
+        self._sync_position_mm([section])
 
     def _invalidate_alignment_for_flip(self, section) -> None:
         """Wipe a section's alignment + warp the instant its flip is toggled.
@@ -836,6 +852,7 @@ class MainWindow(QMainWindow):
             return
         wipe_alignment_for_flip(section)
         self._clear_alignment_view_state(section)
+        self._seed_alignment_to_quicknii_default(section)
         self._overview.refresh_row(self._state.section_index)
         self._refresh_filmstrip_dots()
 
