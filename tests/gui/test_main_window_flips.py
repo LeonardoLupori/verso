@@ -54,6 +54,8 @@ def _make_prep_mock(section: Section, base_flip: tuple[bool, bool]) -> SimpleNam
         _prep_base_flip=base_flip,
         _mask_dirty=False,
         _current_mask=None,
+        _undo_stack=[],
+        _saved_undo_depth=0,
         _dirty=True,
         dirty_changed=SimpleNamespace(emit=lambda _v: None),
         alignment_invalidated=SimpleNamespace(emit=lambda: None),
