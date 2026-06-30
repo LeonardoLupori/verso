@@ -1435,6 +1435,9 @@ class MainWindow(QMainWindow):
             return
         if value == section.preprocessing.flip_horizontal:
             return
+        if not self._confirm_flip(section):
+            self._props.prep.flip.set_flip_h(not value)
+            return
         section.preprocessing.flip_horizontal = value
         self._prep.mark_flip_changed()
         self._invalidate_alignment_for_flip(section)
@@ -1446,10 +1449,41 @@ class MainWindow(QMainWindow):
             return
         if value == section.preprocessing.flip_vertical:
             return
+        if not self._confirm_flip(section):
+            self._props.prep.flip.set_flip_v(not value)
+            return
         section.preprocessing.flip_vertical = value
         self._prep.mark_flip_changed()
         self._invalidate_alignment_for_flip(section)
         self._prep.refresh_display()
+
+    def _confirm_flip(self, section) -> bool:
+        """Return True when the flip may proceed.
+
+        Shows a warning dialog when the section has an existing alignment and
+        ``dialog_prefs.show_align_deletion`` is True.  If the user ticks
+        "Do not show again", the flag is persisted to the project.
+        """
+        from verso.engine.model.alignment import AlignmentStatus
+
+        has_alignment = (
+            section.alignment.status != AlignmentStatus.NOT_STARTED
+            or bool(section.warp.control_points)
+            or (section.alignment.anchoring and any(v != 0.0 for v in section.alignment.anchoring))
+        )
+        if not has_alignment:
+            return True
+
+        project = self._state.project
+        if project is None or not project.dialog_prefs.show_align_deletion:
+            return True
+
+        from verso.gui.dialogs.flip_warning import confirm_flip_deletes_alignment
+
+        confirmed, suppress = confirm_flip_deletes_alignment(self)
+        if confirmed and suppress:
+            project.dialog_prefs.show_align_deletion = False
+        return confirmed
 
     def _on_opacity_changed(self, opacity: float) -> None:
         self._panel.canvas.set_overlay_opacity(opacity)
