@@ -90,9 +90,9 @@ class AtlasVolume:
         return d
 
     # ------------------------------------------------------------------
-    # Internal sampling — returns labels + in-bounds mask
+    # Public slice methods
 
-    def _sample(
+    def sample_labels(
         self, anchoring: list[float], out_w: int, out_h: int
     ) -> tuple[np.ndarray, np.ndarray]:
         """Sample the annotation along the cut plane.
@@ -121,23 +121,6 @@ class AtlasVolume:
         dv = np.clip(dv_f, 0, dv_max - 1).astype(np.int32)
         lr = np.clip(lr_f, 0, lr_max - 1).astype(np.int32)
         return self._annotation[ap, dv, lr], in_bounds
-
-    # ------------------------------------------------------------------
-    # Public slice methods
-
-    def sample_labels(
-        self, anchoring: list[float], out_w: int, out_h: int
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """Sample the annotation along the cut plane at the requested resolution.
-
-        Public wrapper around :meth:`_sample` for export pipelines that need a
-        raw label map (e.g. to extract sub-pixel contours via marching squares).
-
-        Returns:
-            labels:    (H, W) int32 — annotation labels (in-bounds pixels only)
-            in_bounds: (H, W) bool — True where the voxel is inside the volume
-        """
-        return self._sample(anchoring, out_w, out_h)
 
     # ------------------------------------------------------------------
     # Canonical (axis-aligned) plane construction
@@ -212,7 +195,7 @@ class AtlasVolume:
            25 — within atlas volume but outside annotated brain
                (ensures the cut plane is always visible as a faint shape)
         """
-        labels, in_bounds = self._sample(anchoring, out_w, out_h)
+        labels, in_bounds = self.sample_labels(anchoring, out_w, out_h)
 
         unique_ids, inverse = np.unique(labels, return_inverse=True)
         colors = np.array(
@@ -264,7 +247,7 @@ class AtlasVolume:
         Args:
             color: RGB line color. Defaults to white ``(255, 255, 255)``.
         """
-        labels, in_bounds = self._sample(anchoring, out_w, out_h)
+        labels, in_bounds = self.sample_labels(anchoring, out_w, out_h)
         out_h2, out_w2 = labels.shape
         brain = (labels > 0) & in_bounds
 
@@ -320,36 +303,20 @@ class AtlasVolume:
         color = self._color_dict.get(label, (128, 128, 128))
         return name, color
 
-    def get_region_name(self, anchoring: list[float], s: float, t: float) -> str:
-        """Return the atlas region name at normalised section position (s, t)."""
-        name, _ = self.get_region_info(anchoring, s, t)
-        return name
-
     # ------------------------------------------------------------------
     # Reference slice (navigator views)
 
     def slice_reference(self, anchoring: list[float], out_w: int, out_h: int) -> np.ndarray:
         """Slice the MRI/Nissl reference volume → RGB uint8 (H, W, 3)."""
-        grid = make_atlas_sample_grid(anchoring, out_w, out_h)
-        lr_f, ap_f, dv_f = _quicknii_floor_indices(grid[:, :, 0], grid[:, :, 1], grid[:, :, 2])
-        ap = np.clip(ap_f.astype(int), 0, self._reference.shape[0] - 1)
-        dv = np.clip(dv_f.astype(int), 0, self._reference.shape[1] - 1)
-        lr = np.clip(lr_f.astype(int), 0, self._reference.shape[2] - 1)
-        gray = (
-            (self._reference[ap, dv, lr].astype(np.float32) * self._reference_scale)
-            .clip(0, 255)
-            .astype(np.uint8)
-        )
-        return np.stack([gray, gray, gray], axis=-1)
+        return self.slice_reference_rgba(anchoring, out_w, out_h)[:, :, :3]
 
     def slice_reference_rgba(self, anchoring: list[float], out_w: int, out_h: int) -> np.ndarray:
         """Slice the MRI/Nissl reference volume → RGBA uint8 (H, W, 4).
 
-        Alpha is 255 within the atlas bounds and 0 outside — label-based
-        transparency is not applied here because unannotated regions (fiber
-        tracts, ventricles) are the dark features the template is meant to show.
+        Alpha is 255 within the annotated brain, 0 everywhere else (outside the
+        atlas bounds or within the bounding box but outside the labeled brain).
         """
-        labels, in_bounds = self._sample(anchoring, out_w, out_h)
+        labels, in_bounds = self.sample_labels(anchoring, out_w, out_h)
         grid = make_atlas_sample_grid(anchoring, out_w, out_h)
         lr_f, ap_f, dv_f = _quicknii_floor_indices(grid[:, :, 0], grid[:, :, 1], grid[:, :, 2])
         ap = np.clip(ap_f.astype(int), 0, self._reference.shape[0] - 1)
@@ -361,7 +328,7 @@ class AtlasVolume:
             .astype(np.uint8)
         )
         rgb = np.stack([gray, gray, gray], axis=-1)
-        alpha = np.where(~in_bounds, 0, 255).astype(np.uint8)
+        alpha = np.where(in_bounds & (labels > 0), 255, 0).astype(np.uint8)
         return np.dstack([rgb, alpha])
 
     def default_anchoring(
@@ -402,17 +369,6 @@ class AtlasVolume:
 
     def voxel_to_mm(self, voxel: float) -> float:
         return voxel * self.resolution_um / 1000.0
-
-    def mm_to_voxel(self, mm: float) -> float:
-        return mm * 1000.0 / self.resolution_um
-
-    def extent_mm_along(self, axis: int) -> float:
-        """Return the atlas extent in mm along the given QuickNII voxel axis."""
-        ap_dim, dv_dim, lr_dim = self._annotation.shape
-        qn_dims = (lr_dim, ap_dim, dv_dim)
-        if axis not in (0, 1, 2):
-            raise ValueError(f"axis must be 0, 1, or 2, got {axis}")
-        return qn_dims[axis] * self.resolution_um / 1000.0
 
     # ------------------------------------------------------------------
     # Orthogonal navigator views
