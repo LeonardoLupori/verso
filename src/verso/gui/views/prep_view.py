@@ -76,6 +76,9 @@ class PrepView(QWidget):
         self._channel_planes_key: tuple | None = None
         self._planes_version: int = 0
         self._undo_stack: list[np.ndarray] = []
+        # Stack depth at the last save (or 0 for a clean load). -1 means the
+        # saved state is not reachable by undoing (section was dirty on load).
+        self._saved_undo_depth: int = 0
         self._stroke_points: list[tuple[float, float]] = []
         self._stroke_active = False
         # Latched at stroke start from the Shift modifier — releasing Shift
@@ -221,6 +224,8 @@ class PrepView(QWidget):
         else:
             self._state.pop_baseline(section.id, "prep")
             self._set_dirty(False)
+        # -1 means the saved state is not reachable via undo (dirty on load).
+        self._saved_undo_depth = -1 if self._dirty else 0
         self._display_image()
         self._update_mask_overlay()
 
@@ -343,8 +348,26 @@ class PrepView(QWidget):
         if not self._undo_stack:
             return
         self._current_mask = self._undo_stack.pop()
-        self._mask_dirty = True
-        self._set_dirty(True)
+        at_saved = (
+            self._saved_undo_depth >= 0
+            and len(self._undo_stack) == self._saved_undo_depth
+        )
+        flip_dirty = (
+            self._section is not None
+            and self._baseline_preprocessing is not None
+            and (
+                self._section.preprocessing.flip_horizontal
+                != self._baseline_preprocessing.flip_horizontal
+                or self._section.preprocessing.flip_vertical
+                != self._baseline_preprocessing.flip_vertical
+            )
+        )
+        if at_saved and not flip_dirty:
+            self._mask_dirty = False
+            self._set_dirty(False)
+        else:
+            self._mask_dirty = True
+            self._set_dirty(True)
         self._update_mask_overlay()
 
     # ------------------------------------------------------------------
@@ -418,6 +441,7 @@ class PrepView(QWidget):
         persist_prep_draft(self._section, draft)
 
         self._mask_dirty = False
+        self._saved_undo_depth = len(self._undo_stack)
         self._state.pop_prep_draft(self._section.id)
         self._baseline_preprocessing = copy.deepcopy(self._section.preprocessing)
         self._state.pop_baseline(self._section.id, "prep")
@@ -443,6 +467,7 @@ class PrepView(QWidget):
         self._current_mask = None
         self._mask_dirty = False
         self._undo_stack.clear()
+        self._saved_undo_depth = 0
         self._stroke_points.clear()
         self._stroke_active = False
         self._prep_base_flip = (
@@ -480,6 +505,7 @@ class PrepView(QWidget):
         self._current_mask = None
         self._mask_dirty = False
         self._undo_stack.clear()
+        self._saved_undo_depth = 0
         self._state.pop_prep_draft(self._section.id)
 
         if flip_changed:
