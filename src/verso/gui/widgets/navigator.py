@@ -47,7 +47,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from verso.engine.registration import plane_tilt_deg
+from verso.engine.anchoring import plane_tilt_deg
 from verso.gui.utils import require
 
 _ICONS_DIR = Path(__file__).parent.parent / "icons"
@@ -641,11 +641,7 @@ class _SliceView(QWidget):
         self.anchoring_changed.emit(new_o.tolist() + anchoring[3:])
 
     def _handle_rotate(self, cx: float, cy: float) -> None:
-        if (
-            self._anchoring is None
-            or self._center_display is None
-            or self._drag_last_angle is None
-        ):
+        if self._anchoring is None or self._center_display is None or self._drag_last_angle is None:
             return
         ccx, ccy = self._center_display
         cur_angle = math.atan2(cy - ccy, cx - ccx)

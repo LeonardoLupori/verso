@@ -99,31 +99,68 @@ def find_atlas_position(
     Returns:
         (u, v) atlas normalised position clipped to [0, 1].
     """
+    uv = warp_points_section_to_atlas(
+        np.array([[s, t]], dtype=np.float64), src_px, dst_px, work_w, work_h
+    )
+    return float(uv[0, 0]), float(uv[0, 1])
+
+
+def warp_points_section_to_atlas(
+    points_norm: np.ndarray,
+    src_px: np.ndarray,
+    dst_px: np.ndarray,
+    work_w: int,
+    work_h: int,
+) -> np.ndarray:
+    """Map section-space points into atlas-space via the Delaunay warp.
+
+    Batch (vectorised) form of :func:`find_atlas_position`, and the mirror of
+    :func:`warp_points_atlas_to_section`: triangulates on the *dst* (section)
+    anchors and interpolates *src* (atlas) coords for each input point. Points
+    outside the convex hull pass through unchanged (clipped to ``[0, 1]``).
+
+    Args:
+        points_norm: (M, 2) normalised section-space points in ``[0, 1]``.
+        src_px: (N, 2) atlas-space control points in working-resolution pixels.
+        dst_px: (N, 2) section-space control points in working-resolution pixels.
+        work_w: Working image width in pixels (used to normalise control points).
+        work_h: Working image height in pixels.
+
+    Returns:
+        (M, 2) normalised atlas-space points.
+    """
+    pts = np.asarray(points_norm, dtype=np.float64).reshape(-1, 2)
     wh = np.array([work_w, work_h], dtype=np.float64)
     src_norm = np.asarray(src_px, dtype=np.float64).reshape(-1, 2) / wh
     dst_norm = np.asarray(dst_px, dtype=np.float64).reshape(-1, 2) / wh
     aspect = work_w / work_h
 
-    src_all = _with_corners(src_norm) if len(src_norm) else _CORNERS
-    dst_all = _with_corners(dst_norm) if len(dst_norm) else _CORNERS
+    if len(dst_norm) == 0 or np.allclose(src_norm, dst_norm):
+        return np.clip(pts, 0.0, 1.0)
+
+    src_all = _with_corners(src_norm)
+    dst_all = _with_corners(dst_norm)
 
     scale = _tri_scale(aspect)
     tri = Delaunay(dst_all * scale)
-    pt = np.array([[s, t]]) * scale
-    si = tri.find_simplex(pt)
+    simplices = tri.find_simplex(pts * scale)
 
-    if si[0] < 0:
-        return float(np.clip(s, 0.0, 1.0)), float(np.clip(t, 0.0, 1.0))
+    out = np.clip(pts.copy(), 0.0, 1.0)
+    valid = simplices >= 0
+    if not np.any(valid):
+        return out
 
-    T = tri.transform[si[0], :2]  # (2, 2)
-    r = pt[0] - tri.transform[si[0], 2]  # (2,)
-    b2 = T @ r  # first two barycentric coords
-    bary = np.array([b2[0], b2[1], 1.0 - b2[0] - b2[1]])
+    T = tri.transform[simplices[valid], :2]
+    r = pts[valid] * scale - tri.transform[simplices[valid], 2]
+    b = np.einsum("ijk,ik->ij", T, r)
+    bary = np.column_stack([b, 1.0 - b.sum(axis=1)])
 
-    idx = tri.simplices[si[0]]  # (3,) vertex indices
-    u = float(np.clip((bary * src_all[idx, 0]).sum(), 0.0, 1.0))
-    v = float(np.clip((bary * src_all[idx, 1]).sum(), 0.0, 1.0))
-    return u, v
+    idx = tri.simplices[simplices[valid]]
+    out_u = (bary * src_all[idx, 0]).sum(axis=1)
+    out_v = (bary * src_all[idx, 1]).sum(axis=1)
+    out[valid, 0] = np.clip(out_u, 0.0, 1.0)
+    out[valid, 1] = np.clip(out_v, 0.0, 1.0)
+    return out
 
 
 def warp_points_atlas_to_section(

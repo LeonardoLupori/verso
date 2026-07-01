@@ -289,7 +289,7 @@ class AlignView(QWidget):
         if not anchoring or all(v == 0.0 for v in anchoring):
             return
 
-        from verso.engine.registration import rotate_anchoring
+        from verso.engine.anchoring import rotate_anchoring
 
         # In-plane spin about the section centre. A clockwise drag on the ring
         # spins the overlay clockwise (canvas y points down, so a positive
@@ -328,7 +328,7 @@ class AlignView(QWidget):
         the limit only steps that reduce the spin are allowed. Uses only the public
         ``rotate_anchoring`` so the limit lives entirely in the GUI.
         """
-        from verso.engine.registration import rotate_anchoring
+        from verso.engine.anchoring import rotate_anchoring
 
         u_axis, v_axis = sorted(i for i in (0, 1, 2) if i != self._interpolation_axis)
         angle_rad = max(-np.pi / 2.0, min(np.pi / 2.0, angle_rad))
@@ -370,7 +370,7 @@ class AlignView(QWidget):
             self._panel.set_overlay_fast(True)
         self._pan_coalesce_timer.start()
 
-        from verso.engine.registration import scale_anchoring
+        from verso.engine.anchoring import scale_anchoring
 
         new_anchoring = scale_anchoring(anchoring, scale_s, scale_t)
         section.alignment.anchoring = new_anchoring
@@ -392,7 +392,7 @@ class AlignView(QWidget):
             return
         self._end_pan_run()
         self._push_undo()
-        from verso.engine.registration import scale_anchoring
+        from verso.engine.anchoring import scale_anchoring
 
         new_anchoring = scale_anchoring(anchoring, scale_u, scale_v)
         section.alignment.anchoring = new_anchoring

@@ -70,7 +70,6 @@ def test_backfill_metadata_fills_dims_and_atlas(tmp_path: Path, monkeypatch) -> 
     assert project.atlas.shape == (528, 320, 456)
 
 
-
 def test_backfill_atlas_uses_provided_volume_without_constructing(tmp_path: Path) -> None:
     # No monkeypatch: passing an atlas must avoid constructing AtlasVolume at all.
     original = tmp_path / "raw" / "IMG.tif"

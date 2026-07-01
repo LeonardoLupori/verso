@@ -34,11 +34,11 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from verso.engine.anchoring import anchoring_center, anchoring_to_vectors, make_atlas_sample_grid
 from verso.engine.atlas import AtlasVolume
 from verso.engine.io.image_io import ensure_working_copy
 from verso.engine.model.project import Project, Section
 from verso.engine.preprocessing import apply_flip, load_mask
-from verso.engine.registration import anchoring_center, anchoring_to_vectors, make_atlas_sample_grid
 from verso.engine.warping import warp_points_atlas_to_section
 
 

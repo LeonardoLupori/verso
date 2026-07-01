@@ -294,7 +294,7 @@ def _flip_anchoring(anchoring: list[float]) -> list[float]:
     The equivalent anchoring for the unflipped image is:
         o' = o + u,  u' = -u,  v' = v
     """
-    from verso.engine.registration import flip_anchoring_horizontal
+    from verso.engine.anchoring import flip_anchoring_horizontal
 
     return flip_anchoring_horizontal(anchoring)
 
@@ -465,7 +465,7 @@ def save_quicknii_xml(
     atlas_name = project.atlas.name if project.atlas else ""
     lines.append(f"<series name='{project.name}' target='{atlas_name}'{res_attr}>")
 
-    from verso.engine.registration import _display_space_anchoring
+    from verso.engine.anchoring import _display_space_anchoring
 
     prefixes = [
         "' anchoring='ox=",
@@ -515,7 +515,7 @@ def save_quicknii(
     """
     if atlas_shape is None and project.atlas:
         atlas_shape = _BG_ATLAS_SHAPE.get(project.atlas.name)
-    from verso.engine.registration import _display_space_anchoring
+    from verso.engine.anchoring import _display_space_anchoring
 
     slices_out: list[dict[str, Any]] = []
     for section in project.sections:
@@ -651,7 +651,7 @@ def save_visualign(
     """
     if atlas_shape is None and project.atlas:
         atlas_shape = _BG_ATLAS_SHAPE.get(project.atlas.name)
-    from verso.engine.registration import _display_space_anchoring
+    from verso.engine.anchoring import _display_space_anchoring
 
     slices_out: list[dict[str, Any]] = []
     for section in project.sections:

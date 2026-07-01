@@ -10,6 +10,7 @@ from verso.engine.warping import (
     find_atlas_position,
     warp_overlay,
     warp_points_atlas_to_section,
+    warp_points_section_to_atlas,
 )
 
 
@@ -267,3 +268,41 @@ def test_warp_overlay_output_shape_preserved():
 
         assert warped.shape == overlay.shape, f"shape mismatch for dtype={dtype}"
         assert warped.dtype == overlay.dtype, f"dtype mismatch for dtype={dtype}"
+
+
+# --- warp_points_section_to_atlas (vectorised forward warp) ------------------
+
+
+def test_warp_points_section_to_atlas_matches_scalar():
+    """Batch section→atlas equals the scalar find_atlas_position per point."""
+    src = np.array([[10.0, 8.0], [30.0, 20.0], [40.0, 12.0]])
+    dst = np.array([[14.0, 6.0], [26.0, 24.0], [38.0, 16.0]])
+    work_w, work_h = 48, 32
+    pts = np.array([[0.2, 0.3], [0.5, 0.5], [0.8, 0.6], [0.1, 0.9]])
+
+    batch = warp_points_section_to_atlas(pts, src, dst, work_w, work_h)
+    for i, (s, t) in enumerate(pts):
+        u, v = find_atlas_position(s, t, src, dst, work_w, work_h)
+        np.testing.assert_allclose(batch[i], [u, v], atol=1e-12)
+
+
+def test_warp_points_section_to_atlas_roundtrip_at_control_points():
+    """At control-point locations the forward/backward warps invert exactly."""
+    src = np.array([[10.0, 8.0], [30.0, 20.0], [40.0, 12.0]])
+    dst = np.array([[14.0, 6.0], [26.0, 24.0], [38.0, 16.0]])
+    work_w, work_h = 48, 32
+    wh = np.array([work_w, work_h], dtype=np.float64)
+
+    dst_norm = dst / wh
+    fwd = warp_points_section_to_atlas(dst_norm, src, dst, work_w, work_h)
+    np.testing.assert_allclose(fwd, src / wh, atol=1e-9)
+    back = warp_points_atlas_to_section(fwd, src, dst, work_w, work_h)
+    np.testing.assert_allclose(back, dst_norm, atol=1e-9)
+
+
+def test_warp_points_section_to_atlas_identity_without_cps():
+    """No control points → identity (points pass through, clipped to [0, 1])."""
+    empty = np.empty((0, 2))
+    pts = np.array([[0.25, 0.75], [1.5, -0.2]])
+    out = warp_points_section_to_atlas(pts, empty, empty, 40, 30)
+    np.testing.assert_allclose(out, [[0.25, 0.75], [1.0, 0.0]])

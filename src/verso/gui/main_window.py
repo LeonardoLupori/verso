@@ -1043,7 +1043,7 @@ class MainWindow(QMainWindow):
         # one-anchor endpoint controls. If the atlas is still loading,
         # _on_atlas_loaded performs the exact QuickNII propagation.
         if self._state.atlas is not None:
-            from verso.engine.registration import interpolate_anchorings
+            from verso.engine.anchoring import interpolate_anchorings
 
             interpolate_anchorings(
                 project.sections,
@@ -1226,7 +1226,7 @@ class MainWindow(QMainWindow):
             return
 
         if self._state.atlas is not None:
-            from verso.engine.registration import interpolate_anchorings
+            from verso.engine.anchoring import interpolate_anchorings
 
             interpolate_anchorings(
                 project.sections,
@@ -1732,9 +1732,9 @@ class MainWindow(QMainWindow):
         if atlas is None:
             return
 
+        from verso.engine.anchoring import quicknii_series_anchorings
         from verso.engine.io.image_io import registration_dimensions
         from verso.engine.model.alignment import AlignmentStatus
-        from verso.engine.registration import quicknii_series_anchorings
 
         usable = []
         for section in sections:
@@ -1748,7 +1748,7 @@ class MainWindow(QMainWindow):
         if not usable:
             return
 
-        from verso.engine.registration import _display_space_anchoring
+        from verso.engine.anchoring import _display_space_anchoring
 
         display_anchorings = []
         for section, _, _ in usable:

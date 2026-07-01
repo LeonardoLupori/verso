@@ -162,7 +162,6 @@ class Section:
         )
 
 
-
 @dataclass
 class DialogPrefs:
     """Per-project flags controlling which dialogs are shown.

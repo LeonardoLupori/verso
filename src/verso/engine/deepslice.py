@@ -270,7 +270,7 @@ def _orient_series_to_convention(
     swapped with its mirror partner.  The AP *positions* DeepSlice predicted are
     preserved as a set — they are correct — only their order is corrected.
     """
-    from verso.engine.registration import (
+    from verso.engine.anchoring import (
         anchoring_center,
         set_center_position_along_axis,
     )
@@ -301,8 +301,8 @@ def _interpolate_bad_sections(
     run_id: str,
 ) -> int:
     """Fill bad-section anchorings by interpolating from the good DeepSlice ones."""
+    from verso.engine.anchoring import quicknii_series_anchorings
     from verso.engine.io.image_io import registration_dimensions
-    from verso.engine.registration import quicknii_series_anchorings
 
     usable: list[tuple[Section, int, int]] = []
     for section in project.sections:
@@ -358,11 +358,11 @@ def reset_in_progress_to_default_proposals(
     include_complete: bool = False,
 ) -> int:
     """Clear editable suggestions and regenerate QuickNII-style default proposals."""
-    from verso.engine.io.image_io import registration_dimensions
-    from verso.engine.registration import (
+    from verso.engine.anchoring import (
         _display_space_anchoring,
         quicknii_series_anchorings,
     )
+    from verso.engine.io.image_io import registration_dimensions
 
     usable: list[tuple[Section, int, int]] = []
     for section in sections:

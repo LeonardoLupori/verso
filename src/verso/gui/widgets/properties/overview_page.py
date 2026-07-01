@@ -33,12 +33,12 @@ class _ElidingLabel(QLabel):
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.setText(text)
 
-    def setText(self, text: str) -> None:  # noqa: N802 (Qt override)
+    def setText(self, text: str) -> None:
         self._full_text = text
         self.setToolTip(text if text != "-" else "")
         self._update_elision()
 
-    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 (Qt override)
+    def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
         self._update_elision()
 

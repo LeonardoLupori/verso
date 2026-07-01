@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from verso.engine.registration import make_atlas_sample_grid
+from verso.engine.anchoring import make_atlas_sample_grid
 
 
 def _quicknii_floor_indices(
@@ -21,7 +21,7 @@ def _quicknii_floor_indices(
 
     VisuAlign's ``getInt32Slice`` truncates (``floor``) the voxel coordinate in
     *QuickNII* convention.  AP and DV are array-reversed there relative to
-    BrainGlobe (see ``registration._to_quicknii_convention``), so flooring a
+    BrainGlobe (see ``anchoring._to_quicknii_convention``), so flooring a
     reversed axis is equivalent to taking the **ceil** of the BrainGlobe
     coordinate::
 
@@ -339,10 +339,10 @@ class AtlasVolume:
         """Return a centered anchoring perpendicular to ``axis`` for this atlas.
 
         The plane is constructed in the two in-plane axes (derived from
-        :func:`verso.engine.registration._in_plane_axes`) with ``u`` spanning
+        :func:`verso.engine.anchoring._in_plane_axes`) with ``u`` spanning
         the full in-plane width and ``v`` sized to ``aspect_ratio``.
         """
-        from verso.engine.registration import _in_plane_axes
+        from verso.engine.anchoring import _in_plane_axes
 
         u_axis, v_axis = _in_plane_axes(axis)
         ap_dim, dv_dim, lr_dim = self._annotation.shape

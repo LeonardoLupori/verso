@@ -6,6 +6,10 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from verso.engine.anchoring import (
+    quicknii_pack_anchoring,
+    quicknii_unpack_anchoring,
+)
 from verso.engine.deepslice import (
     DeepSliceRunResult,
     DeepSliceSectionSuggestion,
@@ -16,10 +20,6 @@ from verso.engine.deepslice import (
 )
 from verso.engine.model.alignment import AlignmentStatus, ControlPoint
 from verso.engine.model.project import AtlasRef, ChannelSpec, Preprocessing, Project, Section
-from verso.engine.registration import (
-    quicknii_pack_anchoring,
-    quicknii_unpack_anchoring,
-)
 
 
 def _make_project(tmp_path: Path) -> Project:
@@ -376,7 +376,7 @@ def test_apply_deepslice_orients_series_to_verso_convention(tmp_path: Path):
     ``slice_index`` (VERSO's default), and with ``reverse_axis=True`` it must
     *increase* — regardless of how DeepSlice happened to order the input.
     """
-    from verso.engine.registration import anchoring_center
+    from verso.engine.anchoring import anchoring_center
 
     def _build() -> Project:
         paths = []

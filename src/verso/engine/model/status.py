@@ -32,6 +32,7 @@ STATUS_COLOR: dict[AlignmentStatus, str] = {
     AlignmentStatus.COMPLETE: "#4CAF50",  # green
 }
 
+
 def section_step_status(section: Section, step: str, *, dirty: bool) -> AlignmentStatus:
     """Return the traffic-light status of *section* for *step*.
 

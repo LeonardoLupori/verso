@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 from PyQt6.QtWidgets import QApplication
 
-from verso.engine.registration import plane_tilt_deg, quicknii_default_anchoring
+from verso.engine.anchoring import plane_tilt_deg, quicknii_default_anchoring
 from verso.gui.widgets.align_handle import _HANDLE_GRIP_PX, _HANDLE_RING_PX
 from verso.gui.widgets.canvas import ImageCanvas
 from verso.gui.widgets.navigator import NavigatorPanel, _SliceView

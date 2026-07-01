@@ -33,10 +33,10 @@ from pathlib import Path
 
 import numpy as np
 
+from verso.engine.anchoring import anchoring_to_vectors, atlas_to_normalized
 from verso.engine.model.alignment import ControlPoint
 from verso.engine.model.elastix import ElastixParams
 from verso.engine.preprocessing import morph_mask
-from verso.engine.registration import anchoring_to_vectors, atlas_to_normalized
 
 # resources/ lives at the package root (src/verso/resources), alongside gui/engine.
 _RESOURCES = Path(__file__).parent.parent / "resources"

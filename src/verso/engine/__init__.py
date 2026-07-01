@@ -6,6 +6,25 @@ User scripts and the GUI should import from here:
     from verso.engine import Project, Section, Alignment, ControlPoint
 """
 
+from verso.engine.anchoring import (
+    anchoring_center,
+    anchoring_to_vectors,
+    atlas_to_normalized,
+    make_atlas_sample_grid,
+    normalized_to_atlas,
+    normalized_to_pixel,
+    pixel_to_normalized,
+    plane_tilt_deg,
+    quicknii_default_anchoring,
+    quicknii_pack_anchoring,
+    quicknii_series_anchorings,
+    quicknii_unpack_anchoring,
+    rotate_anchoring,
+    scale_anchoring,
+    set_center_position_along_axis,
+    set_position_along_axis,
+    vectors_to_anchoring,
+)
 from verso.engine.atlas import AtlasVolume, orientation_labels
 from verso.engine.deepslice import (
     DeepSliceError,
@@ -64,25 +83,7 @@ from verso.engine.model.project import (
     Project,
     Section,
 )
-from verso.engine.registration import (
-    anchoring_center,
-    anchoring_to_vectors,
-    atlas_to_normalized,
-    make_atlas_sample_grid,
-    normalized_to_atlas,
-    normalized_to_pixel,
-    pixel_to_normalized,
-    plane_tilt_deg,
-    quicknii_default_anchoring,
-    quicknii_pack_anchoring,
-    quicknii_series_anchorings,
-    quicknii_unpack_anchoring,
-    rotate_anchoring,
-    scale_anchoring,
-    set_center_position_along_axis,
-    set_position_along_axis,
-    vectors_to_anchoring,
-)
+from verso.engine.registration import AtlasToImageResult, VersoRegistration
 from verso.engine.sections import (
     make_added_sections,
     next_section_ids,
@@ -92,6 +93,7 @@ from verso.engine.warping import (
     find_atlas_position,
     warp_overlay,
     warp_points_atlas_to_section,
+    warp_points_section_to_atlas,
 )
 
 __all__ = [
@@ -127,7 +129,7 @@ __all__ = [
     "Project",
     "Section",
     "WarpState",
-    # Registration
+    # Anchoring (plane math + coordinate transforms)
     "anchoring_center",
     "anchoring_to_vectors",
     "atlas_to_normalized",
@@ -145,6 +147,9 @@ __all__ = [
     "set_center_position_along_axis",
     "set_position_along_axis",
     "vectors_to_anchoring",
+    # Registration API (high-level pixel <-> atlas)
+    "VersoRegistration",
+    "AtlasToImageResult",
     # Sections (add/remove)
     "make_added_sections",
     "next_section_ids",
@@ -157,6 +162,7 @@ __all__ = [
     "find_atlas_position",
     "warp_overlay",
     "warp_points_atlas_to_section",
+    "warp_points_section_to_atlas",
     # Export
     "ExportOptions",
     "export_section",

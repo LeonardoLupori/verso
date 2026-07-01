@@ -348,10 +348,7 @@ class PrepView(QWidget):
         if not self._undo_stack:
             return
         self._current_mask = self._undo_stack.pop()
-        at_saved = (
-            self._saved_undo_depth >= 0
-            and len(self._undo_stack) == self._saved_undo_depth
-        )
+        at_saved = self._saved_undo_depth >= 0 and len(self._undo_stack) == self._saved_undo_depth
         flip_dirty = (
             self._section is not None
             and self._baseline_preprocessing is not None

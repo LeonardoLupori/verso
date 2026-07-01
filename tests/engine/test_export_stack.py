@@ -89,7 +89,7 @@ def test_canonical_plane_anchoring_is_axis_aligned():
     """The canonical plane holds the slicing axis constant and spans the rest."""
     atlas = _fake_atlas()
     anchoring = atlas.canonical_plane_anchoring(position=4.0, axis=1)  # AP
-    from verso.engine.registration import make_atlas_sample_grid
+    from verso.engine.anchoring import make_atlas_sample_grid
 
     grid = make_atlas_sample_grid(anchoring, out_width=10, out_height=6)
     # AP (component 1) is constant at the requested position across the plane.
