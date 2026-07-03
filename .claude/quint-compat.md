@@ -142,15 +142,18 @@ warp to match VisuAlign, the triangulation must be done in section *pixel* space
 not normalised `[0,1]²`** — see [warping.md](warping.md#triangulation-space--aspect-ratio-visualign-parity).
 
 VERSO stores control points internally as `ControlPoint(src_x, src_y, dst_x, dst_y)`
-in normalised `[0, 1]` (src = atlas, dst = section). Conversion at the I/O boundary
-(`width` `w`, `height` `h`):
+in **working-resolution pixel coordinates** (src = atlas overlay, dst = section
+image) — the same units as the VisuAlign marker itself, so no conversion happens
+at the I/O boundary:
 
-- **Load**: `src = (ox/w, oy/h)`, `dst = (nx/w, ny/h)`
-- **Save**: `[src_x·w, src_y·h, dst_x·w, dst_y·h]`
+- **Load**: `src = (ox, oy)`, `dst = (nx, ny)` — pixel values pass straight through.
+- **Save**: `[src_x, src_y, dst_x, dst_y]` — pixel values pass straight through
+  (see `_control_points_to_markers` in `engine/io/quint_io.py`).
 
-A legacy normalised-dict form `{"x", "y", "dx", "dy"}` (where `dst = (x+dx, y+dy)`)
-is still accepted on load for backward compatibility with old VERSO exports, but
-is never written.
+A legacy normalised-dict form `{"x", "y", "dx", "dy"}` (in `[0, 1]`, where
+`dst = (x+dx, y+dy)`) is still accepted on load for backward compatibility with
+old VERSO exports — that legacy form *is* normalised and gets multiplied by
+`(w, h)` on load — but is never written.
 
 > **Corner anchors are not exported.** Both tools synthesise four identity
 > anchors 10% outside the frame on load (`_CORNERS` / `Slice.triangulate()`), so

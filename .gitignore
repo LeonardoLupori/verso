@@ -14,3 +14,5 @@ Visualign-master*
 # *.json ignore above).
 !src/verso/resources/anchor_points.json
 !docs/*.png
+# MATLAB port of engine/registration.py — override the blanket *.m ignore.
+!matlab/**/*.m

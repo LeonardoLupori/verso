@@ -147,7 +147,7 @@ load completes it.
 ```json
 {
   "control_points": [
-    {"src_x": 0.52, "src_y": 0.31, "dst_x": 0.54, "dst_y": 0.30}
+    {"src_x": 120.0, "src_y": 84.0, "dst_x": 128.0, "dst_y": 80.0}
   ],
   "status": "in_progress"
 }
@@ -181,17 +181,21 @@ QuickNII voxel space and BrainGlobe's coordinate frame.
 
 ### Control point format
 
-Control points are stored in **normalised section coordinates** `[0, 1]`
-in both source (atlas) and destination (section) spaces. Matches
-VisuAlign's internal representation and is resolution-independent.
+Control points (`ControlPoint` in `engine/model/alignment.py`) are stored in
+**working-resolution pixel coordinates**, in both source (atlas overlay) and
+destination (section image) spaces — *not* normalised. `warping.py`'s warp
+functions divide by the section's working width/height to normalise
+internally; `to_dict`/`from_dict` pass the pixel values straight through.
 
 | Field | Meaning |
 |---|---|
-| `src_x`, `src_y` | Atlas-space origin of the pin, normalised to `[0, 1]`. |
-| `dst_x`, `dst_y` | Section-space destination of the pin, normalised to `[0, 1]`. |
+| `src_x`, `src_y` | Atlas-overlay pixel position of the pin (working resolution) — fixed when the point is created. |
+| `dst_x`, `dst_y` | Section-image pixel position of the pin (working resolution) — updated as the user drags it. |
 
-In VisuAlign's export JSON the displacement is `dx = dst_x - src_x`,
-`dy = dst_y - src_y` (see [quint-compat.md](quint-compat.md)).
+This differs from VisuAlign's own JSON export, which stores control points as
+normalised `[0, 1]` `markers` (see [quint-compat.md](quint-compat.md)) — the
+conversion between the two happens at the QuickNII/VisuAlign I/O boundary in
+`engine/io/quint_io.py`, not in the native `project-verso.json` format.
 
 ### Status enum (`AlignmentStatus`)
 
