@@ -34,6 +34,7 @@ from pathlib import Path
 import numpy as np
 
 from verso.engine.anchoring import anchoring_to_vectors
+from verso.engine.atlas import AtlasVolume, boundary_mask
 from verso.engine.model.project import Project, Section
 from verso.engine.warping import (
     warp_points_atlas_to_section,
@@ -42,6 +43,13 @@ from verso.engine.warping import (
 
 _SPACES = ("full", "working")
 _UNITS = ("voxel", "um", "mm")
+_KINDS = ("annotation", "template", "boundary")
+
+# Row-chunk size (in output pixels) used when resampling a whole atlas volume
+# onto a section's own pixel grid, so full-resolution images (which can be
+# tens of thousands of pixels per side) don't require an all-at-once
+# (H*W, 2)-shaped buffer for the warp lookup.
+_IMAGE_TO_ATLAS_CHUNK_PIXELS = 2_000_000
 
 
 @dataclass(frozen=True)
@@ -66,7 +74,7 @@ class _SectionSnapshot:
 
 @dataclass
 class AtlasToImageResult:
-    """Result of :meth:`VersoRegistration.atlas_to_image`, arrays aligned by row.
+    """Result of :meth:`VersoRegistration.coord_atlas_to_image`, arrays aligned by row.
 
     Attributes:
         section_id: (N,) object array of the matched section id, ``""`` where no
@@ -91,8 +99,9 @@ class VersoRegistration:
     Construct from the native project file::
 
         r = VersoRegistration("my_experiment/project-verso.json")
-        xyz = r.image_to_atlas("s001", [[1200, 3400], [1500, 3600]])
-        res = r.atlas_to_image(xyz)
+        xyz = r.coord_image_to_atlas("s001", [[1200, 3400], [1500, 3600]])
+        res = r.coord_atlas_to_image(xyz)
+        labels = r.image_to_atlas("s001", kind="annotation")  # (H, W) int32, full-res
 
     A slice is addressed by :attr:`Section.id`, or by the original image's file
     stem or basename.
@@ -141,6 +150,8 @@ class VersoRegistration:
             )
         self._resolution_um = float(atlas.resolution_um)
         self._atlas_shape = tuple(int(d) for d in atlas.shape)
+        self._atlas_name = atlas.name
+        self._atlas_volume: AtlasVolume | None = None
 
         self._snapshots: dict[str, _SectionSnapshot] = {}
         self._ids: list[str] = []
@@ -218,7 +229,7 @@ class VersoRegistration:
 
     # -- forward: image -> atlas ------------------------------------------
 
-    def image_to_atlas(
+    def coord_image_to_atlas(
         self,
         slice: str,
         xy: np.ndarray | list,
@@ -284,7 +295,7 @@ class VersoRegistration:
 
     # -- reverse: atlas -> image ------------------------------------------
 
-    def atlas_to_image(
+    def coord_atlas_to_image(
         self,
         xyz: np.ndarray | list,
         *,
@@ -368,6 +379,113 @@ class VersoRegistration:
         if max_distance is not None:
             valid &= distance <= max_distance
         return AtlasToImageResult(section_id=section_id, xy=xy, distance=distance, valid=valid)
+
+    # -- whole-image atlas resampling ---------------------------------------
+
+    def _get_atlas_volume(self) -> AtlasVolume:
+        """Lazily construct (and cache) the atlas volume this project references."""
+        if self._atlas_volume is None:
+            self._atlas_volume = AtlasVolume(self._atlas_name)
+        return self._atlas_volume
+
+    def image_to_atlas(
+        self,
+        slice: str,
+        kind: str = "annotation",
+        *,
+        space: str = "full",
+        return_valid: bool = False,
+    ) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
+        """Resample an atlas volume onto ``slice``'s own image pixel grid.
+
+        Unlike :meth:`coord_image_to_atlas` (which maps individual pixel
+        *coordinates*), this maps a whole image: for every pixel of the section
+        image it looks up the corresponding atlas voxel — accounting for the
+        section's affine anchoring, nonlinear (Delaunay) warp, and
+        preprocessing flips — and samples the requested atlas volume there.
+        The result is pixel-matched 1:1 to the section image, suitable for
+        per-pixel quantification (as VisuAlign/PyNutil would produce).
+
+        Args:
+            slice: Section id, original-image file stem, or basename.
+            kind: ``"annotation"`` (region-ID labels, default), ``"template"``
+                (reference/Nissl grayscale intensity), or ``"boundary"``
+                (region-boundary edge mask).
+            space: ``"full"`` (original full-resolution pixels, default) or
+                ``"working"`` (working/thumbnail-resolution pixels).
+            return_valid: If True, also return an ``(H, W)`` boolean mask that
+                is True where the pixel's atlas voxel lies inside the atlas
+                volume.
+
+        Returns:
+            ``kind="annotation"``: ``(H, W)`` int32 region-ID array (``0`` for
+            background/out-of-atlas pixels).
+            ``kind="template"``: ``(H, W)`` uint8 grayscale array (``0``
+            outside the atlas volume).
+            ``kind="boundary"``: ``(H, W)`` bool edge mask.
+            Or ``(array, in_bounds)`` when ``return_valid`` is True.
+        """
+        if kind not in _KINDS:
+            raise ValueError(f"kind must be one of {_KINDS}, got {kind!r}")
+        if space not in _SPACES:
+            raise ValueError(f"space must be one of {_SPACES}, got {space!r}")
+        snap = self._snapshots[self._resolve_slice(slice)]
+        if not snap.aligned:
+            raise ValueError(f"Section {snap.id!r} has no alignment; cannot map pixels.")
+
+        out_w, out_h = (snap.full_w, snap.full_h) if space == "full" else (snap.work_w, snap.work_h)
+        atlas = self._get_atlas_volume()
+
+        needs_labels = kind in ("annotation", "boundary")
+        labels = np.zeros((out_h, out_w), dtype=np.int32) if needs_labels else None
+        gray = np.zeros((out_h, out_w), dtype=np.uint8) if kind == "template" else None
+        in_bounds = np.zeros((out_h, out_w), dtype=bool)
+
+        xs = (np.arange(out_w, dtype=np.float64) + 0.5) / out_w
+        rows_per_chunk = max(1, _IMAGE_TO_ATLAS_CHUNK_PIXELS // out_w)
+        for r0 in range(0, out_h, rows_per_chunk):
+            r1 = min(out_h, r0 + rows_per_chunk)
+            ys = (np.arange(r0, r1, dtype=np.float64) + 0.5) / out_h
+            ss, tt = np.meshgrid(xs, ys)  # (rows, out_w)
+            if snap.flip_h:
+                ss = 1.0 - ss
+            if snap.flip_v:
+                tt = 1.0 - tt
+
+            st = np.column_stack([ss.ravel(), tt.ravel()])
+            if len(snap.src_px):
+                uv = warp_points_section_to_atlas(
+                    st, snap.src_px, snap.dst_px, snap.work_w, snap.work_h
+                )
+            else:
+                uv = st
+
+            voxel = (
+                snap.o[None, :]
+                + uv[:, 0, None] * snap.u[None, :]
+                + uv[:, 1, None] * snap.v[None, :]
+            ).reshape(r1 - r0, out_w, 3)
+
+            if kind == "template":
+                chunk_gray, chunk_inside = atlas.sample_reference_at(voxel)
+                gray[r0:r1] = chunk_gray
+            else:
+                chunk_labels, chunk_inside = atlas.sample_labels_at(voxel)
+                chunk_labels = chunk_labels.copy()
+                chunk_labels[~chunk_inside] = 0
+                labels[r0:r1] = chunk_labels
+            in_bounds[r0:r1] = chunk_inside
+
+        if kind == "boundary":
+            result = boundary_mask(labels, in_bounds)
+        elif kind == "template":
+            result = gray
+        else:
+            result = labels
+
+        if return_valid:
+            return result, in_bounds
+        return result
 
     # -- units -------------------------------------------------------------
 

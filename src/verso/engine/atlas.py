@@ -38,6 +38,35 @@ def _quicknii_floor_indices(
     return np.floor(lr_c), np.ceil(ap_c), np.ceil(dv_c)
 
 
+def boundary_mask(labels: np.ndarray, in_bounds: np.ndarray) -> np.ndarray:
+    """Bool edge mask between differing labels, keeping brain-adjacent edges only.
+
+    A 1-pixel edge is marked where two neighbouring pixels carry different
+    labels and at least one of them is annotated brain (``label > 0`` and
+    in-bounds), so the empty-background frame is not outlined.
+
+    Args:
+        labels: (H, W) integer region-ID map.
+        in_bounds: (H, W) bool — True where the corresponding voxel is inside
+            the atlas volume.
+
+    Returns:
+        (H, W) bool array.
+    """
+    brain = (labels > 0) & in_bounds
+    edges = np.zeros(labels.shape, dtype=bool)
+
+    # Horizontal edges (between col i and i+1) — mark left pixel only (1px)
+    diff_h = labels[:, :-1] != labels[:, 1:]
+    edges[:, :-1] |= diff_h & (brain[:, :-1] | brain[:, 1:])
+
+    # Vertical edges (between row i and i+1) — mark top pixel only (1px)
+    diff_v = labels[:-1, :] != labels[1:, :]
+    edges[:-1, :] |= diff_v & (brain[:-1, :] | brain[1:, :])
+
+    return edges
+
+
 # Anatomical words shown at the four canvas edges, keyed by interpolation axis.
 # Convention (canvas shows row 0 at top, ``plot.invertY(True)``):
 #   AP (coronal):  ML horizontal, DV vertical
@@ -92,19 +121,20 @@ class AtlasVolume:
     # ------------------------------------------------------------------
     # Public slice methods
 
-    def sample_labels(
-        self, anchoring: list[float], out_w: int, out_h: int
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """Sample the annotation along the cut plane.
+    def sample_labels_at(self, grid: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Sample the annotation volume at arbitrary atlas voxel coordinates.
+
+        Args:
+            grid: (..., 3) array of atlas voxel (x=LR, y=AP, z=DV) coordinates,
+                e.g. from :func:`make_atlas_sample_grid` or a warped per-pixel grid.
 
         Returns:
-            labels:    (H, W) int32  — annotation labels (in-bounds pixels only)
-            in_bounds: (H, W) bool   — True where the voxel is inside the atlas volume
+            labels:    same leading shape, int32 — annotation labels (in-bounds only)
+            in_bounds: same leading shape, bool   — True where the voxel is inside the atlas volume
         """
-        grid = make_atlas_sample_grid(anchoring, out_w, out_h)  # (H, W, 3)
         # Keep floats for bounds check — converting first can overflow int32 for extreme anchorings.
         # Use VisuAlign/QUINT-matching voxel selection (see _quicknii_floor_indices).
-        lr_f, ap_f, dv_f = _quicknii_floor_indices(grid[:, :, 0], grid[:, :, 1], grid[:, :, 2])
+        lr_f, ap_f, dv_f = _quicknii_floor_indices(grid[..., 0], grid[..., 1], grid[..., 2])
 
         ap_max, dv_max, lr_max = self._annotation.shape
         in_bounds: np.ndarray = (
@@ -121,6 +151,18 @@ class AtlasVolume:
         dv = np.clip(dv_f, 0, dv_max - 1).astype(np.int32)
         lr = np.clip(lr_f, 0, lr_max - 1).astype(np.int32)
         return self._annotation[ap, dv, lr], in_bounds
+
+    def sample_labels(
+        self, anchoring: list[float], out_w: int, out_h: int
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Sample the annotation along the (affine, unwarped) cut plane.
+
+        Returns:
+            labels:    (H, W) int32  — annotation labels (in-bounds pixels only)
+            in_bounds: (H, W) bool   — True where the voxel is inside the atlas volume
+        """
+        grid = make_atlas_sample_grid(anchoring, out_w, out_h)  # (H, W, 3)
+        return self.sample_labels_at(grid)
 
     # ------------------------------------------------------------------
     # Canonical (axis-aligned) plane construction
@@ -248,22 +290,9 @@ class AtlasVolume:
             color: RGB line color. Defaults to white ``(255, 255, 255)``.
         """
         labels, in_bounds = self.sample_labels(anchoring, out_w, out_h)
-        out_h2, out_w2 = labels.shape
-        brain = (labels > 0) & in_bounds
+        edges = boundary_mask(labels, in_bounds)
 
-        edges = np.zeros((out_h2, out_w2), dtype=bool)
-
-        # Horizontal edges (between col i and i+1) — mark left pixel only (1px)
-        diff_h = labels[:, :-1] != labels[:, 1:]
-        keep_h = diff_h & (brain[:, :-1] | brain[:, 1:])
-        edges[:, :-1] |= keep_h
-
-        # Vertical edges (between row i and i+1) — mark top pixel only (1px)
-        diff_v = labels[:-1, :] != labels[1:, :]
-        keep_v = diff_v & (brain[:-1, :] | brain[1:, :])
-        edges[:-1, :] |= keep_v
-
-        rgba = np.zeros((out_h2, out_w2, 4), dtype=np.uint8)
+        rgba = np.zeros((*labels.shape, 4), dtype=np.uint8)
         rgba[edges & in_bounds] = [*color, 220]
         return rgba
 
@@ -310,6 +339,39 @@ class AtlasVolume:
         """Slice the MRI/Nissl reference volume → RGB uint8 (H, W, 3)."""
         return self.slice_reference_rgba(anchoring, out_w, out_h)[:, :, :3]
 
+    def sample_reference_at(self, grid: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Sample the MRI/Nissl reference volume at arbitrary atlas voxel coordinates.
+
+        Args:
+            grid: (..., 3) array of atlas voxel (x=LR, y=AP, z=DV) coordinates.
+
+        Returns:
+            gray:      same leading shape, uint8 — reference intensity, ``0``
+                outside the atlas volume.
+            in_bounds: same leading shape, bool   — True where the voxel is
+                inside the atlas volume.
+        """
+        lr_f, ap_f, dv_f = _quicknii_floor_indices(grid[..., 0], grid[..., 1], grid[..., 2])
+        ap_max, dv_max, lr_max = self._reference.shape
+        in_bounds = (
+            (ap_f >= 0)
+            & (ap_f < ap_max)
+            & (dv_f >= 0)
+            & (dv_f < dv_max)
+            & (lr_f >= 0)
+            & (lr_f < lr_max)
+        )
+        ap = np.clip(ap_f, 0, ap_max - 1).astype(np.int32)
+        dv = np.clip(dv_f, 0, dv_max - 1).astype(np.int32)
+        lr = np.clip(lr_f, 0, lr_max - 1).astype(np.int32)
+        gray = (
+            (self._reference[ap, dv, lr].astype(np.float32) * self._reference_scale)
+            .clip(0, 255)
+            .astype(np.uint8)
+        )
+        gray[~in_bounds] = 0
+        return gray, in_bounds
+
     def slice_reference_rgba(self, anchoring: list[float], out_w: int, out_h: int) -> np.ndarray:
         """Slice the MRI/Nissl reference volume → RGBA uint8 (H, W, 4).
 
@@ -318,15 +380,7 @@ class AtlasVolume:
         """
         labels, in_bounds = self.sample_labels(anchoring, out_w, out_h)
         grid = make_atlas_sample_grid(anchoring, out_w, out_h)
-        lr_f, ap_f, dv_f = _quicknii_floor_indices(grid[:, :, 0], grid[:, :, 1], grid[:, :, 2])
-        ap = np.clip(ap_f.astype(int), 0, self._reference.shape[0] - 1)
-        dv = np.clip(dv_f.astype(int), 0, self._reference.shape[1] - 1)
-        lr = np.clip(lr_f.astype(int), 0, self._reference.shape[2] - 1)
-        gray = (
-            (self._reference[ap, dv, lr].astype(np.float32) * self._reference_scale)
-            .clip(0, 255)
-            .astype(np.uint8)
-        )
+        gray, _ = self.sample_reference_at(grid)
         rgb = np.stack([gray, gray, gray], axis=-1)
         alpha = np.where(in_bounds & (labels > 0), 255, 0).astype(np.uint8)
         return np.dstack([rgb, alpha])

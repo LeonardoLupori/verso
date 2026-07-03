@@ -74,9 +74,9 @@ def _reg(sections: list[Section]) -> VersoRegistration:
 def test_roundtrip_no_cps():
     reg = _reg([_section("s1", 10.0)])
     p = np.array([[30.0, 20.0], [70.0, 50.0]])
-    xyz = reg.image_to_atlas("s1", p)
+    xyz = reg.coord_image_to_atlas("s1", p)
     assert xyz.shape == (2, 3)
-    res = reg.atlas_to_image(xyz)
+    res = reg.coord_atlas_to_image(xyz)
     assert list(res.section_id) == ["s1", "s1"]
     np.testing.assert_allclose(res.distance, 0.0, atol=1e-6)
     np.testing.assert_allclose(res.xy, p, atol=1e-6)
@@ -86,8 +86,8 @@ def test_roundtrip_no_cps():
 def test_roundtrip_with_flips():
     reg = _reg([_section("s1", 10.0, flip_h=True, flip_v=True)])
     p = np.array([[30.0, 20.0]])
-    xyz = reg.image_to_atlas("s1", p)
-    res = reg.atlas_to_image(xyz)
+    xyz = reg.coord_image_to_atlas("s1", p)
+    res = reg.coord_atlas_to_image(xyz)
     assert res.section_id[0] == "s1"
     np.testing.assert_allclose(res.xy, p, atol=1e-6)
 
@@ -95,8 +95,8 @@ def test_roundtrip_with_flips():
 def test_roundtrip_working_space():
     reg = _reg([_section("s1", 10.0)])
     p = np.array([[12.0, 8.0]])
-    xyz = reg.image_to_atlas("s1", p, space="working")
-    res = reg.atlas_to_image(xyz, space="working")
+    xyz = reg.coord_image_to_atlas("s1", p, space="working")
+    res = reg.coord_atlas_to_image(xyz, space="working")
     np.testing.assert_allclose(res.xy, p, atol=1e-6)
 
 
@@ -111,13 +111,13 @@ def test_roundtrip_with_control_points():
     reg = _reg([_section("s1", 10.0, cps=cps, work=(48, 32), full=(48, 32))])
     p = np.array([[cp.dst_x, cp.dst_y] for cp in cps])
 
-    xyz = reg.image_to_atlas("s1", p)
+    xyz = reg.coord_image_to_atlas("s1", p)
     # Forward maps each dst control point to its src atlas voxel.
     anch = _anchoring(10.0)
     expected = np.array([normalized_to_atlas(cp.src_x / 48, cp.src_y / 32, anch) for cp in cps])
     np.testing.assert_allclose(xyz, expected, atol=1e-6)
 
-    res = reg.atlas_to_image(xyz)
+    res = reg.coord_atlas_to_image(xyz)
     assert list(res.section_id) == ["s1", "s1", "s1"]
     np.testing.assert_allclose(res.xy, p, atol=1e-6)
 
@@ -128,13 +128,13 @@ def test_roundtrip_with_control_points():
 def test_nearest_section_picks_closer_plane():
     reg = _reg([_section("s1", 8.0), _section("s2", 14.0)])
     # Voxel order is QuickNII (LR, AP, DV); AP=9 is 1 from s1, 5 from s2.
-    res = reg.atlas_to_image(np.array([[12.0, 9.0, 8.0]]))
+    res = reg.coord_atlas_to_image(np.array([[12.0, 9.0, 8.0]]))
     assert res.section_id[0] == "s1"
     np.testing.assert_allclose(res.distance[0], 1.0, atol=1e-6)
     assert res.valid[0]
 
     # AP=12 is 4 from s1, 2 from s2 → s2.
-    res2 = reg.atlas_to_image(np.array([[12.0, 12.0, 8.0]]))
+    res2 = reg.coord_atlas_to_image(np.array([[12.0, 12.0, 8.0]]))
     assert res2.section_id[0] == "s2"
     np.testing.assert_allclose(res2.distance[0], 2.0, atol=1e-6)
 
@@ -142,7 +142,7 @@ def test_nearest_section_picks_closer_plane():
 def test_voxel_outside_all_footprints_is_invalid():
     reg = _reg([_section("s1", 8.0)])
     # LR=100 → s = 100/24 > 1 → outside the section frame.
-    res = reg.atlas_to_image(np.array([[100.0, 8.0, 8.0]]))
+    res = reg.coord_atlas_to_image(np.array([[100.0, 8.0, 8.0]]))
     assert res.section_id[0] == ""
     assert not res.valid[0]
     assert not np.isfinite(res.distance[0])
@@ -153,15 +153,15 @@ def test_max_distance_and_distance_units():
     reg = _reg([_section("s1", 8.0)])
     v = np.array([[12.0, 11.0, 8.0]])  # 3 voxels off the plane
 
-    res = reg.atlas_to_image(v, max_distance=2.0)  # voxels
+    res = reg.coord_atlas_to_image(v, max_distance=2.0)  # voxels
     assert res.section_id[0] == "s1"  # still matched…
     assert not res.valid[0]  # …but beyond the cutoff
-    assert reg.atlas_to_image(v, max_distance=5.0).valid[0]
+    assert reg.coord_atlas_to_image(v, max_distance=5.0).valid[0]
 
-    res_um = reg.atlas_to_image(v, units="um")
+    res_um = reg.coord_atlas_to_image(v, units="um")
     np.testing.assert_allclose(res_um.distance[0], 3.0 * _RES_UM, atol=1e-6)
-    assert reg.atlas_to_image(v, units="um", max_distance=3.0 * _RES_UM + 1).valid[0]
-    assert not reg.atlas_to_image(v, units="um", max_distance=3.0 * _RES_UM - 1).valid[0]
+    assert reg.coord_atlas_to_image(v, units="um", max_distance=3.0 * _RES_UM + 1).valid[0]
+    assert not reg.coord_atlas_to_image(v, units="um", max_distance=3.0 * _RES_UM - 1).valid[0]
 
 
 # --- export-path parity ------------------------------------------------------
@@ -185,7 +185,7 @@ def test_export_parity_with_build_canonical_remap():
     canonical = atlas.canonical_plane_anchoring(position, 1)
     grid = make_atlas_sample_grid(canonical, out_w, out_h)  # (H, W, 3)
 
-    res = reg.atlas_to_image(grid.reshape(-1, 3), space="working")
+    res = reg.coord_atlas_to_image(grid.reshape(-1, 3), space="working")
     mx = res.xy[:, 0].reshape(out_h, out_w)
     my = res.xy[:, 1].reshape(out_h, out_w)
 
@@ -200,15 +200,17 @@ def test_export_parity_with_build_canonical_remap():
 def test_units_forward():
     reg = _reg([_section("s1", 10.0)])
     p = np.array([[30.0, 20.0]])
-    vox = reg.image_to_atlas("s1", p)
-    np.testing.assert_allclose(reg.image_to_atlas("s1", p, units="um"), vox * _RES_UM)
-    np.testing.assert_allclose(reg.image_to_atlas("s1", p, units="mm"), vox * _RES_UM / 1000.0)
+    vox = reg.coord_image_to_atlas("s1", p)
+    np.testing.assert_allclose(reg.coord_image_to_atlas("s1", p, units="um"), vox * _RES_UM)
+    np.testing.assert_allclose(
+        reg.coord_image_to_atlas("s1", p, units="mm"), vox * _RES_UM / 1000.0
+    )
 
 
 def test_return_valid_flags_out_of_frame():
     reg = _reg([_section("s1", 10.0)])  # full == (96, 64)
     p = np.array([[30.0, 20.0], [999.0, 20.0], [-5.0, 10.0]])
-    coords, inside = reg.image_to_atlas("s1", p, return_valid=True)
+    coords, inside = reg.coord_image_to_atlas("s1", p, return_valid=True)
     assert coords.shape == (3, 3)
     assert list(inside) == [True, False, False]
 
@@ -251,7 +253,7 @@ def test_unaligned_section_raises():
     sec.alignment = Alignment()  # zero anchoring → degenerate plane
     reg = VersoRegistration.from_project(_project([sec]))
     with pytest.raises(ValueError):
-        reg.image_to_atlas("s1", [[10.0, 10.0]])
+        reg.coord_image_to_atlas("s1", [[10.0, 10.0]])
 
 
 def test_incomplete_dimensions_raise():
@@ -264,6 +266,122 @@ def test_incomplete_dimensions_raise():
 def test_bad_space_and_units_raise():
     reg = _reg([_section("s1", 10.0)])
     with pytest.raises(ValueError):
-        reg.image_to_atlas("s1", [[1.0, 1.0]], space="nope")
+        reg.coord_image_to_atlas("s1", [[1.0, 1.0]], space="nope")
     with pytest.raises(ValueError):
-        reg.image_to_atlas("s1", [[1.0, 1.0]], units="parsecs")
+        reg.coord_image_to_atlas("s1", [[1.0, 1.0]], units="parsecs")
+
+
+# --- whole-image atlas resampling (image_to_atlas) ----------------------------
+
+
+def _fake_atlas_full() -> AtlasVolume:
+    """Fake atlas with annotation, reference, and color dict populated.
+
+    Two regions split along the LR (x) axis at the midpoint, so warping and
+    flipping visibly change which region a given pixel samples.
+    """
+    atlas = object.__new__(AtlasVolume)
+    ann = np.ones((_AP, _DV, _LR), dtype=np.int32)
+    ann[:, :, _LR // 2 :] = 2
+    atlas._annotation = ann
+    atlas._reference = np.arange(_AP * _DV * _LR, dtype=np.float64).reshape(_AP, _DV, _LR)
+    ref_max = float(atlas._reference.max())
+    atlas._reference_scale = 255.0 / ref_max if ref_max > 0 else 1.0
+    atlas._color_dict = {0: (0, 0, 0), 1: (255, 0, 0), 2: (0, 255, 0)}
+    return atlas
+
+
+def _reg_with_fake_volume(sections: list[Section]) -> VersoRegistration:
+    reg = _reg(sections)
+    reg._atlas_volume = _fake_atlas_full()
+    return reg
+
+
+def test_image_to_atlas_annotation_matches_pointwise_lookup():
+    sec = _section("s1", 10.0, full=(96, 64), work=(48, 32))
+    reg = _reg_with_fake_volume([sec])
+
+    labels = reg.image_to_atlas("s1", kind="annotation")
+    assert labels.shape == (64, 96)
+    assert labels.dtype == np.int32
+
+    # Spot-check a handful of full-res pixels (queried at their pixel *centers*,
+    # matching image_to_atlas's own sampling convention) against the pointwise
+    # coordinate mapping + the same nearest-voxel (floor/ceil) convention.
+    from verso.engine.atlas import _quicknii_floor_indices
+
+    cols = np.array([5, 50, 90])
+    rows = np.array([5, 10, 60])
+    pts = np.column_stack([cols + 0.5, rows + 0.5])
+    xyz = reg.coord_image_to_atlas("s1", pts)
+    lr_f, ap_f, dv_f = _quicknii_floor_indices(xyz[:, 0], xyz[:, 1], xyz[:, 2])
+    ap_max, dv_max, lr_max = (_AP, _DV, _LR)
+    inside = (
+        (ap_f >= 0)
+        & (ap_f < ap_max)
+        & (dv_f >= 0)
+        & (dv_f < dv_max)
+        & (lr_f >= 0)
+        & (lr_f < lr_max)
+    )
+    expected = np.where(inside, np.where(np.clip(lr_f, 0, lr_max - 1) >= _LR // 2, 2, 1), 0)
+    np.testing.assert_array_equal(labels[rows, cols], expected)
+
+
+def test_image_to_atlas_annotation_with_warp():
+    cps = [
+        ControlPoint(src_x=10.0, src_y=8.0, dst_x=20.0, dst_y=8.0),
+        ControlPoint(src_x=30.0, src_y=20.0, dst_x=20.0, dst_y=20.0),
+        ControlPoint(src_x=10.0, src_y=25.0, dst_x=20.0, dst_y=25.0),
+    ]
+    sec = _section("s1", 10.0, cps=cps, work=(48, 32), full=(48, 32))
+    reg = _reg_with_fake_volume([sec])
+
+    labels_warped = reg.image_to_atlas("s1", kind="annotation")
+    reg_flat = _reg_with_fake_volume([_section("s1", 10.0, work=(48, 32), full=(48, 32))])
+    labels_unwarped = reg_flat.image_to_atlas("s1", kind="annotation")
+
+    assert labels_warped.shape == labels_unwarped.shape
+    assert not np.array_equal(labels_warped, labels_unwarped)
+
+
+def test_image_to_atlas_template():
+    sec = _section("s1", 10.0, full=(96, 64), work=(48, 32))
+    reg = _reg_with_fake_volume([sec])
+
+    gray, in_bounds = reg.image_to_atlas("s1", kind="template", return_valid=True)
+    assert gray.shape == (64, 96)
+    assert gray.dtype == np.uint8
+    assert in_bounds.shape == (64, 96)
+    assert np.all(gray[~in_bounds] == 0)
+
+
+def test_image_to_atlas_boundary():
+    sec = _section("s1", 10.0, full=(96, 64), work=(48, 32))
+    reg = _reg_with_fake_volume([sec])
+
+    boundary = reg.image_to_atlas("s1", kind="boundary")
+    labels = reg.image_to_atlas("s1", kind="annotation")
+
+    assert boundary.dtype == np.bool_
+    assert boundary.shape == labels.shape
+    assert boundary.any()  # the two-region fake atlas has a real boundary
+
+    from verso.engine.atlas import boundary_mask
+
+    expected = boundary_mask(labels, np.ones_like(labels, dtype=bool))
+    np.testing.assert_array_equal(boundary, expected)
+
+
+def test_image_to_atlas_working_space():
+    sec = _section("s1", 10.0, full=(96, 64), work=(48, 32))
+    reg = _reg_with_fake_volume([sec])
+
+    labels = reg.image_to_atlas("s1", kind="annotation", space="working")
+    assert labels.shape == (32, 48)
+
+
+def test_image_to_atlas_bad_kind_raises():
+    reg = _reg_with_fake_volume([_section("s1", 10.0)])
+    with pytest.raises(ValueError):
+        reg.image_to_atlas("s1", kind="nope")
