@@ -1551,6 +1551,7 @@ class MainWindow(QMainWindow):
             BatchMaskWorker(list(project.sections), project.working_scale),
             title="Batch masks",
             message="Auto-detecting slice masks...",
+            min_width=300,
         )
         self._batch_mask_job.start(self._on_batch_masks_done, self._on_batch_masks_finished)
 
@@ -1821,6 +1822,7 @@ class MainWindow(QMainWindow):
             ),
             title="DeepSlice",
             message="Running DeepSlice prediction...",
+            min_width=350,
         )
         self._deepslice_job.start(
             self._on_deepslice_done,
