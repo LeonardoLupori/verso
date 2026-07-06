@@ -391,17 +391,6 @@ def write_section_pngs(project: Project, output_dir: Path) -> None:
         Image.fromarray(rgb).save(str(png_path))
 
 
-def _registration_dims(section) -> tuple[int, int]:
-    """Return registration image dimensions (width, height) in pixels.
-
-    QuickNII's ``width`` and ``height`` are part of the anchoring scale:
-    ``HStretch = len(u) / width`` and ``VStretch = len(v) / height``.  VERSO
-    aligns against the working thumbnail, so exports report that image size —
-    the working-resolution dimensions cached on the section at import.
-    """
-    return section.resolution_thumbnail_wh
-
-
 # ---------------------------------------------------------------------------
 # Public save functions
 # ---------------------------------------------------------------------------
@@ -473,7 +462,7 @@ def save_quicknii_xml(
         "&amp;vz=",
     ]
     for section in project.sections:
-        w, h = _registration_dims(section)
+        w, h = section.resolution_thumbnail_wh
         filename = _export_image_filename(section)
         line = (
             f"    <slice filename='{filename}' nr='{section.slice_index}' width='{w}' height='{h}"
@@ -513,7 +502,7 @@ def save_quicknii(
 
     slices_out: list[dict[str, Any]] = []
     for section in project.sections:
-        w, h = _registration_dims(section)
+        w, h = section.resolution_thumbnail_wh
         entry: dict[str, Any] = {
             "filename": _export_image_filename(section),
             "nr": section.slice_index,
@@ -558,7 +547,7 @@ def save_visualign(
 
     slices_out: list[dict[str, Any]] = []
     for section in project.sections:
-        w, h = _registration_dims(section)
+        w, h = section.resolution_thumbnail_wh
         entry: dict[str, Any] = {
             "filename": _export_image_filename(section),
             "nr": section.slice_index,

@@ -421,19 +421,10 @@ def test_sagittal_export_independent_of_slicing_direction(tmp_path: Path):
 
 
 def test_visualign_save_load_round_trip(tmp_path: Path):
-    from PIL import Image
-
-    # Create actual thumbnail images so _registration_dims returns non-zero values
-    thumb = tmp_path / "s001-thumb.png"
-    Image.new("RGB", (1000, 800)).save(thumb)
-
     src = tmp_path / "va.json"
     src.write_text(json.dumps(VISUALIGN_JSON))
 
-    # Patch thumbnail paths so save_visualign can read dimensions
     project = load_visualign(src)
-    for section in project.sections:
-        section.thumbnail_path = str(thumb)
 
     dst = tmp_path / "va_out.json"
     save_visualign(project, dst)
