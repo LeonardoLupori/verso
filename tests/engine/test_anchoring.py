@@ -149,8 +149,8 @@ def test_set_center_position_along_axis_moves_midpoint_only():
 
 def test_rotate_180_inverts_uv():
     rotated = rotate_anchoring(SAMPLE_ANCHORING, math.pi)
-    o, u, v = anchoring_to_vectors(SAMPLE_ANCHORING)
-    ro, ru, rv = anchoring_to_vectors(rotated)
+    _o, u, v = anchoring_to_vectors(SAMPLE_ANCHORING)
+    _ro, ru, rv = anchoring_to_vectors(rotated)
 
     np.testing.assert_allclose(ru, -u, atol=1e-9)
     np.testing.assert_allclose(rv, -v, atol=1e-9)
@@ -175,8 +175,8 @@ def test_rotate_preserves_pivot_in_atlas_space():
 
 def test_scale_uniform_doubles_uv():
     scaled = scale_anchoring(SAMPLE_ANCHORING, 2.0)
-    o, u, v = anchoring_to_vectors(SAMPLE_ANCHORING)
-    so, su, sv = anchoring_to_vectors(scaled)
+    _o, u, v = anchoring_to_vectors(SAMPLE_ANCHORING)
+    _so, su, sv = anchoring_to_vectors(scaled)
 
     np.testing.assert_allclose(su, 2.0 * u, atol=1e-9)
     np.testing.assert_allclose(sv, 2.0 * v, atol=1e-9)
@@ -282,7 +282,7 @@ def test_quicknii_coronal_series_uses_slice_indices_not_list_indices():
     )
 
     centers_by_serial = {}
-    for serial, anchoring in zip([30, 10, 20], anchorings):
+    for serial, anchoring in zip([30, 10, 20], anchorings, strict=True):
         o, u, v = anchoring_to_vectors(anchoring)
         centers_by_serial[serial] = o + u / 2 + v / 2
 
@@ -715,7 +715,7 @@ def test_quicknii_default_anchoring_for_each_axis(axis, axis_dim_idx, u_axis, v_
         atlas_shape=atlas_shape,
         interpolation_axis=axis,
     )
-    o, u, v = anchoring_to_vectors(anchoring)
+    _o, u, v = anchoring_to_vectors(anchoring)
     # The slicing-axis component of u and v is zero (plane perpendicular to axis).
     assert abs(u[axis]) < 1e-9
     assert abs(v[axis]) < 1e-9

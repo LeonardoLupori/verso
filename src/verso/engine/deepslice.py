@@ -287,7 +287,7 @@ def _orient_series_to_convention(
     ascending = ap_centers[-1] > ap_centers[0]
     if ascending == bool(reverse_axis):
         return  # already matches the built-in proposal direction
-    for section, ap in zip(good, reversed(ap_centers)):
+    for section, ap in zip(good, reversed(ap_centers), strict=False):
         flipped = set_center_position_along_axis(section.alignment.anchoring, ap, ap_axis)
         section.alignment.anchoring = flipped
         section.alignment.proposal_anchoring = list(flipped)
@@ -334,7 +334,7 @@ def _interpolate_bad_sections(
     )
 
     filled = 0
-    for (section, _, _), anchoring, st in zip(usable, propagated, stored):
+    for (section, _, _), anchoring, st in zip(usable, propagated, stored, strict=False):
         if st is not None or section.id not in bad_ids:
             continue
         section.alignment.anchoring = anchoring
@@ -395,7 +395,9 @@ def reset_in_progress_to_default_proposals(
     )
 
     changed = 0
-    for (section, _, _), anchoring, stored in zip(usable, propagated, stored_anchorings):
+    for (section, _, _), anchoring, stored in zip(
+        usable, propagated, stored_anchorings, strict=False
+    ):
         if stored is not None:
             continue
         section.alignment.anchoring = anchoring

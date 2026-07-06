@@ -156,7 +156,7 @@ class ExportController:
             QApplication.processEvents()
             try:
                 export_section(section, project, atlas, options, out_dir)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 errors.append(f"{Path(section.original_path).name}: {exc}")
             progress.setValue(idx + 1)
             QApplication.processEvents()
@@ -244,7 +244,7 @@ class ExportController:
                 else:
                     page, valid = result
                     entries.append((section.slice_index, page, valid))
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 errors.append(f"{Path(section.original_path).name}: {exc}")
             progress.setValue(idx + 1)
             QApplication.processEvents()
@@ -260,7 +260,7 @@ class ExportController:
                     f"Ch {i}" for i in range(pages[0].shape[2])
                 ]
                 write_aligned_stack(pages, channel_names, out_path)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 errors.append(f"writing stack: {exc}")
 
         progress.close()

@@ -184,7 +184,7 @@ class OverviewView(QWidget):
         n_cols = _COL_STEPS_START + len(_STEPS)
         t.setColumnCount(n_cols)
         axis_name = self._project.interpolation_axis if self._project is not None else "AP"
-        headers = ["Slice index", "File", "Dimensions", f"{axis_name} (mm)"] + list(_STEPS)
+        headers = ["Slice index", "File", "Dimensions", f"{axis_name} (mm)", *list(_STEPS)]
         t.setHorizontalHeaderLabels(headers)
 
         hheader = require(t.horizontalHeader())
@@ -196,7 +196,7 @@ class OverviewView(QWidget):
         # live ResizeToContents, which re-measures every row in a column on each
         # cell write (O(rows^2) status refreshes, seconds at a few hundred
         # sections) — cell writes no longer trigger any re-measure.
-        for col in [_COL_SERIAL, _COL_DIMS, _COL_AP] + list(range(_COL_STEPS_START, n_cols)):
+        for col in [_COL_SERIAL, _COL_DIMS, _COL_AP, *list(range(_COL_STEPS_START, n_cols))]:
             hheader.setSectionResizeMode(col, QHeaderView.ResizeMode.Fixed)
 
         t.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)

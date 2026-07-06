@@ -139,8 +139,8 @@ def test_source_points_respect_mask_gate():
     assert len(gated) <= len(full)
     # Every gated crossing lands inside the mask.
     for cx, cy in gated:
-        rx = int(round(cx))
-        ry = int(round(cy))
+        rx = round(cx)
+        ry = round(cy)
         assert mask[min(ry, 319), min(rx, 455)]
 
 
@@ -181,22 +181,22 @@ def _make_fake_itk(offset: float) -> types.ModuleType:
         def __init__(self, arr):
             self.array = np.asarray(arr, dtype=np.float32)
 
-        def SetSpacing(self, spacing):  # noqa: N802 (itk camelCase API)
+        def SetSpacing(self, spacing):
             pass
 
     class _ParamObj:
         @staticmethod
-        def New():  # noqa: N802
+        def New():
             return _ParamObj()
 
-        def GetDefaultParameterMap(self, name, n):  # noqa: N802
+        def GetDefaultParameterMap(self, name, n):
             return {}
 
-        def AddParameterMap(self, m):  # noqa: N802
+        def AddParameterMap(self, m):
             pass
 
     class _Transform:
-        def SetParameter(self, idx, key, val):  # noqa: N802
+        def SetParameter(self, idx, key, val):
             pass
 
     ns.ParameterObject = _ParamObj

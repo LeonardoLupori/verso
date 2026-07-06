@@ -21,6 +21,7 @@ list (per-channel color + brightness scale + visibility).
 
 from __future__ import annotations
 
+import itertools
 import re
 from pathlib import Path
 
@@ -87,7 +88,7 @@ def guess_slice_indices(paths: list[str | Path]) -> list[int]:
         distinct = len(set(values))
         spread = max(values) - min(values)
         ordered = [per_file[i][j] for i in name_order]
-        rising = sum(a < b for a, b in zip(ordered, ordered[1:]))
+        rising = sum(a < b for a, b in itertools.pairwise(ordered))
         monotonic = rising / (n - 1) if n > 1 else 0.0
         score = (distinct, spread, monotonic, -j)
         if best is None or score > best:
@@ -415,7 +416,7 @@ def _save_ome_tiff(image: np.ndarray, path: Path, channel_names: list[str]) -> N
     """
     import tifffile
 
-    if image.ndim == 2:
+    if image.ndim == 2:  # noqa: SIM108 — per-branch shape comments are clearer than a ternary
         data = image[np.newaxis, ...]  # (1, H, W)
     else:
         data = np.transpose(image, (2, 0, 1))  # (H, W, C) → (C, H, W)

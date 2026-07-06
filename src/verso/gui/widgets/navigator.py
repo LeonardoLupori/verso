@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 import numpy as np
 from PyQt6.QtCore import QEvent, QPointF, QSize, Qt, pyqtSignal
@@ -177,10 +177,10 @@ class _SliceView(QWidget):
     # Drag-clockwise → plane-rotates-clockwise in each view. The plane is rotated
     # about the view's own atlas axis (index == self._axis); positive θ moves the
     # leading edge clockwise in each view's screen space.
-    _ANGLE_SIGNS = {0: +1, 1: -1, 2: +1}
+    _ANGLE_SIGNS: ClassVar[dict[int, int]] = {0: +1, 1: -1, 2: +1}
     # Atlas axes addressed by each view's left/right and up/down buttons:
     #   view axis → (col_atlas_axis, row_atlas_axis)
-    _TRANSLATE_AXES = {
+    _TRANSLATE_AXES: ClassVar[dict[int, tuple[int, int]]] = {
         0: (1, 2),  # sagittal:   cols=AP, rows=DV
         1: (0, 2),  # coronal:    cols=LR, rows=DV
         2: (0, 1),  # horizontal: cols=LR, rows=AP
@@ -681,7 +681,7 @@ class NavigatorPanel(QWidget):
         self._groups: dict[int, QGroupBox] = {}
         self._hidden_axis: int | None = None
         view_titles = ["Sagittal", "Coronal", "Horizontal"]
-        for view, title in zip((self._sag, self._cor, self._hor), view_titles):
+        for view, title in zip((self._sag, self._cor, self._hor), view_titles, strict=False):
             view.anchoring_changed.connect(self._on_anchoring_changed)
             grp = QGroupBox(title)
             grp.setStyleSheet(_VIEW_GROUP_QSS)
@@ -821,7 +821,7 @@ class NavigatorPanel(QWidget):
                 view.set_buttons_enabled(False)
             return
         center = self._atlas.cut_center(self._anchoring)
-        idx_for = {0: int(round(center[0])), 1: int(round(center[1])), 2: int(round(center[2]))}
+        idx_for = {0: round(center[0]), 1: round(center[1]), 2: round(center[2])}
         views_by_axis = {0: self._sag, 1: self._cor, 2: self._hor}
 
         for ax, view in views_by_axis.items():

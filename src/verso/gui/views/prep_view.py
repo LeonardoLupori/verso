@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import copy
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -209,10 +210,9 @@ class PrepView(QWidget):
 
         self._load_or_init_mask()
         # Overlay any resident draft edits on top of the disk-loaded mask.
-        if draft is not None:
-            if draft.mask_dirty:
-                self._current_mask = draft.slice_mask
-                self._mask_dirty = True
+        if draft is not None and draft.mask_dirty:
+            self._current_mask = draft.slice_mask
+            self._mask_dirty = True
         # Reflect the section's persistent dirty state (mask/flip edits).
         # When still dirty, recover the genuine last-saved baseline from the
         # stash (the section's flips may already carry the unsaved edit).
@@ -251,10 +251,9 @@ class PrepView(QWidget):
             return
         draft = self._state.pop_prep_draft(self._section.id)
         self._load_or_init_mask()
-        if draft is not None:
-            if draft.mask_dirty:
-                self._current_mask = draft.slice_mask
-                self._mask_dirty = True
+        if draft is not None and draft.mask_dirty:
+            self._current_mask = draft.slice_mask
+            self._mask_dirty = True
 
     def set_mask_visible(self, visible: bool) -> None:
         visible = bool(visible)
@@ -493,10 +492,8 @@ class PrepView(QWidget):
 
         path_str = self._section.preprocessing.slice_mask_path
         if path_str:
-            try:
+            with contextlib.suppress(OSError):
                 Path(path_str).unlink(missing_ok=True)
-            except OSError:
-                pass
 
         self._section.preprocessing = Preprocessing()
         self._current_mask = None

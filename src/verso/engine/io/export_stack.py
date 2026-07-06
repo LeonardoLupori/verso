@@ -170,7 +170,7 @@ def export_section_aligned(
         work = work[:, :, np.newaxis]
     work_h, work_w = work.shape[:2]
 
-    map_x, map_y, out_w, out_h = build_canonical_remap(
+    map_x, map_y, _out_w, _out_h = build_canonical_remap(
         section, atlas, project.interpolation_axis_index, scale, work_w, work_h
     )
     covered = map_x >= 0.0

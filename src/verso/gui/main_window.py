@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -1132,7 +1133,7 @@ class MainWindow(QMainWindow):
         keep_id = (
             self._state.current_section.id if self._state.current_section is not None else None
         )
-        for section, index in zip(project.sections, indices):
+        for section, index in zip(project.sections, indices, strict=False):
             section.slice_index = index
         project.sort_sections()
 
@@ -1317,10 +1318,8 @@ class MainWindow(QMainWindow):
 
         for section in to_remove:
             for artifact in removed_section_artifacts(section, surviving):
-                try:
+                with contextlib.suppress(OSError):
                     artifact.unlink(missing_ok=True)
-                except OSError:
-                    pass
             self._state.forget_section(section.id)
 
         project.sections = surviving
@@ -1590,11 +1589,13 @@ class MainWindow(QMainWindow):
 
         stored_indices = {
             section.slice_index
-            for (section, _, _), anch in zip(usable, display_anchorings)
+            for (section, _, _), anch in zip(usable, display_anchorings, strict=False)
             if anch is not None
         }
 
-        for (section, _, _), anchoring, anch in zip(usable, propagated, display_anchorings):
+        for (section, _, _), anchoring, anch in zip(
+            usable, propagated, display_anchorings, strict=False
+        ):
             if anch is not None:
                 continue
             # Always sync sections that share a slice index with a stored

@@ -191,7 +191,7 @@ class _ChannelRow(QWidget):
 
         self._slider = QSlider(Qt.Orientation.Horizontal)
         self._slider.setRange(1, 100)
-        self._slider.setValue(int(round(max(1.0, min(100.0, self._spec.scale * 100.0)))))
+        self._slider.setValue(round(max(1.0, min(100.0, self._spec.scale * 100.0))))
         self._slider.valueChanged.connect(self._on_slider)
         self._slider.sliderReleased.connect(self._on_slider_released)
         layout.addWidget(self._slider, stretch=1)
@@ -216,7 +216,7 @@ class _ChannelRow(QWidget):
             scale=spec.scale,
             visible=spec.visible,
         )
-        target = int(round(max(1.0, min(100.0, self._spec.scale * 100.0))))
+        target = round(max(1.0, min(100.0, self._spec.scale * 100.0)))
         if self._slider.value() != target:
             self._slider.blockSignals(True)
             self._slider.setValue(target)

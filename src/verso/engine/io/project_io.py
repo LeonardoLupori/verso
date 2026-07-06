@@ -83,7 +83,7 @@ def backfill_metadata(
             section.resolution_original_wh = image_dimensions(orig)
         if min(section.resolution_thumbnail_wh) <= 0:
             thumb = _resolve(section.thumbnail_path, project_dir)
-            if not thumb.exists():
+            if not thumb.exists():  # noqa: SIM102 — keep the regeneration side effect explicit
                 # Regenerate the working copy from the original if the thumbnail
                 # is absent (e.g. generation was skipped at import).
                 if ensure_working_copy(section, project.working_scale) is None:
@@ -101,7 +101,7 @@ def backfill_metadata(
                 from verso.engine.atlas import AtlasVolume
 
                 atlas = AtlasVolume(ref.name)
-            except Exception as exc:  # noqa: BLE001 - surfaced with context below
+            except Exception as exc:
                 raise RuntimeError(
                     f"Cannot backfill atlas metadata for {ref.name!r}: {exc}"
                 ) from exc

@@ -12,6 +12,7 @@ controller calls back into them through ``self._window``.
 
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -356,10 +357,8 @@ class JobController:
         for section in project.sections:
             old = section.preprocessing.slice_mask_path
             if old:
-                try:
+                with contextlib.suppress(OSError):
                     Path(old).unlink(missing_ok=True)
-                except OSError:
-                    pass
                 removed += 1
             section.preprocessing.slice_mask_path = None
         self._window._after_batch_clear()

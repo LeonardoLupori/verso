@@ -1,3 +1,4 @@
+import contextlib
 import json
 import math
 import subprocess
@@ -85,10 +86,8 @@ def test_run_deepslice_failure_does_not_mutate_project(tmp_path: Path, monkeypat
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
-    try:
+    with contextlib.suppress(Exception):
         run_deepslice_suggestions(project)
-    except Exception:
-        pass
 
     assert project.to_dict() == before
 

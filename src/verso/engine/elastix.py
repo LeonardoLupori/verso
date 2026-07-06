@@ -26,6 +26,7 @@ Coordinate conventions
 
 from __future__ import annotations
 
+import contextlib
 import json
 import tempfile
 from functools import lru_cache
@@ -427,10 +428,8 @@ class ElastixWorker:
         with self._lock:
             proc, self._proc = self._proc, None
         if proc is not None:
-            try:
+            with contextlib.suppress(Exception):
                 proc.kill()
-            except Exception:
-                pass
 
     def generate(
         self,
@@ -527,7 +526,5 @@ class ElastixWorker:
                 proc.wait(timeout=5)
         except Exception:
             pass
-        try:
+        with contextlib.suppress(Exception):
             proc.kill()
-        except Exception:
-            pass

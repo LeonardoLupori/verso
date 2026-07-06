@@ -153,10 +153,10 @@ def _smooth_label_map(
 
         # Output window covering this crop. Use round() at both edges so adjacent
         # crops tile the output grid without gaps or overlaps.
-        or0 = int(round(r0 * sy))
-        or1 = int(round(r1 * sy))
-        oc0 = int(round(c0 * sx))
-        oc1 = int(round(c1 * sx))
+        or0 = round(r0 * sy)
+        or1 = round(r1 * sy)
+        oc0 = round(c0 * sx)
+        oc1 = round(c1 * sx)
         ow = oc1 - oc0
         oh = or1 - or0
         if ow <= 0 or oh <= 0:
@@ -263,7 +263,7 @@ def render_overlay_rgba(
 
     if overlay_style == "filled":
         rgb = atlas.colorize_labels(smooth_ids)
-        alpha = np.where(smooth_ids > 0, int(round(alpha_scalar * 255)), 0).astype(np.uint8)
+        alpha = np.where(smooth_ids > 0, round(alpha_scalar * 255), 0).astype(np.uint8)
         canvas[..., :3] = rgb
         canvas[..., 3] = alpha
         return canvas

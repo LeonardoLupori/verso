@@ -14,6 +14,8 @@ anchoring vector directly so they stay independent of any atlas library.
 
 from __future__ import annotations
 
+import itertools
+
 import numpy as np
 
 # ---------------------------------------------------------------------------
@@ -731,7 +733,7 @@ def quicknii_series_anchorings(
     if len(controls) == 1:
         propagated = [list(unpacked_by_index[controls[0]]) for _ in image_sizes]
     else:
-        for left, right in zip(controls, controls[1:]):
+        for left, right in itertools.pairwise(controls):
             left_index = slice_indices[left]
             right_index = slice_indices[right]
             left_u = unpacked_by_index[left]
@@ -739,7 +741,7 @@ def quicknii_series_anchorings(
             for i in range(left, right + 1):
                 denom = right_index - left_index
                 t = 0.0 if denom == 0 else (slice_indices[i] - left_index) / denom
-                propagated[i] = [a + t * (b - a) for a, b in zip(left_u, right_u)]
+                propagated[i] = [a + t * (b - a) for a, b in zip(left_u, right_u, strict=False)]
 
     # Strip in-plane rotation (rotation around the slicing axis) from
     # proposals while preserving position along the slicing axis, physical
@@ -756,7 +758,7 @@ def quicknii_series_anchorings(
         row[6 + v_axis] = float(np.sqrt(max(0.0, 1.0 - v_tilt * v_tilt)))
 
     packed: list[list[float]] = []
-    for i, (unpacked, (w, h)) in enumerate(zip(propagated, image_sizes)):
+    for i, (unpacked, (w, h)) in enumerate(zip(propagated, image_sizes, strict=False)):
         if unpacked is None:
             raise RuntimeError("QuickNII propagation left a section without anchoring")
         if center_proposals and i not in stored_indices:
@@ -862,7 +864,7 @@ def interpolate_anchorings(
             center_proposals=center_proposals,
         )
 
-        for (section, _, _), anchoring in zip(sorted_usable, propagated_anchorings):
+        for (section, _, _), anchoring in zip(sorted_usable, propagated_anchorings, strict=False):
             if section.alignment.status == AlignmentStatus.COMPLETE:
                 continue
             section.alignment.anchoring = anchoring
@@ -899,7 +901,7 @@ def interpolate_anchorings(
 
     controls = sorted(set(controls))
     propagated: dict[int, list[float]] = {}
-    for left, right in zip(controls, controls[1:]):
+    for left, right in itertools.pairwise(controls):
         left_index = slice_indices[left]
         right_index = slice_indices[right]
         left_unpacked = unpacked_by_index[left]
@@ -907,7 +909,9 @@ def interpolate_anchorings(
         for idx in range(left, right + 1):
             denom = right_index - left_index
             t = 0.0 if denom == 0 else (slice_indices[idx] - left_index) / denom
-            propagated[idx] = [a + t * (b - a) for a, b in zip(left_unpacked, right_unpacked)]
+            propagated[idx] = [
+                a + t * (b - a) for a, b in zip(left_unpacked, right_unpacked, strict=False)
+            ]
 
     _stored_set_legacy = set(stored_indices)
     for idx, row in propagated.items():

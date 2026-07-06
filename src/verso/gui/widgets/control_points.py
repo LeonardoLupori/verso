@@ -11,19 +11,21 @@ it points; other modes leave it cleared.
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 import pyqtgraph as pg
 
 
 class ControlPointOverlay:
     """Control-point dots and their displacement vectors drawn on the canvas."""
 
-    _CP_SYMBOLS: dict[str, str] = {
+    _CP_SYMBOLS: ClassVar[dict[str, str]] = {
         "Circle": "o",
         "Cross": "+",
         "Square": "s",
         "Diamond": "d",
     }
-    _CP_COLOR_RGB: dict[str, tuple[int, int, int]] = {
+    _CP_COLOR_RGB: ClassVar[dict[str, tuple[int, int, int]]] = {
         "Orange": (255, 96, 0),
         "Cyan": (0, 255, 255),
         "Yellow": (255, 245, 0),
@@ -101,7 +103,7 @@ class ControlPointOverlay:
         # Displacement lines (src → dst)
         if src_pts and len(src_pts) == len(dst_pts):
             xs, ys = [], []
-            for (ss, st), (ds, dt) in zip(src_pts, dst_pts):
+            for (ss, st), (ds, dt) in zip(src_pts, dst_pts, strict=False):
                 xs += [ss * display_w, ds * display_w]
                 ys += [st * display_h, dt * display_h]
             self.disp_halo_item.setData(x=xs, y=ys)

@@ -65,7 +65,7 @@ class _ThumbnailLoader(QObject):
 class _HScrollArea(QScrollArea):
     """Scroll area whose mouse wheel scrolls horizontally, never vertically."""
 
-    def wheelEvent(self, event) -> None:  # noqa: ANN001
+    def wheelEvent(self, event) -> None:
         delta = event.angleDelta().y() or event.angleDelta().x()
         bar = require(self.horizontalScrollBar())
         bar.setValue(bar.value() - delta)
@@ -124,7 +124,7 @@ class _ThumbButton(QLabel):
         colour = "#FFFFFF" if self._selected else "#555555"
         self.setStyleSheet(f"border: {_BORDER_W}px solid {colour}; background: transparent;")
 
-    def paintEvent(self, event) -> None:  # noqa: ANN001
+    def paintEvent(self, event) -> None:
         super().paintEvent(event)
         if self._status_color is None:
             return
@@ -137,7 +137,7 @@ class _ThumbButton(QLabel):
         painter.drawEllipse(x, y, _DOT_DIAMETER, _DOT_DIAMETER)
         painter.end()
 
-    def mousePressEvent(self, event) -> None:  # noqa: ANN001
+    def mousePressEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit(self._index)
         super().mousePressEvent(event)

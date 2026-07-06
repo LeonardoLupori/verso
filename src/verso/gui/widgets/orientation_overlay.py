@@ -53,7 +53,7 @@ class OrientationOverlay(QWidget):
         self._labels = dict(labels) if labels else None
         self.update()
 
-    def paintEvent(self, event) -> None:  # noqa: N802 (Qt signature)
+    def paintEvent(self, event) -> None:
         if not self._labels:
             return
 

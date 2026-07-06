@@ -247,7 +247,7 @@ def load_visualign(
 
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     raw_sections = data.get("slices") or data.get("sections", [])
-    for section, raw in zip(project.sections, raw_sections):
+    for section, raw in zip(project.sections, raw_sections, strict=False):
         markers = raw.get("markers", [])
         if markers:
             w = int(raw.get("width", 0))
@@ -271,7 +271,7 @@ def load_deepslice(path: Path, atlas_name: str = "allen_mouse_25um") -> Project:
     project = load_quicknii(path, atlas_name=atlas_name)
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     raw_sections = data.get("slices") or data.get("sections", [])
-    for section, raw in zip(project.sections, raw_sections):
+    for section, raw in zip(project.sections, raw_sections, strict=False):
         if section.alignment.status == AlignmentStatus.COMPLETE:
             section.alignment.status = AlignmentStatus.IN_PROGRESS
             section.alignment.source = "deepslice"
@@ -488,7 +488,7 @@ def save_quicknii_xml(
             original = _display_space_anchoring(section)
             if any(original):
                 a = _export_anchoring(original, atlas_shape)
-                for prefix, val in zip(prefixes, [round(v, 4) for v in a]):
+                for prefix, val in zip(prefixes, [round(v, 4) for v in a], strict=False):
                     line += f"{prefix}{val}"
         line += "'/>"
         lines.append(line)

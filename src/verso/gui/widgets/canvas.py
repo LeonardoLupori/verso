@@ -22,7 +22,7 @@ outside Align mode and when no overlay is present.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Literal
+from typing import ClassVar, Literal
 
 import numpy as np
 import pyqtgraph as pg
@@ -283,7 +283,7 @@ class ImageCanvas(QWidget):
     # Public API
     # ------------------------------------------------------------------
 
-    def resizeEvent(self, event) -> None:  # noqa: N802 (Qt signature)
+    def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         # Keep the orientation overlay covering the full canvas area.
         self._orientation.setGeometry(self.rect())
@@ -430,7 +430,7 @@ class ImageCanvas(QWidget):
         rgb = (255, 140, 140) if ShiftState.held else (120, 200, 255)
         if self._brush_mode:
             px_per_img = 1.0 / max(self._vb.viewPixelSize()[0], 1e-9)
-            diameter = int(round(2 * self._brush_radius_img * px_per_img))
+            diameter = round(2 * self._brush_radius_img * px_per_img)
             self.view.setCursor(make_circle_cursor(rgb, diameter))
             return
         self.view.setCursor(self._cursor_erase if ShiftState.held else self._cursor_draw)
@@ -459,7 +459,7 @@ class ImageCanvas(QWidget):
             self.plot.removeItem(item)
 
         first_shape: tuple[int, int] | None = None
-        for item, plane in zip(self._channel_items, planes):
+        for item, plane in zip(self._channel_items, planes, strict=False):
             if plane is None:
                 item.clear()
                 item.setVisible(False)
@@ -539,7 +539,7 @@ class ImageCanvas(QWidget):
             self._refresh_align_cursor()
         self.mouse_position_changed.emit(vb_pos.x(), vb_pos.y())
 
-    _HANDLE_CURSORS = {
+    _HANDLE_CURSORS: ClassVar[dict[str, Qt.CursorShape]] = {
         "stretch_x": Qt.CursorShape.SizeHorCursor,
         "stretch_y": Qt.CursorShape.SizeVerCursor,
     }

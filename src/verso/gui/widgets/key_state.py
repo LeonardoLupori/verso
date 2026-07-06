@@ -12,6 +12,8 @@ methods; they register by adding themselves to ``SpaceState.listeners`` /
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 from PyQt6.QtCore import QEvent, QObject, Qt
 from PyQt6.QtGui import QKeyEvent
 from PyQt6.QtWidgets import QAbstractButton, QApplication
@@ -20,13 +22,13 @@ from PyQt6.QtWidgets import QAbstractButton, QApplication
 class SpaceState:
     held: bool = False
     # Canvas instances that want to be notified on Space change.
-    listeners: set = set()
+    listeners: ClassVar[set] = set()
 
 
 class ShiftState:
     held: bool = False
     # Canvas instances that want to be notified on Shift change.
-    listeners: set = set()
+    listeners: ClassVar[set] = set()
 
 
 class _KeyStateFilter(QObject):
@@ -71,5 +73,5 @@ def ensure_key_state_filter() -> None:
     app = QApplication.instance()
     if app is not None and getattr(app, "_verso_key_state_filter", None) is None:
         filt = _KeyStateFilter()
-        setattr(app, "_verso_key_state_filter", filt)
+        app._verso_key_state_filter = filt
         app.installEventFilter(filt)

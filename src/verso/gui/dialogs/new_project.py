@@ -11,6 +11,7 @@ On accept, call result() to get the configured Project object.
 
 from __future__ import annotations
 
+import contextlib
 import os
 from pathlib import Path
 
@@ -89,10 +90,7 @@ def _default_channel_specs(channel_names: list[str], source_ext: str) -> list[Ch
         return [ChannelSpec(name=channel_names[0], color=(255, 255, 255))]
 
     ext = source_ext.lower().lstrip(".")
-    if ext in ("jpg", "jpeg", "png"):
-        palette = _RGB_IDENTITY_PALETTE
-    else:
-        palette = _FLUORESCENCE_PALETTE
+    palette = _RGB_IDENTITY_PALETTE if ext in ("jpg", "jpeg", "png") else _FLUORESCENCE_PALETTE
 
     specs: list[ChannelSpec] = []
     for i, name in enumerate(channel_names):
@@ -228,10 +226,9 @@ def generate_thumbnails(
         )
         progress.setValue(i)
         QApplication.processEvents()
-        try:
+        # On failure the working copy is generated lazily on first view.
+        with contextlib.suppress(Exception):
             ensure_working_copy(section, scale)
-        except Exception:
-            pass  # will be generated lazily on first view
 
     progress.setValue(n)
 
@@ -400,7 +397,7 @@ class NewProjectDialog(QDialog):
                 merged.append(path)
                 existing.add(path)
         # Re-guess across the whole set so the heuristic sees every filename.
-        self._set_entries(list(zip(merged, guess_slice_indices(merged))))
+        self._set_entries(list(zip(merged, guess_slice_indices(merged), strict=False)))
 
     def _remove_selected(self) -> None:
         selected = {idx.row() for idx in self._file_table.selectedIndexes()}
@@ -413,7 +410,7 @@ class NewProjectDialog(QDialog):
     def _auto_number(self) -> None:
         """Re-run the filename heuristic, discarding any manual edits."""
         paths = [p for p, _ in self._current_entries()]
-        self._set_entries(list(zip(paths, guess_slice_indices(paths))))
+        self._set_entries(list(zip(paths, guess_slice_indices(paths), strict=False)))
 
     def _on_index_edited(self, item: QTableWidgetItem) -> None:
         """Validate an edited slice-index cell; revert non-integer input."""

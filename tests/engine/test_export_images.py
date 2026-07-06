@@ -19,7 +19,7 @@ class _StubAtlas:
     the overlay pipeline would change the rendered output.
     """
 
-    def sample_labels(self, anchoring, out_w, out_h):  # noqa: ARG002 - anchoring unused
+    def sample_labels(self, anchoring, out_w, out_h):
         labels = np.zeros((out_h, out_w), dtype=np.int32)
         labels[: out_h // 2, : out_w // 3] = 1  # tall block, left
         labels[: out_h // 4, out_w // 2 :] = 2  # short block, top-right

@@ -123,7 +123,7 @@ def test_marker_control_point_round_trip():
     cps = _markers_to_control_points(original, width=W, height=H)
     restored = _control_points_to_markers(cps)
 
-    for orig, res in zip(original, restored):
+    for orig, res in zip(original, restored, strict=True):
         for i in range(4):
             assert abs(orig[i] - res[i]) < 1e-3, f"component {i} mismatch"
 
@@ -236,9 +236,9 @@ def test_quicknii_save_load_round_trip(tmp_path: Path):
 
     reloaded = load_quicknii(dst)
     assert len(reloaded.sections) == len(project.sections)
-    for orig, rel in zip(project.sections, reloaded.sections):
+    for orig, rel in zip(project.sections, reloaded.sections, strict=True):
         # Both loaded in BrainGlobe convention — must be identical
-        for a, b in zip(orig.alignment.anchoring, rel.alignment.anchoring):
+        for a, b in zip(orig.alignment.anchoring, rel.alignment.anchoring, strict=True):
             assert abs(a - b) < 1e-3
         assert rel.slice_index == orig.slice_index
 
@@ -444,9 +444,9 @@ def test_visualign_save_load_round_trip(tmp_path: Path):
 
     reloaded = load_visualign(dst)
 
-    for orig, rel in zip(project.sections, reloaded.sections):
+    for orig, rel in zip(project.sections, reloaded.sections, strict=True):
         assert len(rel.warp.control_points) == len(orig.warp.control_points)
-        for cp_orig, cp_rel in zip(orig.warp.control_points, rel.warp.control_points):
+        for cp_orig, cp_rel in zip(orig.warp.control_points, rel.warp.control_points, strict=True):
             assert abs(cp_orig.src_x - cp_rel.src_x) < 1e-4
             assert abs(cp_orig.src_y - cp_rel.src_y) < 1e-4
             assert abs(cp_orig.dst_x - cp_rel.dst_x) < 1e-4

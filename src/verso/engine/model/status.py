@@ -15,7 +15,7 @@ module stays UI-agnostic and importable from the pure engine layer.
 
 from __future__ import annotations
 
-__all__ = ["STATUS_COLOR", "section_step_status", "section_step_color"]
+__all__ = ["STATUS_COLOR", "section_step_color", "section_step_status"]
 
 from typing import TYPE_CHECKING
 

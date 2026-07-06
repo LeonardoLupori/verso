@@ -12,6 +12,7 @@ is currently active, so zoom/pan and channel cache survive mode switches.
 
 from __future__ import annotations
 
+import contextlib
 import os
 from collections.abc import Callable
 from typing import TYPE_CHECKING
@@ -397,13 +398,11 @@ class SectionCanvasPanel(QWidget):
             self._slice_cache_key = slice_key
 
         if self.overlay_post_processor is not None:
-            try:
-                # The post-processor (warp) must not mutate the cached slice; the
-                # engine's warp_overlay always returns a fresh array, so this is
-                # safe to feed the cached rgba directly.
+            # The post-processor (warp) must not mutate the cached slice; the
+            # engine's warp_overlay always returns a fresh array, so this is
+            # safe to feed the cached rgba directly.
+            with contextlib.suppress(Exception):
                 rgba = self.overlay_post_processor(rgba)
-            except Exception:
-                pass
 
         self.canvas.set_overlay(rgba, display_w=w_bg, display_h=h_bg)
         self.overlay_updated.emit(list(anchoring), w_bg, h_bg)
@@ -427,10 +426,8 @@ class SectionCanvasPanel(QWidget):
             return
         s, t = x / w_bg, y / h_bg
         if self.cursor_to_atlas_mapper is not None:
-            try:
+            with contextlib.suppress(Exception):
                 s, t = self.cursor_to_atlas_mapper(s, t)
-            except Exception:
-                pass
         name, (r, g, b) = self._atlas.get_region_info(anchoring, s, t)
         # Darken the region colour slightly so white text stays legible
         br, bg, bb = int(r * 0.55), int(g * 0.55), int(b * 0.55)
