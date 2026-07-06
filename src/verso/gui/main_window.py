@@ -38,7 +38,7 @@ from verso.gui.dialogs.brightness import BrightnessDialog
 from verso.gui.dialogs.info import show_info_dialog
 from verso.gui.dialogs.new_project import NewProjectDialog
 from verso.gui.state import AppState
-from verso.gui.utils import require
+from verso.gui.utils import require, warn_if_missing_dimensions
 from verso.gui.views.align_view import AlignView
 from verso.gui.views.overview_view import OverviewView
 from verso.gui.views.prep_view import PrepView
@@ -972,7 +972,7 @@ class MainWindow(QMainWindow):
         # QuickNII interpolation needs atlas dimensions for the no-anchor and
         # one-anchor endpoint controls. If the atlas is still loading,
         # _on_atlas_loaded performs the exact QuickNII propagation.
-        if self._state.atlas is not None:
+        if self._state.atlas is not None and warn_if_missing_dimensions(self, project.sections):
             from verso.engine.anchoring import interpolate_anchorings
 
             interpolate_anchorings(
@@ -1155,7 +1155,7 @@ class MainWindow(QMainWindow):
         if project is None:
             return
 
-        if self._state.atlas is not None:
+        if self._state.atlas is not None and warn_if_missing_dimensions(self, project.sections):
             from verso.engine.anchoring import interpolate_anchorings
 
             interpolate_anchorings(
@@ -1553,6 +1553,8 @@ class MainWindow(QMainWindow):
         """Initialize empty section planes with QuickNII-compatible stretch."""
         atlas = self._state.atlas
         if atlas is None:
+            return
+        if not warn_if_missing_dimensions(self, sections):
             return
 
         from verso.engine.anchoring import quicknii_series_anchorings

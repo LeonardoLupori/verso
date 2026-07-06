@@ -22,7 +22,7 @@ from verso.engine.elastix import ElastixWorker
 from verso.engine.model.alignment import AlignmentStatus
 from verso.engine.model.elastix import ElastixParams
 from verso.gui.jobs import AutoCPWorker, BackgroundJob, BatchMaskWorker, DeepSliceWorker
-from verso.gui.utils import warn_errors
+from verso.gui.utils import warn_errors, warn_if_missing_dimensions
 
 if TYPE_CHECKING:
     from verso.gui.main_window import MainWindow
@@ -240,6 +240,8 @@ class JobController:
         atlas = self._state.atlas
         if project is None:
             return
+        if not warn_if_missing_dimensions(self._window, project.sections):
+            return
         from verso.engine.deepslice import apply_deepslice_suggestions_with_atlas
 
         # Snapshot last-saved alignments before applying so dirtied sections can
@@ -284,6 +286,8 @@ class JobController:
         atlas = self._state.atlas
         if project is None or atlas is None:
             return
+        if not warn_if_missing_dimensions(self._window, project.sections):
+            return
         from verso.engine.deepslice import reset_in_progress_to_default_proposals
 
         changed = reset_in_progress_to_default_proposals(
@@ -319,6 +323,8 @@ class JobController:
         if reply != QMessageBox.StandardButton.Yes:
             return
         if not self._window.confirm_discard_active_draft():
+            return
+        if not warn_if_missing_dimensions(self._window, project.sections):
             return
 
         from verso.engine.deepslice import reset_in_progress_to_default_proposals
