@@ -22,7 +22,6 @@ from verso.engine.atlas import AtlasVolume, orientation_labels
 from verso.engine.io.export_images import ExportOptions, export_section
 from verso.engine.io.export_stack import ExportStackOptions, export_aligned_stack
 from verso.engine.io.quint_io import (
-    export_brainglobe_atlas_for_visualign,
     load_deepslice,
     load_quicknii,
     load_visualign,
@@ -67,7 +66,6 @@ __all__ = [
     "VersoRegistration",
     "WarpState",
     "export_aligned_stack",
-    "export_brainglobe_atlas_for_visualign",
     "export_section",
     "find_atlas_position",
     "load_deepslice",

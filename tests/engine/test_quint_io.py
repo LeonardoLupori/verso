@@ -1,17 +1,12 @@
 """Tests for engine/io/quint_io.py — QuickNII / VisuAlign I/O."""
 
-import gzip
 import json
-import struct
 from pathlib import Path
-
-import numpy as np
 
 from verso.engine.io.quint_io import (
     _control_points_to_markers,
     _markers_to_control_points,
     _to_quicknii_convention,
-    export_brainglobe_atlas_for_visualign,
     load_deepslice,
     load_quicknii,
     load_visualign,
@@ -451,95 +446,3 @@ def test_visualign_save_load_round_trip(tmp_path: Path):
             assert abs(cp_orig.src_y - cp_rel.src_y) < 1e-4
             assert abs(cp_orig.dst_x - cp_rel.dst_x) < 1e-4
             assert abs(cp_orig.dst_y - cp_rel.dst_y) < 1e-4
-
-
-# ---------------------------------------------------------------------------
-# export_brainglobe_atlas_for_visualign
-# ---------------------------------------------------------------------------
-
-
-class _MockBGAtlas:
-    """Minimal BrainGlobeAtlas stand-in for testing the NIfTI writer."""
-
-    def __init__(self, annotation: np.ndarray) -> None:
-        self.annotation = annotation
-        self.structures = {
-            8: {"name": "Basic cell groups", "rgb_triplet": [191, 218, 227]},
-            997: {"name": "root", "rgb_triplet": [255, 255, 255]},
-        }
-
-
-def _run_export(annotation: np.ndarray, tmp_path: Path) -> Path:
-    """Call export_brainglobe_atlas_for_visualign with a mocked BrainGlobeAtlas."""
-    import unittest.mock as mock
-
-    mock_bg = _MockBGAtlas(annotation)
-    with mock.patch(
-        "brainglobe_atlasapi.BrainGlobeAtlas",
-        return_value=mock_bg,
-    ):
-        return export_brainglobe_atlas_for_visualign("test_atlas", tmp_path)
-
-
-def test_export_creates_cutlas_directory(tmp_path: Path):
-    ann = np.zeros((4, 3, 5), dtype=np.uint32)  # (AP, DV, LR)
-    cutlas_dir = _run_export(ann, tmp_path)
-
-    assert cutlas_dir.is_dir()
-    assert (cutlas_dir / "labels.nii.gz").exists()
-    assert (cutlas_dir / "labels.txt").exists()
-    assert cutlas_dir.name == "test_atlas.cutlas"
-
-
-def test_export_nifti_header_shape(tmp_path: Path):
-    """NIfTI dim fields must reflect transposed volume shape (LR, AP, DV)."""
-    # BG shape: (AP=4, DV=3, LR=5)  → expected NIfTI shape: (LR=5, AP=4, DV=3)
-    ann = np.zeros((4, 3, 5), dtype=np.uint32)
-    cutlas_dir = _run_export(ann, tmp_path)
-
-    with gzip.open(cutlas_dir / "labels.nii.gz", "rb") as f:
-        hdr = f.read(348)
-
-    ndims, x, y, z = struct.unpack_from("<4h", hdr, 40)
-    assert ndims == 3
-    assert x == 5  # LR (was axis 2 of BG annotation)
-    assert y == 4  # AP (was axis 0)
-    assert z == 3  # DV (was axis 1)
-
-    datatype = struct.unpack_from("<h", hdr, 70)[0]
-    assert datatype == 768  # uint32
-
-
-def test_export_nifti_volume_transposition(tmp_path: Path):
-    """Voxel at BG [ap, dv, lr] must appear at NIfTI [lr, ap_flipped, dv_flipped]."""
-    # (AP=4, DV=3, LR=5) — place a sentinel value at a known position
-    ann = np.zeros((4, 3, 5), dtype=np.uint32)
-    ann[1, 2, 4] = 999  # BG ap=1, dv=2, lr=4
-
-    cutlas_dir = _run_export(ann, tmp_path)
-
-    # Read back raw voxel data. NIfTI stores the first axis (x = LR) fastest, so
-    # the on-disk bytes are Fortran-ordered for our (LR, AP, DV) volume.
-    with gzip.open(cutlas_dir / "labels.nii.gz", "rb") as f:
-        raw = f.read()
-    vox_data = np.frombuffer(raw[352:], dtype=np.uint32).reshape(5, 4, 3, order="F")
-
-    # After flip+transpose:
-    #   NIfTI[lr, ap_qn, dv_qn] = BG[AP_max-1-ap_qn, DV_max-1-dv_qn, lr]
-    #   sentinel at BG ap=1, dv=2, lr=4:
-    #     ap_qn = AP_max - 1 - ap_bg = 4 - 1 - 1 = 2
-    #     dv_qn = DV_max - 1 - dv_bg = 3 - 1 - 2 = 0
-    #     lr_qn = lr_bg = 4  (LR not flipped)
-    assert vox_data[4, 2, 0] == 999
-
-
-def test_export_labels_txt_format(tmp_path: Path):
-    """labels.txt must be ITK-SNAP format with correct region entries."""
-    ann = np.zeros((4, 3, 5), dtype=np.uint32)
-    cutlas_dir = _run_export(ann, tmp_path)
-
-    text = (cutlas_dir / "labels.txt").read_text(encoding="utf-8")
-    assert "ITK-SnAP" in text
-    assert '"Clear Label"' in text
-    assert '"root"' in text
-    assert "255  255  255" in text  # root RGB
