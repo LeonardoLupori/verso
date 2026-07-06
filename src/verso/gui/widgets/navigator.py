@@ -47,7 +47,10 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from verso.engine.anchoring import plane_tilt_deg
+from verso.engine.anchoring import (
+    clamp_rotation_to_max_tilt,
+    tilt_plane_about_atlas_axis,
+)
 from verso.gui.utils import require
 
 _ICONS_DIR = Path(__file__).parent.parent / "icons"
@@ -125,14 +128,6 @@ def _ndarray_to_qimage(rgb: np.ndarray) -> QImage:
     return QImage(data.data, w, h, 3 * w, QImage.Format.Format_RGB888)
 
 
-def _rot_around(vec: np.ndarray, axis: np.ndarray, deg: float) -> np.ndarray:
-    """Rodrigues rotation of *vec* around *axis* by *deg* degrees."""
-    a = math.radians(deg)
-    c, s = math.cos(a), math.sin(a)
-    k = axis / np.linalg.norm(axis)
-    return c * vec + s * np.cross(k, vec) + (1.0 - c) * np.dot(k, vec) * k
-
-
 def _view_height(axis: int, dims: tuple[int, int, int]) -> int:
     """Return the display height (px) that preserves atlas proportions."""
     ap_dim, dv_dim, lr_dim = dims
@@ -179,14 +174,9 @@ class _SliceView(QWidget):
 
     anchoring_changed = pyqtSignal(list)
 
-    _ROTATION_AXES = {
-        0: np.array([1.0, 0.0, 0.0]),
-        1: np.array([0.0, 1.0, 0.0]),
-        2: np.array([0.0, 0.0, 1.0]),
-    }
-    # Drag-clockwise → plane-rotates-clockwise in each view.
-    # Derived from Rodrigues applied to the cut-plane center: positive θ moves
-    # the leading edge in the clockwise direction in each view's screen space.
+    # Drag-clockwise → plane-rotates-clockwise in each view. The plane is rotated
+    # about the view's own atlas axis (index == self._axis); positive θ moves the
+    # leading edge clockwise in each view's screen space.
     _ANGLE_SIGNS = {0: +1, 1: -1, 2: +1}
     # Atlas axes addressed by each view's left/right and up/down buttons:
     #   view axis → (col_atlas_axis, row_atlas_axis)
@@ -428,43 +418,6 @@ class _SliceView(QWidget):
         new_anchoring[atlas_axis] += delta
         self.anchoring_changed.emit(new_anchoring)
 
-    def _tilt_after(self, u: np.ndarray, v: np.ndarray, rot_axis: np.ndarray, deg: float) -> float:
-        """Plane tilt (deg) that would result from rotating u,v by ``deg``."""
-        u_new = _rot_around(u, rot_axis, deg)
-        v_new = _rot_around(v, rot_axis, deg)
-        anchoring = [0.0, 0.0, 0.0, *u_new.tolist(), *v_new.tolist()]
-        return plane_tilt_deg(anchoring, self._interpolation_axis)
-
-    def _clamp_rotation_deg(
-        self, u: np.ndarray, v: np.ndarray, rot_axis: np.ndarray, deg: float
-    ) -> float:
-        """Reduce ``deg`` so the plane never tilts past ±_MAX_TILT_DEG.
-
-        Tilt is monotonic in the rotation magnitude over a 90° window, so cap the
-        request to that window and bisect for the boundary when it overshoots.
-        Rotation about the slicing axis (the in-plane spin of the now-removed
-        parallel view) leaves tilt unchanged, so this is a no-op there.
-        """
-        deg = max(-90.0, min(90.0, deg))
-        if deg == 0.0 or self._tilt_after(u, v, rot_axis, deg) <= _MAX_TILT_DEG:
-            return deg
-        if self._tilt_after(u, v, rot_axis, 0.0) > _MAX_TILT_DEG:
-            # Already past the limit (e.g. an imported plane): only allow tilt to
-            # decrease, never increase.
-            return (
-                deg
-                if self._tilt_after(u, v, rot_axis, deg) < self._tilt_after(u, v, rot_axis, 0.0)
-                else 0.0
-            )
-        lo, hi = 0.0, deg
-        for _ in range(24):
-            mid = 0.5 * (lo + hi)
-            if self._tilt_after(u, v, rot_axis, mid) <= _MAX_TILT_DEG:
-                lo = mid
-            else:
-                hi = mid
-        return lo
-
     def _rotate_step(self, deg_signed: float) -> None:
         """Rotate cut plane around this view's perpendicular atlas axis."""
         if self._anchoring is None:
@@ -472,16 +425,11 @@ class _SliceView(QWidget):
         deg = deg_signed * self._ANGLE_SIGNS[self._axis]
         if self._reverse_axis and self._axis != self._interpolation_axis:
             deg = -deg
-        o = np.array(self._anchoring[:3])
-        u = np.array(self._anchoring[3:6])
-        v = np.array(self._anchoring[6:9])
-        center = o + u / 2.0 + v / 2.0
-        rot_axis = self._ROTATION_AXES[self._axis]
-        deg = self._clamp_rotation_deg(u, v, rot_axis, deg)
-        u_new = _rot_around(u, rot_axis, deg)
-        v_new = _rot_around(v, rot_axis, deg)
-        new_o = center - u_new / 2.0 - v_new / 2.0
-        self.anchoring_changed.emit(new_o.tolist() + u_new.tolist() + v_new.tolist())
+        deg = clamp_rotation_to_max_tilt(
+            self._anchoring, self._axis, deg, self._interpolation_axis, _MAX_TILT_DEG
+        )
+        new_anchoring = tilt_plane_about_atlas_axis(self._anchoring, self._axis, deg)
+        self.anchoring_changed.emit(new_anchoring)
 
     # ------------------------------------------------------------------
     # Coordinate helpers
@@ -659,17 +607,11 @@ class _SliceView(QWidget):
         if self._reverse_axis and self._axis != self._interpolation_axis:
             deg = -deg
 
-        o = np.array(self._anchoring[:3])
-        u = np.array(self._anchoring[3:6])
-        v = np.array(self._anchoring[6:9])
-        center = o + u / 2.0 + v / 2.0
-
-        rot_axis = self._ROTATION_AXES[self._axis]
-        deg = self._clamp_rotation_deg(u, v, rot_axis, deg)
-        u_new = _rot_around(u, rot_axis, deg)
-        v_new = _rot_around(v, rot_axis, deg)
-        new_o = center - u_new / 2.0 - v_new / 2.0
-        self.anchoring_changed.emit(new_o.tolist() + u_new.tolist() + v_new.tolist())
+        deg = clamp_rotation_to_max_tilt(
+            self._anchoring, self._axis, deg, self._interpolation_axis, _MAX_TILT_DEG
+        )
+        new_anchoring = tilt_plane_about_atlas_axis(self._anchoring, self._axis, deg)
+        self.anchoring_changed.emit(new_anchoring)
 
 
 class NavigatorPanel(QWidget):

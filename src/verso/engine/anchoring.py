@@ -215,6 +215,145 @@ def plane_tilt_deg(anchoring: list[float], slicing_axis: int) -> float:
     return float(np.degrees(np.arccos(cos_t)))
 
 
+def _rodrigues(vec: np.ndarray, axis_unit: np.ndarray, angle_rad: float) -> np.ndarray:
+    """Rotate ``vec`` about the unit vector ``axis_unit`` by ``angle_rad``.
+
+    Standard Rodrigues rotation with the ``+sin`` convention (a right-handed
+    rotation about ``axis_unit``). Note this differs from the ``-sin`` used in
+    :func:`rotate_anchoring`, which spins about the *plane normal* to match the
+    legacy drag direction; here the axis is an arbitrary atlas axis, so the plain
+    right-handed form is used. ``axis_unit`` must already be normalized.
+    """
+    c = np.cos(angle_rad)
+    s = np.sin(angle_rad)
+    return (
+        c * vec
+        + s * np.cross(axis_unit, vec)
+        + (1.0 - c) * float(np.dot(axis_unit, vec)) * axis_unit
+    )
+
+
+def tilt_plane_about_atlas_axis(anchoring: list[float], axis: int, deg: float) -> list[float]:
+    """Tilt the section plane by rotating it about a canonical atlas axis.
+
+    Rotates both ``u`` and ``v`` about the atlas basis axis ``axis`` (0=LR, 1=AP,
+    2=DV) by ``deg`` degrees while holding the plane *center* (``o + u/2 + v/2``)
+    fixed in atlas space, then repacks the anchoring. Unlike
+    :func:`rotate_anchoring` (a rigid *in-plane* spin about the plane normal that
+    leaves tilt unchanged), this rotates about an external axis and so changes the
+    plane's out-of-plane tilt — it is the shared body of the navigator's
+    orthogonal-view rotation controls.
+
+    Args:
+        anchoring: Current 9-element anchoring vector.
+        axis: Atlas voxel axis index to rotate about (0/1/2).
+        deg: Rotation angle in degrees.
+
+    Returns:
+        New 9-element anchoring vector.
+    """
+    o, u, v = anchoring_to_vectors(anchoring)
+    axis_unit = np.zeros(3)
+    axis_unit[axis] = 1.0
+    angle_rad = np.radians(deg)
+    center = o + u / 2.0 + v / 2.0
+    u_new = _rodrigues(u, axis_unit, angle_rad)
+    v_new = _rodrigues(v, axis_unit, angle_rad)
+    o_new = center - u_new / 2.0 - v_new / 2.0
+    return vectors_to_anchoring(o_new, u_new, v_new)
+
+
+def clamp_rotation_to_max_tilt(
+    anchoring: list[float],
+    axis: int,
+    deg: float,
+    slicing_axis: int,
+    max_tilt_deg: float,
+) -> float:
+    """Shorten ``deg`` so the plane never tilts past ``max_tilt_deg``.
+
+    Tilt (relative to ``slicing_axis``) is monotonic in the rotation magnitude over
+    a 90° window, so the request is first capped to that window and, when it would
+    overshoot, bisected for the boundary. Rotation about the slicing axis leaves
+    tilt unchanged, so this is a no-op there. If the plane already exceeds the limit
+    (e.g. an imported plane), only steps that *reduce* tilt are allowed.
+
+    Args:
+        anchoring: Current 9-element anchoring vector.
+        axis: Atlas voxel axis index the rotation is about (0/1/2).
+        deg: Requested rotation angle in degrees.
+        slicing_axis: Atlas voxel axis the cutting series runs along.
+        max_tilt_deg: Maximum allowed plane tilt in degrees.
+
+    Returns:
+        The clamped rotation angle in degrees.
+    """
+
+    def tilt_after(d: float) -> float:
+        rotated = tilt_plane_about_atlas_axis(anchoring, axis, d)
+        return plane_tilt_deg(rotated, slicing_axis)
+
+    deg = max(-90.0, min(90.0, deg))
+    if deg == 0.0 or tilt_after(deg) <= max_tilt_deg:
+        return deg
+    if tilt_after(0.0) > max_tilt_deg:
+        return deg if tilt_after(deg) < tilt_after(0.0) else 0.0
+    lo, hi = 0.0, deg
+    for _ in range(24):
+        mid = 0.5 * (lo + hi)
+        if tilt_after(mid) <= max_tilt_deg:
+            lo = mid
+        else:
+            hi = mid
+    return lo
+
+
+def clamp_inplane_rotation(
+    anchoring: list[float],
+    angle_rad: float,
+    slicing_axis: int,
+    max_inplane_deg: float,
+) -> float:
+    """Shorten an in-plane spin so the overlay stays within ``max_inplane_deg``.
+
+    The spin is the signed angle of ``u`` projected onto the two in-plane atlas
+    axes (0° = axis-aligned). The request is first capped to ±90° so a fast flick
+    can't leap across the ±180° branch cut and land the plane upside-down; the
+    boundary is then found by bisection (spin magnitude is monotonic over the
+    feasible prefix of ``[0, angle_rad]``). If the plane already exceeds the limit,
+    only steps that *reduce* the spin are allowed. Uses :func:`rotate_anchoring`,
+    the same rigid in-plane spin the caller applies.
+
+    Args:
+        anchoring: Current 9-element anchoring vector.
+        angle_rad: Requested in-plane rotation angle in radians.
+        slicing_axis: Atlas voxel axis the cutting series runs along.
+        max_inplane_deg: Maximum allowed spin from axis-aligned, in degrees.
+
+    Returns:
+        The clamped rotation angle in radians.
+    """
+    u_axis, v_axis = sorted(i for i in (0, 1, 2) if i != slicing_axis)
+    angle_rad = max(-np.pi / 2.0, min(np.pi / 2.0, angle_rad))
+
+    def spin_after(a: float) -> float:
+        u = np.asarray(rotate_anchoring(anchoring, a)[3:6])
+        return abs(float(np.degrees(np.arctan2(u[v_axis], u[u_axis]))))
+
+    if angle_rad == 0.0 or spin_after(angle_rad) <= max_inplane_deg:
+        return angle_rad
+    if spin_after(0.0) > max_inplane_deg:
+        return angle_rad if spin_after(angle_rad) < spin_after(0.0) else 0.0
+    lo, hi = 0.0, angle_rad
+    for _ in range(24):
+        mid = 0.5 * (lo + hi)
+        if spin_after(mid) <= max_inplane_deg:
+            lo = mid
+        else:
+            hi = mid
+    return lo
+
+
 def scale_anchoring(
     anchoring: list[float],
     scale_s: float,

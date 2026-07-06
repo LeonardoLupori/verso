@@ -8,6 +8,8 @@ import pytest
 from verso.engine.anchoring import (
     anchoring_to_vectors,
     atlas_to_normalized,
+    clamp_inplane_rotation,
+    clamp_rotation_to_max_tilt,
     flip_anchoring_horizontal,
     interpolate_anchorings,
     make_atlas_sample_grid,
@@ -23,6 +25,7 @@ from verso.engine.anchoring import (
     scale_anchoring,
     set_center_position_along_axis,
     set_position_along_axis,
+    tilt_plane_about_atlas_axis,
     vectors_to_anchoring,
 )
 from verso.engine.model.alignment import Alignment, AlignmentStatus
@@ -879,3 +882,127 @@ def test_rotate_anchoring_is_in_plane_only():
     n1 = np.cross(*anchoring_to_vectors(rotated)[1:])
     cos = np.dot(n0, n1) / (np.linalg.norm(n0) * np.linalg.norm(n1))
     assert cos == pytest.approx(1.0, abs=1e-9)
+
+
+# ---------------------------------------------------------------------------
+# tilt_plane_about_atlas_axis
+# ---------------------------------------------------------------------------
+
+# Axis-aligned coronal plane: u along LR (axis 0), v along DV (axis 2), so the
+# plane normal is along AP (axis 1) → zero tilt relative to slicing axis 1.
+_CORONAL_ALIGNED = vectors_to_anchoring(
+    np.array([0.0, 264.0, 0.0]),
+    np.array([456.0, 0.0, 0.0]),
+    np.array([0.0, 0.0, 320.0]),
+)
+
+
+def _spin_deg(anchoring, slicing_axis):
+    """In-plane spin magnitude (deg) of ``u`` relative to axis-aligned."""
+    u_axis, v_axis = sorted(i for i in (0, 1, 2) if i != slicing_axis)
+    _o, u, _v = anchoring_to_vectors(anchoring)
+    return abs(float(np.degrees(np.arctan2(u[v_axis], u[u_axis]))))
+
+
+def test_tilt_plane_zero_is_identity():
+    result = tilt_plane_about_atlas_axis(_CORONAL_ALIGNED, axis=0, deg=0.0)
+    np.testing.assert_allclose(result, _CORONAL_ALIGNED, atol=1e-9)
+
+
+def test_tilt_plane_preserves_center():
+    o, u, v = anchoring_to_vectors(_CORONAL_ALIGNED)
+    center_before = o + u / 2.0 + v / 2.0
+    o2, u2, v2 = anchoring_to_vectors(
+        tilt_plane_about_atlas_axis(_CORONAL_ALIGNED, axis=0, deg=27.0)
+    )
+    np.testing.assert_allclose(o2 + u2 / 2.0 + v2 / 2.0, center_before, atol=1e-9)
+
+
+def test_tilt_plane_round_trip():
+    tilted = tilt_plane_about_atlas_axis(_CORONAL_ALIGNED, axis=2, deg=33.0)
+    restored = tilt_plane_about_atlas_axis(tilted, axis=2, deg=-33.0)
+    np.testing.assert_allclose(restored, _CORONAL_ALIGNED, atol=1e-9)
+
+
+def test_tilt_plane_produces_expected_tilt():
+    # Rotating the whole plane about LR (axis 0) tilts the AP-aligned normal by
+    # the same angle, so the tilt relative to slicing axis 1 equals ``deg``.
+    rotated = tilt_plane_about_atlas_axis(_CORONAL_ALIGNED, axis=0, deg=30.0)
+    assert plane_tilt_deg(rotated, 1) == pytest.approx(30.0, abs=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# clamp_rotation_to_max_tilt
+# ---------------------------------------------------------------------------
+
+
+def test_clamp_tilt_under_limit_unchanged():
+    deg = clamp_rotation_to_max_tilt(
+        _CORONAL_ALIGNED, axis=0, deg=10.0, slicing_axis=1, max_tilt_deg=44.0
+    )
+    assert deg == pytest.approx(10.0)
+
+
+def test_clamp_tilt_shortens_overshoot_to_limit():
+    deg = clamp_rotation_to_max_tilt(
+        _CORONAL_ALIGNED, axis=0, deg=80.0, slicing_axis=1, max_tilt_deg=44.0
+    )
+    assert 0.0 < deg < 80.0
+    tilt = plane_tilt_deg(tilt_plane_about_atlas_axis(_CORONAL_ALIGNED, 0, deg), 1)
+    assert tilt <= 44.0 + 1e-3
+    assert deg == pytest.approx(44.0, abs=1e-3)
+
+
+def test_clamp_tilt_no_op_about_slicing_axis():
+    # Rotation about the slicing axis leaves tilt unchanged, so nothing is clamped.
+    deg = clamp_rotation_to_max_tilt(
+        _CORONAL_ALIGNED, axis=1, deg=80.0, slicing_axis=1, max_tilt_deg=44.0
+    )
+    assert deg == pytest.approx(80.0)
+
+
+def test_clamp_tilt_already_over_limit_only_reduces():
+    over = tilt_plane_about_atlas_axis(_CORONAL_ALIGNED, axis=0, deg=60.0)
+    assert plane_tilt_deg(over, 1) == pytest.approx(60.0, abs=1e-6)
+    # A step that would increase tilt is rejected (→ 0); one that reduces is kept.
+    assert clamp_rotation_to_max_tilt(over, 0, 10.0, 1, 44.0) == pytest.approx(0.0)
+    assert clamp_rotation_to_max_tilt(over, 0, -10.0, 1, 44.0) == pytest.approx(-10.0)
+
+
+# ---------------------------------------------------------------------------
+# clamp_inplane_rotation
+# ---------------------------------------------------------------------------
+
+# SAMPLE_ANCHORING has u along LR, v along AP → normal along DV (slicing axis 2);
+# the two in-plane axes are then (0, 1), where u is axis-aligned (spin 0).
+_INPLANE_SLICING_AXIS = 2
+
+
+def test_clamp_inplane_under_limit_unchanged():
+    angle = math.radians(20.0)
+    result = clamp_inplane_rotation(
+        SAMPLE_ANCHORING, angle, _INPLANE_SLICING_AXIS, max_inplane_deg=45.0
+    )
+    assert result == pytest.approx(angle)
+
+
+def test_clamp_inplane_shortens_overshoot_to_limit():
+    result = clamp_inplane_rotation(
+        SAMPLE_ANCHORING, math.radians(80.0), _INPLANE_SLICING_AXIS, max_inplane_deg=45.0
+    )
+    assert 0.0 < result < math.radians(80.0)
+    spun = rotate_anchoring(SAMPLE_ANCHORING, result)
+    assert _spin_deg(spun, _INPLANE_SLICING_AXIS) <= 45.0 + 1e-3
+    assert result == pytest.approx(math.radians(45.0), abs=1e-3)
+
+
+def test_clamp_inplane_already_over_limit_only_reduces():
+    over = rotate_anchoring(SAMPLE_ANCHORING, math.radians(60.0))
+    assert _spin_deg(over, _INPLANE_SLICING_AXIS) == pytest.approx(60.0, abs=1e-6)
+    # Increasing the spin is rejected (→ 0); reducing it is allowed.
+    assert clamp_inplane_rotation(
+        over, math.radians(10.0), _INPLANE_SLICING_AXIS, 45.0
+    ) == pytest.approx(0.0)
+    assert clamp_inplane_rotation(
+        over, math.radians(-10.0), _INPLANE_SLICING_AXIS, 45.0
+    ) == pytest.approx(math.radians(-10.0))
