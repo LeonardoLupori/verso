@@ -46,7 +46,7 @@ from verso.engine.io.image_io import (
     probe_channels,
     thumbnail_filename,
 )
-from verso.engine.io.project_io import backfill_metadata
+from verso.engine.io.project_metadata import backfill_metadata
 from verso.engine.model.alignment import Alignment, AlignmentStatus, WarpState
 from verso.engine.model.project import (
     DEFAULT_PROJECT_FILENAME,

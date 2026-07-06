@@ -117,7 +117,7 @@ class VersoRegistration:
         Args:
             path: Path to a ``project-verso.json`` file.
         """
-        from verso.engine.io.project_io import backfill_metadata
+        from verso.engine.io.project_metadata import backfill_metadata
 
         path = Path(path)
         project = Project.load(path)

@@ -619,7 +619,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Cannot read project", str(exc))
             return
 
-        from verso.engine.io.project_io import import_project_styling
+        from verso.engine.io.project_metadata import import_project_styling
 
         import_project_styling(project, source)
 

@@ -1,4 +1,10 @@
-"""Save and load VERSO project files."""
+"""In-place operations on a loaded VERSO project.
+
+Serialization itself lives on the data model (``Project.save`` / ``Project.load``).
+This module holds post-load helpers that augment an existing project: backfilling
+missing metadata (image dimensions, atlas resolution/shape) and importing styling
+(channel colors, control-point style) from another project.
+"""
 
 from __future__ import annotations
 
@@ -9,28 +15,6 @@ from verso.engine.model.project import Project
 
 if TYPE_CHECKING:
     from verso.engine.atlas import AtlasVolume
-
-
-def save_project(project: Project, path: Path) -> None:
-    """Serialise *project* to *path* as JSON.
-
-    Args:
-        project: The project to save.
-        path: Destination file path.
-    """
-    raise NotImplementedError
-
-
-def load_project(path: Path) -> Project:
-    """Deserialise a project from *path*.
-
-    Args:
-        path: Path to a project JSON file.
-
-    Returns:
-        Reconstructed :class:`~verso.engine.model.project.Project`.
-    """
-    raise NotImplementedError
 
 
 def _resolve(path: str, project_dir: Path) -> Path:

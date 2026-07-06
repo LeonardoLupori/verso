@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import tifffile
 
-from verso.engine.io.project_io import backfill_metadata
+from verso.engine.io.project_metadata import backfill_metadata
 from verso.engine.model.project import Project
 
 
