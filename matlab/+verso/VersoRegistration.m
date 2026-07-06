@@ -351,10 +351,10 @@ classdef VersoRegistration < handle
                 [~, stem, ext] = fileparts(snap.OriginalPath);
                 name = [stem, ext];
                 if strcmp(stem, key)
-                    byStem{end + 1} = snap.Id; %#ok<AGROW>
+                    byStem{end + 1} = snap.Id;
                 end
                 if strcmp(name, key)
-                    byName{end + 1} = snap.Id; %#ok<AGROW>
+                    byName{end + 1} = snap.Id;
                 end
             end
 

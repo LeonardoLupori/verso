@@ -44,8 +44,10 @@ function out = warpPointsAtlasToSection(pointsNorm, srcPx, dstPx, workW, workH)
     vertIdx = DT.ConnectivityList(triId(valid), :);  % (Nvalid, 3)
     baryValid = bary(valid, :);                       % (Nvalid, 3)
 
-    xVerts = dstAll(vertIdx, 1);
-    yVerts = dstAll(vertIdx, 2);
+    dstX = dstAll(:, 1);
+    dstY = dstAll(:, 2);
+    xVerts = dstX(vertIdx);  % linear indexing preserves shape: (Nvalid, 3)
+    yVerts = dstY(vertIdx);  % (Nvalid, 3)
     outX = sum(baryValid .* xVerts, 2);
     outY = sum(baryValid .* yVerts, 2);
 
