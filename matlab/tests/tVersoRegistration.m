@@ -226,6 +226,134 @@ classdef tVersoRegistration < matlab.unittest.TestCase
             testCase.verifyError(@() reg.image_to_atlas("s1", "Kind", "nope"), ...
                 "MATLAB:validators:mustBeMember");
         end
+
+        function imageToAtlasChunkingMatchesSingleChunk(testCase)
+            % Gap 2: a shrunken chunk budget forces the multi-chunk row loop;
+            % its output must be identical to the single-chunk (default) path.
+            sec = testCase.section("s1", 10.0, "Full", [96 64], "Work", [48 32]);
+            proj = testCase.projectFile({sec});
+
+            regSingle = verso.VersoRegistration(proj);
+            regSingle.setAtlasVolumeForTesting(testCase.fakeAtlasVolume());
+
+            regChunked = verso.VersoRegistration(proj);
+            regChunked.setAtlasVolumeForTesting(testCase.fakeAtlasVolume());
+            regChunked.setChunkPixelBudgetForTesting(100);  % 100/96 -> 1 row per chunk => 64 chunks
+
+            for kind = ["annotation", "template", "boundary"]
+                [imgSingle, boundsSingle] = regSingle.image_to_atlas("s1", "Kind", kind);
+                [imgChunked, boundsChunked] = regChunked.image_to_atlas("s1", "Kind", kind);
+                testCase.verifyEqual(imgChunked, imgSingle, ...
+                    sprintf("chunked %s output differs from single-chunk", kind));
+                testCase.verifyEqual(boundsChunked, boundsSingle, ...
+                    sprintf("chunked %s inBounds differs from single-chunk", kind));
+            end
+        end
+
+        function coordImageToAtlasUnalignedRaises(testCase)
+            % Gap 3: a degenerate plane (u x v == 0) is not aligned.
+            degenerate = [0 10 0, 24 0 0, 0 0 0];
+            proj = testCase.projectFile({testCase.section("s1", 10.0, "Anchoring", degenerate)});
+            reg = verso.VersoRegistration(proj);
+            testCase.verifyError(@() reg.coord_image_to_atlas("s1", [10.0 10.0]), ...
+                "verso:VersoRegistration:notAligned");
+        end
+
+        function imageToAtlasUnalignedRaises(testCase)
+            % Gap 3: image_to_atlas rejects an unaligned section too.
+            degenerate = [0 10 0, 24 0 0, 0 0 0];
+            proj = testCase.projectFile({testCase.section("s1", 10.0, "Anchoring", degenerate)});
+            reg = verso.VersoRegistration(proj);
+            reg.setAtlasVolumeForTesting(testCase.fakeAtlasVolume());
+            testCase.verifyError(@() reg.image_to_atlas("s1"), ...
+                "verso:VersoRegistration:notAligned");
+        end
+
+        function coordAtlasToImageSkipsUnaligned(testCase)
+            % Gap 3: unaligned sections are skipped in the nearest-plane search.
+            degenerate = [0 10 0, 24 0 0, 0 0 0];
+            proj = testCase.projectFile({testCase.section("s1", 10.0, "Anchoring", degenerate)});
+            reg = verso.VersoRegistration(proj);
+
+            res = reg.coord_atlas_to_image([12.0 9.0 10.0]);
+            testCase.verifyEqual(res.section_id(1), "");
+            testCase.verifyFalse(res.valid(1));
+            testCase.verifyFalse(isfinite(res.distance(1)));
+        end
+
+        function coordAtlasToImageMaxDistance(testCase)
+            % Gap 4: voxels farther than MaxDistance from the matched plane are
+            % covered (matched) but marked invalid.
+            proj = testCase.projectFile({testCase.section("s1", 8.0)});
+            reg = verso.VersoRegistration(proj);
+
+            % One AP unit off the plane at position 8 -> distance 1 voxel.
+            xyz = [12.0 9.0 8.0];
+            near = reg.coord_atlas_to_image(xyz, "MaxDistance", 2.0);
+            testCase.verifyEqual(near.section_id(1), "s1");
+            testCase.verifyEqual(near.distance(1), 1.0, "AbsTol", 1e-6);
+            testCase.verifyTrue(near.valid(1));
+
+            far = reg.coord_atlas_to_image(xyz, "MaxDistance", 0.5);
+            testCase.verifyEqual(far.section_id(1), "s1");   % still matched
+            testCase.verifyFalse(far.valid(1));              % but out of tolerance
+
+            % MaxDistance is expressed in the requested Units.
+            farUm = reg.coord_atlas_to_image(xyz, "Units", "um", "MaxDistance", testCase.ResolutionUm * 0.5);
+            testCase.verifyFalse(farUm.valid(1));
+            nearUm = reg.coord_atlas_to_image(xyz, "Units", "um", "MaxDistance", testCase.ResolutionUm * 2.0);
+            testCase.verifyTrue(nearUm.valid(1));
+        end
+
+        function imageToAtlasRespectsFlips(testCase)
+            % Gap 5: flips change which atlas voxel each output pixel samples,
+            % and the flipped result stays consistent with the coordinate path.
+            secFlat = testCase.section("s1", 10.0, "Full", [96 64], "Work", [48 32]);
+            secFlip = testCase.section("s1", 10.0, "Full", [96 64], "Work", [48 32], ...
+                "FlipH", true);
+
+            regFlat = verso.VersoRegistration(testCase.projectFile({secFlat}));
+            regFlat.setAtlasVolumeForTesting(testCase.fakeAtlasVolume());
+            regFlip = verso.VersoRegistration(testCase.projectFile({secFlip}));
+            regFlip.setAtlasVolumeForTesting(testCase.fakeAtlasVolume());
+
+            labelsFlat = regFlat.image_to_atlas("s1", "Kind", "annotation");
+            labelsFlip = regFlip.image_to_atlas("s1", "Kind", "annotation");
+            testCase.verifyNotEqual(labelsFlip, labelsFlat);
+
+            % The fake atlas splits regions 1|2 along LR; a horizontal flip
+            % mirrors columns, so the flipped image equals the flat one mirrored.
+            testCase.verifyEqual(labelsFlip, fliplr(labelsFlat));
+
+            % And each output pixel still agrees with a pointwise coordinate lookup.
+            cols = [5, 50, 90];
+            rows = [5, 10, 60];
+            pts = [cols' + 0.5, rows' + 0.5];
+            xyz = regFlip.coord_image_to_atlas("s1", pts);
+            expected = testCase.expectedLabelsAt(xyz);
+            actual = zeros(1, 3, "int32");
+            for k = 1:3
+                actual(k) = labelsFlip(rows(k) + 1, cols(k) + 1);
+            end
+            testCase.verifyEqual(actual, expected);
+        end
+
+        function idsAndNumSections(testCase)
+            % Gap 6: the ids()/numSections() accessors report project order.
+            proj = testCase.projectFile({ ...
+                testCase.section("s1", 8.0), testCase.section("s2", 14.0)});
+            reg = verso.VersoRegistration(proj);
+            testCase.verifyEqual(reg.ids(), {'s1', 's2'});
+            testCase.verifyEqual(reg.numSections(), 2);
+        end
+
+        function emptyProjectHasNoSections(testCase)
+            % Gap 6: a project with zero sections builds and reports empty.
+            reg = verso.VersoRegistration(testCase.projectFile({}));
+            testCase.verifyEqual(reg.numSections(), 0);
+            testCase.verifyEmpty(reg.ids());
+            testCase.verifyFalse(reg.hasSection("s1"));
+        end
     end
 
     methods (Access = private)
@@ -260,10 +388,15 @@ classdef tVersoRegistration < matlab.unittest.TestCase
             addParameter(p, "Work", [48 32]);
             addParameter(p, "Full", [96 64]);
             addParameter(p, "OriginalPath", id + ".tif");
+            addParameter(p, "Anchoring", []);
             parse(p, varargin{:});
             r = p.Results;
 
-            anchoring = testCase.canonicalAnchoring(position, r.Axis);
+            if isempty(r.Anchoring)
+                anchoring = testCase.canonicalAnchoring(position, r.Axis);
+            else
+                anchoring = r.Anchoring;
+            end
 
             s = struct();
             s.id = id;

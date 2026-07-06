@@ -27,6 +27,7 @@ classdef VersoRegistration < handle
         Snapshots       % 1xN struct array of snapshots, project order (parallel to IdsList)
         IdsList         % cellstr, project order
         AtlasVol        % [] until first needed by image_to_atlas
+        ChunkPixelBudget = 2000000  % image_to_atlas row-chunk size (overridable in tests)
     end
 
     methods
@@ -266,8 +267,7 @@ classdef VersoRegistration < handle
 
             % Row-chunked so full-resolution images (tens of thousands of px
             % per side) don't require an all-at-once (H*W, 2) warp-lookup buffer.
-            chunkPixelBudget = 2000000;
-            rowsPerChunk = max(1, floor(chunkPixelBudget / outW));
+            rowsPerChunk = max(1, floor(obj.ChunkPixelBudget / outW));
             xs = ((0:outW - 1) + 0.5) / outW;
 
             row0 = 0;
@@ -328,6 +328,15 @@ classdef VersoRegistration < handle
             %   the same fields as loadAtlasVolume's return value (Annotation,
             %   Reference, RefScale, ColorTable, ResolutionUm, Shape).
             obj.AtlasVol = atlasVol;
+        end
+
+        function setChunkPixelBudgetForTesting(obj, budget)
+            %SETCHUNKPIXELBUDGETFORTESTING Shrink the image_to_atlas chunk size (test-only).
+            %   Lowers the row-chunk pixel budget so image_to_atlas takes the
+            %   multi-chunk path on small test images, exercising the chunk
+            %   loop without allocating a full-resolution image. BUDGET is a
+            %   positive pixel count.
+            obj.ChunkPixelBudget = budget;
         end
     end
 
