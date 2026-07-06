@@ -215,6 +215,7 @@ def generate_thumbnails(
     n = len(sections)
     progress = QProgressDialog("Generating thumbnails…", "Skip", 0, n, parent)
     progress.setWindowTitle(title)
+    progress.setMinimumWidth(300)
     progress.setWindowModality(Qt.WindowModality.WindowModal)
     progress.setMinimumDuration(0)
     progress.setValue(0)
