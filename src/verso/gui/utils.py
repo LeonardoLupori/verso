@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 from PyQt6.QtGui import QImage, QPixmap
+from PyQt6.QtWidgets import QMessageBox, QWidget
 
 
 def require[T](value: T | None) -> T:
@@ -40,3 +41,16 @@ def ndarray_to_pixmap(image: np.ndarray) -> QPixmap:
 
     # .copy() detaches from the numpy buffer so the pixmap survives array GC
     return QPixmap.fromImage(qimg.copy())
+
+
+def warn_errors(parent: QWidget, title: str, errors: list[str], lead: str) -> None:
+    """Show a warning listing up to 8 errors, with an "…and N more" tail.
+
+    ``lead`` is the text shown above the error list. No-op when ``errors`` is
+    empty so callers can invoke unconditionally.
+    """
+    if not errors:
+        return
+    preview = "\n".join(errors[:8])
+    suffix = "" if len(errors) <= 8 else f"\n...and {len(errors) - 8} more"
+    QMessageBox.warning(parent, title, f"{lead}\n\n{preview}{suffix}")

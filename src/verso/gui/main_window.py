@@ -11,7 +11,6 @@ from PyQt6.QtWidgets import (
     QAbstractSlider,
     QAbstractSpinBox,
     QComboBox,
-    QDialog,
     QDockWidget,
     QFileDialog,
     QLabel,
@@ -19,7 +18,6 @@ from PyQt6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPlainTextEdit,
-    QProgressDialog,
     QPushButton,
     QSizePolicy,
     QStackedWidget,
@@ -29,16 +27,15 @@ from PyQt6.QtWidgets import (
 )
 
 from verso.engine.atlas import orientation_labels
-from verso.engine.elastix import ElastixWorker
 from verso.engine.io.quint_io import load_quicknii, load_visualign
 from verso.engine.model.alignment import AlignmentStatus
-from verso.engine.model.elastix import ElastixParams
 from verso.engine.model.project import DEFAULT_PROJECT_FILENAME, Project
+from verso.gui.controllers.export_controller import ExportController
+from verso.gui.controllers.job_controller import JobController
+from verso.gui.controllers.save_controller import SaveController
 from verso.gui.dialogs.brightness import BrightnessDialog
-from verso.gui.dialogs.elastix_params import ElastixParamsDialog
 from verso.gui.dialogs.info import show_info_dialog
 from verso.gui.dialogs.new_project import NewProjectDialog
-from verso.gui.jobs import AutoCPWorker, BackgroundJob, BatchMaskWorker, DeepSliceWorker
 from verso.gui.state import AppState
 from verso.gui.utils import require
 from verso.gui.views.align_view import AlignView
@@ -50,7 +47,7 @@ from verso.gui.widgets.properties import PropertiesPanel
 from verso.gui.widgets.section_canvas_panel import SectionCanvasPanel
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    pass
 
 _VIEW_OVERVIEW = 0
 _VIEW_PREP = 1
@@ -66,13 +63,9 @@ class MainWindow(QMainWindow):
 
         self._state = AppState(self)
         self._current_mode = "overview"
+        # Proposal direction shared between QuickNII interpolation (here) and the
+        # DeepSlice/reverse batch operations (JobController).
         self._reverse_axis_proposal = False
-        self._deepslice_job: BackgroundJob[DeepSliceWorker] | None = None
-        self._batch_mask_job: BackgroundJob[BatchMaskWorker] | None = None
-        self._auto_cp_job: BackgroundJob[AutoCPWorker] | None = None
-        self._auto_cp_batch = False
-        # Persistent warm child process for elastix registrations (see ElastixWorker).
-        self._elastix_worker = ElastixWorker()
         self._brightness_dialog: BrightnessDialog | None = None
 
         # Coalesce rapid brightness-slider ticks into one redraw per event-loop
@@ -83,6 +76,13 @@ class MainWindow(QMainWindow):
         self._channels_flush_timer.setSingleShot(True)
         self._channels_flush_timer.setInterval(0)
         self._channels_flush_timer.timeout.connect(self._flush_channels_changed)
+
+        # Controllers own self-contained subsystems; they read widgets/state back
+        # through this window, so they must exist before the menu wires actions
+        # and before _connect_signals registers the views with SaveController.
+        self._export = ExportController(self)
+        self._saves = SaveController(self)
+        self._jobs = JobController(self)
 
         self._build_menu()
         self._build_toolbar()
@@ -95,26 +95,13 @@ class MainWindow(QMainWindow):
         self._switch_view(_VIEW_OVERVIEW)
 
     def closeEvent(self, event) -> None:
-        if self._deepslice_job and self._deepslice_job.is_running():
-            QMessageBox.information(
-                self,
-                "DeepSlice is running",
-                "Wait for the DeepSlice proposal run to finish before closing VERSO.",
-            )
+        if self._jobs.warn_if_busy():
             event.ignore()
             return
-        if self._batch_mask_job and self._batch_mask_job.is_running():
-            QMessageBox.information(
-                self,
-                "Batch masks are running",
-                "Wait for batch mask auto-detection to finish before closing VERSO.",
-            )
+        if not self.confirm_discard_active_draft():
             event.ignore()
             return
-        if not self._confirm_discard_active_draft():
-            event.ignore()
-            return
-        self._elastix_worker.shutdown()
+        self._jobs.shutdown()
         self._filmstrip.shutdown()
         self._state.shutdown()
         super().closeEvent(event)
@@ -190,72 +177,72 @@ class MainWindow(QMainWindow):
 
         preprocess_menu = require(batch_menu.addMenu("&Preprocess"))
         act_batch_mask = QAction("Autodetect slice mask for &all slices", self)
-        act_batch_mask.triggered.connect(self._batch_autodetect_masks)
+        act_batch_mask.triggered.connect(self._jobs.batch_autodetect_masks)
         preprocess_menu.addAction(act_batch_mask)
         preprocess_menu.addSeparator()
         self._act_clear_all_slice_masks = QAction("Clear all &slice masks…", self)
         self._act_clear_all_slice_masks.setEnabled(False)
-        self._act_clear_all_slice_masks.triggered.connect(self._clear_all_slice_masks)
+        self._act_clear_all_slice_masks.triggered.connect(self._jobs.clear_all_slice_masks)
         preprocess_menu.addAction(self._act_clear_all_slice_masks)
 
         align_menu = require(batch_menu.addMenu("&Align"))
         self._act_deepslice = QAction("Run &DeepSlice", self)
         self._act_deepslice.setEnabled(False)
-        self._act_deepslice.triggered.connect(self._run_deepslice)
+        self._act_deepslice.triggered.connect(self._jobs.run_deepslice)
         align_menu.addAction(self._act_deepslice)
 
         self._act_default_proposal = QAction("&Default proposal", self)
         self._act_default_proposal.setEnabled(False)
-        self._act_default_proposal.triggered.connect(self._revert_to_default_proposal)
+        self._act_default_proposal.triggered.connect(self._jobs.revert_to_default_proposal)
         align_menu.addAction(self._act_default_proposal)
 
         self._act_reverse_proposal = QAction("&Reverse proposal", self)
         self._act_reverse_proposal.setEnabled(False)
-        self._act_reverse_proposal.triggered.connect(self._reverse_section_order)
+        self._act_reverse_proposal.triggered.connect(self._jobs.reverse_section_order)
         align_menu.addAction(self._act_reverse_proposal)
 
         align_menu.addSeparator()
         self._act_clear_all_alignments = QAction("&Clear all alignments…", self)
         self._act_clear_all_alignments.setEnabled(False)
-        self._act_clear_all_alignments.triggered.connect(self._clear_all_alignments)
+        self._act_clear_all_alignments.triggered.connect(self._jobs.clear_all_alignments)
         align_menu.addAction(self._act_clear_all_alignments)
 
         warp_menu = require(batch_menu.addMenu("&Warp"))
         self._act_batch_auto_cp = QAction("&Auto-generate control points for all slices…", self)
         self._act_batch_auto_cp.setEnabled(False)
-        self._act_batch_auto_cp.triggered.connect(self._batch_auto_generate_warps)
+        self._act_batch_auto_cp.triggered.connect(self._jobs.batch_auto_generate_warps)
         warp_menu.addAction(self._act_batch_auto_cp)
         warp_menu.addSeparator()
         self._act_clear_manual_cps = QAction("Clear all &manual control points…", self)
         self._act_clear_manual_cps.setEnabled(False)
-        self._act_clear_manual_cps.triggered.connect(self._clear_all_manual_cps)
+        self._act_clear_manual_cps.triggered.connect(self._jobs.clear_all_manual_cps)
         warp_menu.addAction(self._act_clear_manual_cps)
         self._act_clear_auto_cps = QAction("Clear all a&utomatic control points…", self)
         self._act_clear_auto_cps.setEnabled(False)
-        self._act_clear_auto_cps.triggered.connect(self._clear_all_auto_cps)
+        self._act_clear_auto_cps.triggered.connect(self._jobs.clear_all_auto_cps)
         warp_menu.addAction(self._act_clear_auto_cps)
 
         export_menu = require(mb.addMenu("&Export"))
         act_export_images = QAction("Export images with atlas &overlay…", self)
-        act_export_images.triggered.connect(self._export_images_with_overlay)
+        act_export_images.triggered.connect(self._export.export_images_with_overlay)
         export_menu.addAction(act_export_images)
 
         act_export_stack = QAction("Export aligned section &stack…", self)
-        act_export_stack.triggered.connect(self._export_aligned_stack)
+        act_export_stack.triggered.connect(self._export.export_aligned_stack)
         export_menu.addAction(act_export_stack)
 
         export_menu.addSeparator()
 
         act_export_qn_xml = QAction("Export QuickNII &XML…", self)
-        act_export_qn_xml.triggered.connect(self._export_quicknii_xml)
+        act_export_qn_xml.triggered.connect(self._export.export_quicknii_xml)
         export_menu.addAction(act_export_qn_xml)
 
         act_export_qn = QAction("Export &QuickNII JSON…", self)
-        act_export_qn.triggered.connect(self._export_quicknii)
+        act_export_qn.triggered.connect(self._export.export_quicknii)
         export_menu.addAction(act_export_qn)
 
         act_export_va = QAction("Export &VisuAlign JSON…", self)
-        act_export_va.triggered.connect(self._export_visualign)
+        act_export_va.triggered.connect(self._export.export_visualign)
         export_menu.addAction(act_export_va)
 
         help_menu = require(mb.addMenu("&Help"))
@@ -455,44 +442,25 @@ class MainWindow(QMainWindow):
         self._align.anchoring_changed.connect(self._on_anchoring_changed)
         self._align.alignments_updated.connect(self._on_alignments_updated)
         self._props.warp.cp.style_changed.connect(self._on_cp_style_changed)
-        self._props.warp.cp.autogen_requested.connect(self._auto_generate_warp_cps)
-        self._props.warp.cp.edit_params_requested.connect(self._edit_elastix_params)
+        self._props.warp.cp.autogen_requested.connect(self._jobs.auto_generate_warp_cps)
+        self._props.warp.cp.edit_params_requested.connect(self._jobs.edit_elastix_params)
 
         # Local-changes bars (Save / Clear edits / Reset) and per-view dirty signals.
+        # SaveController owns the parameterized save/revert/clear dispatch.
         view_bindings = (
-            (
-                "prep",
-                self._prep,
-                self._props.prep,
-                self._on_prep_save_clicked,
-                self._on_prep_revert_clicked,
-                self._on_prep_clear_clicked,
-            ),
-            (
-                "align",
-                self._align,
-                self._props.align,
-                self._on_align_save_clicked,
-                self._on_align_revert_clicked,
-                self._on_align_clear_clicked,
-            ),
-            (
-                "warp",
-                self._warp,
-                self._props.warp,
-                self._on_warp_save_clicked,
-                self._on_warp_revert_clicked,
-                self._on_warp_clear_clicked,
-            ),
+            ("prep", self._prep, self._props.prep),
+            ("align", self._align, self._props.align),
+            ("warp", self._warp, self._props.warp),
         )
-        for step, view, page, on_save, on_revert, on_reset in view_bindings:
+        for step, view, page in view_bindings:
+            self._saves.register(step, view, page)
             view.dirty_changed.connect(page.save_bar.set_dirty)
             # Mirror the view's dirty state into the persistent edit registry for
             # the section currently loaded in that view.
             view.dirty_changed.connect(lambda dirty, s=step: self._on_view_dirty_changed(s, dirty))
-            page.save_bar.save_requested.connect(on_save)
-            page.save_bar.revert_requested.connect(on_revert)
-            page.save_bar.reset_requested.connect(on_reset)
+            page.save_bar.save_requested.connect(lambda s=step: self._saves.on_save(s))
+            page.save_bar.revert_requested.connect(lambda s=step: self._saves.on_revert(s))
+            page.save_bar.reset_requested.connect(lambda s=step: self._saves.on_clear(s))
 
         # A prep save/clear that flips the section invalidates its alignment+warp.
         self._prep.alignment_invalidated.connect(self._on_prep_invalidated_alignment)
@@ -554,8 +522,7 @@ class MainWindow(QMainWindow):
                 # Spawn + warm the elastix child process now so the first
                 # "Auto-generate" click hits a warm optimizer instead of paying
                 # the ~15 s cold-start cost interactively.
-                if self._is_auto_cp_atlas():
-                    self._elastix_worker.start()
+                self._jobs.warm_elastix_if_supported()
             # Push the working scale before load_section so any thumbnail
             # regeneration uses the project's scale, not the panel default.
             if project is not None:
@@ -578,7 +545,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _open_project(self) -> None:
-        if not self._confirm_discard_active_draft():
+        if not self.confirm_discard_active_draft():
             return
         path, _ = QFileDialog.getOpenFileName(
             self,
@@ -597,7 +564,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Cannot open project", str(exc))
 
     def _new_project(self) -> None:
-        if not self._confirm_discard_active_draft():
+        if not self.confirm_discard_active_draft():
             return
         dlg = NewProjectDialog(self)
         if dlg.exec() == NewProjectDialog.DialogCode.Accepted:
@@ -606,7 +573,7 @@ class MainWindow(QMainWindow):
                 self._state.load_project(project, dlg.result_project_path())
 
     def _open_quicknii(self) -> None:
-        if not self._confirm_discard_active_draft():
+        if not self.confirm_discard_active_draft():
             return
         path, _ = QFileDialog.getOpenFileName(
             self, "Open QuickNII JSON", "", "JSON files (*.json);;All files (*)"
@@ -616,7 +583,7 @@ class MainWindow(QMainWindow):
             self._state.load_project(project)
 
     def _open_visualign(self) -> None:
-        if not self._confirm_discard_active_draft():
+        if not self.confirm_discard_active_draft():
             return
         path, _ = QFileDialog.getOpenFileName(
             self, "Open VisuAlign JSON", "", "JSON files (*.json);;All files (*)"
@@ -855,7 +822,7 @@ class MainWindow(QMainWindow):
         self._overview.refresh_row(self._state.section_index)
         self._refresh_filmstrip_dots()
 
-    def _confirm_discard_active_draft(self) -> bool:
+    def confirm_discard_active_draft(self) -> bool:
         """Prompt when unsaved edits exist anywhere before a disruptive operation.
 
         Offers Save all / Discard all / Cancel across every dirty section.
@@ -893,7 +860,7 @@ class MainWindow(QMainWindow):
             return
         self._state.load_project(project, path)
 
-    def _after_view_save(self) -> None:
+    def after_view_save(self) -> None:
         """Refresh dependent UI after a per-view save/reset and write project."""
         if self._state.project is not None and self._state.project_path is not None:
             self._write_project(self._state.project_path)
@@ -902,7 +869,7 @@ class MainWindow(QMainWindow):
         self._refresh_reset_enabled()
         self._refresh_filmstrip_dots()
 
-    def _after_view_revert(self) -> None:
+    def after_view_revert(self) -> None:
         """Refresh dependent UI after a per-view "Clear edits" revert.
 
         Reverting only drops unsaved edits, so the on-disk project is already
@@ -970,44 +937,6 @@ class MainWindow(QMainWindow):
                 )
                 self._filmstrip.set_status_color(i, color)
                 return
-
-    def _on_prep_save_clicked(self) -> None:
-        if self._prep.save():
-            self._after_view_save()
-
-    def _on_prep_revert_clicked(self) -> None:
-        if self._prep.revert():
-            self._props.prep.update_section(self._state.current_section)
-            self._after_view_revert()
-
-    def _on_prep_clear_clicked(self) -> None:
-        if self._prep.clear():
-            self._props.prep.update_section(self._state.current_section)
-            self._after_view_save()
-
-    def _on_align_save_clicked(self) -> None:
-        if self._align.save():
-            self._after_view_save()
-
-    def _on_align_revert_clicked(self) -> None:
-        if self._align.revert():
-            self._after_view_revert()
-
-    def _on_align_clear_clicked(self) -> None:
-        if self._align.clear():
-            self._after_view_save()
-
-    def _on_warp_save_clicked(self) -> None:
-        if self._warp.save():
-            self._after_view_save()
-
-    def _on_warp_revert_clicked(self) -> None:
-        if self._warp.revert():
-            self._after_view_revert()
-
-    def _on_warp_clear_clicked(self) -> None:
-        if self._warp.clear():
-            self._after_view_save()
 
     # ------------------------------------------------------------------
     # Slots — state changes
@@ -1265,7 +1194,7 @@ class MainWindow(QMainWindow):
                 "Save the project before adding images so the new thumbnails have a home on disk.",
             )
             return
-        if not self._confirm_discard_active_draft():
+        if not self.confirm_discard_active_draft():
             return
 
         # Re-fetch after the confirm gate: a "Discard" reloads the project object.
@@ -1370,7 +1299,7 @@ class MainWindow(QMainWindow):
         )
         if resp != QMessageBox.StandardButton.Yes:
             return
-        if not self._confirm_discard_active_draft():
+        if not self.confirm_discard_active_draft():
             return
 
         # Re-fetch after the confirm gate: a "Discard" reloads the project object.
@@ -1526,72 +1455,6 @@ class MainWindow(QMainWindow):
     def _on_prep_clear_mask_requested(self) -> None:
         self._prep.clear_mask()
 
-    def _batch_autodetect_masks(self) -> None:
-        project = self._state.project
-        if project is None or not project.sections:
-            return
-        if self._batch_mask_job and self._batch_mask_job.is_running():
-            return
-
-        reply = QMessageBox.question(
-            self,
-            "Auto-detect slice masks",
-            "Run slice-mask auto-detection for all sections? "
-            "Existing slice masks will be replaced.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
-            return
-        if not self._confirm_discard_active_draft():
-            return
-
-        self._batch_mask_job = BackgroundJob(
-            self,
-            BatchMaskWorker(list(project.sections), project.working_scale),
-            title="Batch masks",
-            message="Auto-detecting slice masks...",
-            min_width=300,
-        )
-        self._batch_mask_job.start(self._on_batch_masks_done, self._on_batch_masks_finished)
-
-    def _on_batch_masks_done(self, completed: int, errors: list[str]) -> None:
-        # Drain the detected masks into the resident prep-draft store as unsaved
-        # edits (kept in RAM, shown yellow until the user saves).
-        worker = self._batch_mask_job.worker if self._batch_mask_job is not None else None
-        project = self._state.project
-        if worker is not None and project is not None:
-            from verso.engine.drafts import PrepDraft
-
-            by_id = {s.id: s for s in project.sections}
-            for sid, mask in worker.results.items():
-                section = by_id.get(sid)
-                if section is None:
-                    continue
-                self._state.set_prep_draft(
-                    sid,
-                    PrepDraft(
-                        slice_mask=mask,
-                        mask_dirty=True,
-                        base_flip_h=section.preprocessing.flip_horizontal,
-                        base_flip_v=section.preprocessing.flip_vertical,
-                    ),
-                )
-                self._state.mark_dirty(sid, "prep")
-
-        self._overview.refresh()
-        if self._current_mode == "prep":
-            self._prep.load_section(self._state.current_section)
-        self._refresh_properties()
-        self._refresh_filmstrip_dots()
-        self._statusbar.showMessage(f"Auto-detected {completed} slice masks", 5000)
-        self._warn_errors(
-            "Some masks failed", errors, f"{len(errors)} sections could not be processed:"
-        )
-
-    def _on_batch_masks_finished(self) -> None:
-        self._batch_mask_job = None
-
     def _on_anchoring_changed(self, anchoring: list[float]) -> None:
         atlas = self._state.atlas
         if atlas is not None:
@@ -1619,46 +1482,6 @@ class MainWindow(QMainWindow):
         self._update_reverse_order_enabled()
         self._update_deepslice_enabled()
         self._refresh_filmstrip_dots()
-
-    def _reverse_section_order(self) -> None:
-        """Reverse the startup proposal direction before any alignment is stored."""
-        project = self._state.project
-        if project is None or len(project.sections) < 2:
-            return
-
-        has_stored_alignment = any(
-            section.alignment.status == AlignmentStatus.COMPLETE for section in project.sections
-        )
-        if has_stored_alignment:
-            QMessageBox.information(
-                self,
-                "Cannot reverse proposal",
-                "The startup proposal can only be reversed before any alignment is stored.",
-            )
-            return
-
-        self._reverse_axis_proposal = not self._reverse_axis_proposal
-        self._align.set_reverse_axis(self._reverse_axis_proposal)
-        for section in project.sections:
-            section.alignment.anchoring = [0.0] * 9
-            section.alignment.position_mm = None
-            section.alignment.status = AlignmentStatus.NOT_STARTED
-            section.alignment.source = None
-            section.alignment.stored_anchoring = None
-            section.alignment.proposal_anchoring = None
-            section.alignment.proposal_confidence = None
-            section.alignment.proposal_run_id = None
-            section.warp.control_points.clear()
-            section.warp.status = AlignmentStatus.NOT_STARTED
-
-        self._initialize_quicknii_anchorings(project.sections)
-        self._sync_position_mm(project.sections)
-
-        self._overview.refresh()
-        self._on_section_changed(self._state.section_index)
-        self._update_slicing_position()
-        self._update_reverse_order_enabled()
-        self._update_deepslice_enabled()
 
     def _update_reverse_order_enabled(self) -> None:
         project = self._state.project
@@ -1697,8 +1520,8 @@ class MainWindow(QMainWindow):
         self._act_clear_auto_cps.setEnabled(has_auto_cps and not running)
         # Automatic control points need the atlas loaded and an Allen mouse atlas
         # (the curated anchor points were traced in Allen CCF space).
-        auto_cp_ok = atlas_ready and not running and self._is_auto_cp_atlas()
-        auto_cp_busy = self._auto_cp_job is not None
+        auto_cp_ok = atlas_ready and not running and self._jobs.is_auto_cp_atlas()
+        auto_cp_busy = self._jobs.auto_cp_busy
         self._act_batch_auto_cp.setEnabled(auto_cp_ok and not auto_cp_busy)
         self._props.warp.cp.set_autogen_enabled(auto_cp_ok and not auto_cp_busy)
 
@@ -1793,212 +1616,6 @@ class MainWindow(QMainWindow):
                 section.alignment.status = AlignmentStatus.IN_PROGRESS
             section.alignment.source = "quicknii_default"
 
-    def _run_deepslice(self) -> None:
-        project = self._state.project
-        if project is None:
-            return
-        if self._deepslice_job and self._deepslice_job.is_running():
-            return
-
-        from verso.gui.dialogs.bad_sections import BadSectionsDialog
-
-        dlg = BadSectionsDialog(
-            project.sections, reverse_order=self._reverse_axis_proposal, parent=self
-        )
-        if dlg.exec() != BadSectionsDialog.DialogCode.Accepted:
-            return
-        bad_ids = dlg.bad_section_ids()
-        self._reverse_axis_proposal = dlg.reverse_section_order()
-
-        self._update_deepslice_enabled(running=True)
-        self._statusbar.showMessage("Running DeepSlice suggestions...")
-
-        self._deepslice_job = BackgroundJob(
-            self,
-            DeepSliceWorker(
-                project,
-                reverse_section_order=self._reverse_axis_proposal,
-                bad_section_ids=bad_ids,
-            ),
-            title="DeepSlice",
-            message="Running DeepSlice prediction...",
-            min_width=350,
-        )
-        self._deepslice_job.start(
-            self._on_deepslice_done,
-            self._on_deepslice_finished,
-            on_error=self._on_deepslice_error,
-        )
-
-    def _on_deepslice_done(self, result) -> None:
-        import copy
-
-        project = self._state.project
-        atlas = self._state.atlas
-        if project is None:
-            return
-        from verso.engine.deepslice import apply_deepslice_suggestions_with_atlas
-
-        # Snapshot last-saved alignments before applying so dirtied sections can
-        # revert to their genuine baseline via "Clear edits".
-        baselines = {s.id: copy.deepcopy(s.alignment) for s in project.sections}
-
-        applied = apply_deepslice_suggestions_with_atlas(
-            project,
-            result,
-            atlas.shape if atlas is not None else None,
-            reverse_axis=self._reverse_axis_proposal,
-        )
-        if atlas is not None:
-            self._sync_position_mm(project.sections)
-
-        # DeepSlice proposals are unsaved edits: flag the sections it touched as
-        # dirty so the Overview table and filmstrip show them yellow until the
-        # user saves (mirroring the batch-mask flow).
-        for section in project.sections:
-            if section.alignment.proposal_run_id == result.run_id:
-                self._state.set_baseline(section.id, "align", baselines[section.id])
-                self._state.mark_dirty(section.id, "align")
-
-        self._overview.refresh()
-        # Reload the current view so the align SaveBar reflects the new dirty
-        # state; this also re-renders the panel for the active section.
-        self._on_section_changed(self._state.section_index)
-        self._refresh_filmstrip_dots()
-        self._update_slicing_position()
-        self._statusbar.showMessage(f"Applied {applied} DeepSlice suggestions", 5000)
-
-    def _on_deepslice_error(self, message: str) -> None:
-        QMessageBox.warning(self, "DeepSlice failed", message)
-        self._statusbar.showMessage("DeepSlice failed", 5000)
-
-    def _on_deepslice_finished(self) -> None:
-        self._deepslice_job = None
-        self._update_deepslice_enabled(running=False)
-
-    def _revert_to_default_proposal(self) -> None:
-        project = self._state.project
-        atlas = self._state.atlas
-        if project is None or atlas is None:
-            return
-        from verso.engine.deepslice import reset_in_progress_to_default_proposals
-
-        changed = reset_in_progress_to_default_proposals(
-            project.sections,
-            atlas.shape,
-            interpolation_axis=self._interpolation_axis(),
-            reverse_axis=self._reverse_axis_proposal,
-        )
-        self._sync_position_mm(project.sections)
-        self._overview.refresh()
-        self._on_section_changed(self._state.section_index)
-        self._update_slicing_position()
-        self._statusbar.showMessage(f"Restored {changed} default proposals", 3000)
-
-    def _clear_all_alignments(self) -> None:
-        project = self._state.project
-        atlas = self._state.atlas
-        if project is None or atlas is None:
-            return
-
-        reply = QMessageBox.question(
-            self,
-            "Clear all alignments",
-            "Clear every stored alignment, warp control point, and editable proposal, "
-            "then restore VERSO's default proposal for all sections?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
-            return
-        if not self._confirm_discard_active_draft():
-            return
-
-        from verso.engine.deepslice import reset_in_progress_to_default_proposals
-
-        changed = reset_in_progress_to_default_proposals(
-            project.sections,
-            atlas.shape,
-            interpolation_axis=self._interpolation_axis(),
-            reverse_axis=self._reverse_axis_proposal,
-            include_complete=True,
-        )
-        self._sync_position_mm(project.sections)
-        self._after_batch_clear()
-        self._statusbar.showMessage(
-            f"Cleared all alignments and restored {changed} default proposals",
-            5000,
-        )
-
-    def _clear_all_slice_masks(self) -> None:
-        project = self._state.project
-        if project is None or not project.sections:
-            return
-        reply = QMessageBox.question(
-            self,
-            "Clear all slice masks",
-            f"Delete the slice mask for all {len(project.sections)} sections? "
-            "This removes the PNG files from disk.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
-            return
-        if not self._confirm_discard_active_draft():
-            return
-        removed = 0
-        for section in project.sections:
-            old = section.preprocessing.slice_mask_path
-            if old:
-                try:
-                    Path(old).unlink(missing_ok=True)
-                except OSError:
-                    pass
-                removed += 1
-            section.preprocessing.slice_mask_path = None
-        self._after_batch_clear()
-        self._statusbar.showMessage(f"Cleared {removed} slice masks", 5000)
-
-    def _clear_all_manual_cps(self) -> None:
-        """Batch: drop every hand-placed control point, keeping auto ones."""
-        self._clear_all_cps(auto=False)
-
-    def _clear_all_auto_cps(self) -> None:
-        """Batch: drop every auto-generated control point, keeping manual ones."""
-        self._clear_all_cps(auto=True)
-
-    def _clear_all_cps(self, *, auto: bool) -> None:
-        project = self._state.project
-        if project is None or not project.sections:
-            return
-        kind = "automatic" if auto else "manual"
-        reply = QMessageBox.question(
-            self,
-            f"Clear all {kind} control points",
-            f"Remove every {kind} warp control point from all {len(project.sections)} sections?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
-            return
-        if not self._confirm_discard_active_draft():
-            return
-        cleared = 0
-        for section in project.sections:
-            cps = section.warp.control_points
-            kept = [cp for cp in cps if cp.auto != auto]
-            if len(kept) != len(cps):
-                cleared += 1
-            section.warp.control_points = kept
-            if not kept:
-                section.warp.status = AlignmentStatus.NOT_STARTED
-            elif any(not cp.auto for cp in kept):
-                section.warp.status = AlignmentStatus.COMPLETE
-            else:
-                section.warp.status = AlignmentStatus.IN_PROGRESS
-        self._after_batch_clear()
-        self._statusbar.showMessage(f"Cleared {kind} control points on {cleared} sections", 5000)
-
     def _after_batch_clear(self) -> None:
         """Refresh dependent UI + write project after a batch wipe."""
         section = self._state.current_section
@@ -2015,258 +1632,11 @@ class MainWindow(QMainWindow):
         if self._state.project is not None and self._state.project_path is not None:
             self._write_project(self._state.project_path)
 
-    # ------------------------------------------------------------------
-    # Automatic (elastix) control points
-    # ------------------------------------------------------------------
-
-    def _is_auto_cp_atlas(self) -> bool:
-        from verso.engine.elastix import is_supported_atlas
-
-        project = self._state.project
-        return project is not None and is_supported_atlas(project.atlas.name)
-
-    def _resolve_elastix_params(self) -> ElastixParams:
-        project = self._state.project
-        if project is not None and project.elastix_params is not None:
-            return project.elastix_params
-        return ElastixParams()
-
-    def _edit_elastix_params(self) -> None:
-        project = self._state.project
-        if project is None:
-            return
-        dialog = ElastixParamsDialog(self._resolve_elastix_params(), self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            project.elastix_params = dialog.get_params()
-            if self._state.project_path is not None:
-                self._write_project(self._state.project_path)
-            self._statusbar.showMessage("Saved automatic registration parameters", 4000)
-
-    def _auto_generate_warp_cps(self) -> None:
-        """Generate control points for the current section (Warp view button)."""
-        project = self._state.project
-        section = self._state.current_section
-        atlas = self._state.atlas
-        if project is None or section is None or atlas is None:
-            return
-        if not self._is_auto_cp_atlas():
-            QMessageBox.information(
-                self,
-                "Atlas not supported",
-                "Automatic control points are only available for Allen mouse atlases.",
-            )
-            return
-        anchoring = section.alignment.anchoring
-        if not anchoring or all(v == 0.0 for v in anchoring):
-            QMessageBox.information(
-                self,
-                "No alignment",
-                "Align this section before generating control points.",
-            )
-            return
-        self._auto_cp_batch = False
-        self._run_auto_cp([section], "Generating control points…", self._on_single_auto_cp_done)
-
-    def _batch_auto_generate_warps(self) -> None:
-        """Generate control points for every aligned section (Batch menu)."""
-        project = self._state.project
-        atlas = self._state.atlas
-        if project is None or not project.sections or atlas is None:
-            return
-        if not self._is_auto_cp_atlas():
-            QMessageBox.information(
-                self,
-                "Atlas not supported",
-                "Automatic control points are only available for Allen mouse atlases.",
-            )
-            return
-        aligned = [
-            s
-            for s in project.sections
-            if s.alignment.anchoring and any(v != 0.0 for v in s.alignment.anchoring)
-        ]
-        if not aligned:
-            QMessageBox.information(
-                self,
-                "No aligned sections",
-                "Align sections before generating control points.",
-            )
-            return
-        reply = QMessageBox.question(
-            self,
-            "Auto-generate control points",
-            f"Generate control points for {len(aligned)} aligned section(s)? "
-            "Existing automatic control points will be replaced; manual points are kept.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
-            return
-        if not self._confirm_discard_active_draft():
-            return
-        self._auto_cp_batch = True
-        self._run_auto_cp(
-            aligned,
-            "Generating control points for all slices…",
-            self._on_batch_auto_cp_done,
-        )
-
-    def _run_auto_cp(self, sections: list, message: str, on_done) -> None:
-        project = self._state.project
-        atlas = self._state.atlas
-        if project is None or atlas is None:
-            return
-        self._auto_cp_job = BackgroundJob(
-            self,
-            AutoCPWorker(
-                self._elastix_worker,
-                list(sections),
-                atlas,
-                project.working_scale,
-                self._resolve_elastix_params(),
-            ),
-            title="Automatic control points",
-            message=message,
-            modal=True,
-            min_width=350,
-        )
-        self._update_deepslice_enabled()  # disable triggers while running
-        self._auto_cp_job.start(on_done, self._on_auto_cp_finished)
-
-    def _on_single_auto_cp_done(self, completed: int, errors: list[str]) -> None:
-        worker = self._auto_cp_job.worker if self._auto_cp_job is not None else None
-        section = self._state.current_section
-        n = 0
-        if worker is not None and section is not None:
-            cps = worker.results.get(section.id)
-            if cps is not None:
-                n = len(cps)
-                self._warp.apply_auto_control_points(cps)
-        self._refresh_current_step_dot()
-        self._statusbar.showMessage(f"Generated {n} control points", 5000)
-        self._warn_errors(
-            "Some sections failed", errors, f"{len(errors)} sections could not be processed:"
-        )
-
-    def _on_batch_auto_cp_done(self, completed: int, errors: list[str]) -> None:
-        worker = self._auto_cp_job.worker if self._auto_cp_job is not None else None
-        project = self._state.project
-        total = 0
-        if worker is not None and project is not None:
-            by_id = {s.id: s for s in project.sections}
-            for sid, cps in worker.results.items():
-                section = by_id.get(sid)
-                if section is None:
-                    continue
-                manual = [cp for cp in section.warp.control_points if not cp.auto]
-                section.warp.control_points = manual + list(cps)
-                if not section.warp.control_points:
-                    section.warp.status = AlignmentStatus.NOT_STARTED
-                elif manual:
-                    section.warp.status = AlignmentStatus.COMPLETE
-                else:
-                    # Auto-only warp: a proposal awaiting review → yellow.
-                    section.warp.status = AlignmentStatus.IN_PROGRESS
-                total += len(cps)
-        self._after_batch_clear()  # refresh dependent UI + persist project
-        self._statusbar.showMessage(
-            f"Generated {total} control points across {completed} sections", 6000
-        )
-        self._warn_errors(
-            "Some sections failed", errors, f"{len(errors)} sections could not be processed:"
-        )
-
-    def _on_auto_cp_finished(self) -> None:
-        self._auto_cp_job = None
-        self._update_deepslice_enabled()
-
-    def _warn_errors(self, title: str, errors: list[str], lead: str) -> None:
-        """Show a warning listing up to 8 errors, with an "…and N more" tail.
-
-        ``lead`` is the text shown above the error list. No-op when ``errors`` is
-        empty so callers can invoke unconditionally.
-        """
-        if not errors:
-            return
-        preview = "\n".join(errors[:8])
-        suffix = "" if len(errors) <= 8 else f"\n...and {len(errors) - 8} more"
-        QMessageBox.warning(self, title, f"{lead}\n\n{preview}{suffix}")
-
     def _update_slicing_position(self) -> None:
         project = self._state.project
         if project is None:
             return
         self._props.align.slicing_position.update_plot(project.sections, self._state.section_index)
-
-    def _maybe_create_pngs(self, export_path: str) -> None:
-        """Offer to create PNG copies if any are missing next to the export."""
-        project = self._state.project
-        if project is None:
-            return
-        out_dir = Path(export_path).resolve().parent
-        from verso.engine.io.quint_io import _export_image_filename
-
-        missing = [
-            s for s in project.sections if not (out_dir / _export_image_filename(s)).exists()
-        ]
-        if not missing:
-            return
-        reply = QMessageBox.question(
-            self,
-            "PNG images required",
-            f"QuickNII and VisuAlign require PNG image files.\n\n"
-            f"{len(missing)} of {len(project.sections)} section images are not "
-            f"present as PNG in the export folder.\n\n"
-            f"Create PNG copies now?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if reply == QMessageBox.StandardButton.Yes:
-            from verso.engine.io.quint_io import write_section_pngs
-
-            write_section_pngs(project, out_dir)
-
-    def _export_quint(
-        self, title: str, default_suffix: str, file_filter: str, save_fn: Callable
-    ) -> None:
-        """Shared QuickNII/VisuAlign exporter: confirm, pick a path, write, offer PNGs.
-
-        ``save_fn`` is one of the ``quint_io`` writers; they all share the
-        ``(project, path, atlas_shape=...)`` signature.
-        """
-        if not self._confirm_discard_active_draft():
-            return
-        project = self._state.project
-        if project is None:
-            return
-        path, _ = QFileDialog.getSaveFileName(
-            self, title, f"{project.name}-{default_suffix}", file_filter
-        )
-        if not path:
-            return
-        atlas_shape = self._state.atlas.shape if self._state.atlas else None
-        save_fn(project, Path(path), atlas_shape=atlas_shape)
-        self._maybe_create_pngs(path)
-
-    def _export_quicknii_xml(self) -> None:
-        from verso.engine.io.quint_io import save_quicknii_xml
-
-        self._export_quint(
-            "Export QuickNII XML", "quicknii.xml", "XML files (*.xml)", save_quicknii_xml
-        )
-
-    def _export_quicknii(self) -> None:
-        from verso.engine.io.quint_io import save_quicknii
-
-        self._export_quint(
-            "Export QuickNII JSON", "quicknii.json", "JSON files (*.json)", save_quicknii
-        )
-
-    def _export_visualign(self) -> None:
-        from verso.engine.io.quint_io import save_visualign
-
-        self._export_quint(
-            "Export VisuAlign JSON", "visualign.json", "JSON files (*.json)", save_visualign
-        )
 
     def _show_atlas_info(self) -> None:
         atlas = self._state.atlas
@@ -2310,234 +1680,3 @@ class MainWindow(QMainWindow):
                 ("Thumbnail scale", f"{project.working_scale:.2f}×"),
             ],
         )
-
-    def _export_preflight(self):
-        """Confirm drafts and validate project/atlas/path before an export.
-
-        Returns ``(project, atlas, project_path)`` when the export may proceed,
-        or ``None`` (after showing the relevant warning) when it cannot.
-        """
-        if not self._confirm_discard_active_draft():
-            return None
-        project = self._state.project
-        if project is None or not project.sections:
-            QMessageBox.warning(self, "Export", "No project is loaded.")
-            return None
-        atlas = self._state.atlas
-        if atlas is None:
-            QMessageBox.warning(
-                self, "Export", "The atlas is still loading. Try again in a moment."
-            )
-            return None
-        if self._state.project_path is None:
-            QMessageBox.warning(
-                self,
-                "Export",
-                "Save the project to disk before exporting so VERSO knows where to "
-                "write the exports folder.",
-            )
-            return None
-        return project, atlas, self._state.project_path
-
-    def _select_export_sections(self, dlg, project) -> list | None:
-        """Map an export dialog's all/selected choice to a list of sections."""
-        if dlg.export_all():
-            sections = list(project.sections)
-        else:
-            sections = [project.sections[i] for i in self._overview.selected_rows()]
-        if not sections:
-            QMessageBox.warning(self, "Export", "No sections selected.")
-            return None
-        return sections
-
-    def _show_export_done(self, out_dir: Path, message: str) -> None:
-        """Completion box with an "Open folder" shortcut to the export dir."""
-        from PyQt6.QtCore import QUrl
-        from PyQt6.QtGui import QDesktopServices
-
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Icon.Information)
-        box.setWindowTitle("Export complete")
-        box.setText(message)
-        open_btn = box.addButton("Open folder", QMessageBox.ButtonRole.ActionRole)
-        box.addButton(QMessageBox.StandardButton.Ok)
-        box.exec()
-        if box.clickedButton() is open_btn:
-            QDesktopServices.openUrl(QUrl.fromLocalFile(str(out_dir)))
-
-    def _export_images_with_overlay(self) -> None:
-        """Open the export dialog and write the requested PNGs to disk."""
-        from datetime import datetime
-
-        from PyQt6.QtWidgets import QApplication
-
-        from verso.engine.io.export_images import export_section
-        from verso.gui.dialogs.export_images import ExportImagesDialog
-
-        preflight = self._export_preflight()
-        if preflight is None:
-            return
-        project, atlas, project_path = preflight
-
-        dlg = ExportImagesDialog(
-            n_selected=len(self._overview.selected_rows()),
-            n_total=len(project.sections),
-            parent=self,
-        )
-        if dlg.exec() != dlg.DialogCode.Accepted:
-            return
-
-        sections = self._select_export_sections(dlg, project)
-        if sections is None:
-            return
-
-        options = dlg.options()
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-        out_dir = project_path.parent / "exports" / f"images_with_overlay_{timestamp}"
-        out_dir.mkdir(parents=True, exist_ok=True)
-
-        progress = QProgressDialog("Exporting images...", "Cancel", 0, len(sections), self)
-        progress.setWindowTitle("Export images with atlas overlay")
-        progress.setMinimumDuration(0)
-        progress.setAutoClose(False)
-        progress.setAutoReset(False)
-        progress.setModal(True)
-        progress.show()
-        QApplication.processEvents()
-
-        errors: list[str] = []
-        for idx, section in enumerate(sections):
-            if progress.wasCanceled():
-                break
-            progress.setLabelText(
-                f"Exporting {idx + 1} / {len(sections)}: {Path(section.original_path).name}"
-            )
-            QApplication.processEvents()
-            try:
-                export_section(section, project, atlas, options, out_dir)
-            except Exception as exc:  # noqa: BLE001
-                errors.append(f"{Path(section.original_path).name}: {exc}")
-            progress.setValue(idx + 1)
-            QApplication.processEvents()
-
-        progress.close()
-
-        if errors:
-            self._warn_errors(
-                "Export finished with errors",
-                errors,
-                f"Wrote some images to:\n{out_dir}\n\nErrors:",
-            )
-        else:
-            self._show_export_done(out_dir, f"Wrote {len(sections)} sections to:\n{out_dir}")
-
-    def _export_aligned_stack(self) -> None:
-        """Open the aligned-stack dialog and write the un-warped TIFF stack."""
-        from datetime import datetime
-
-        from PyQt6.QtWidgets import QApplication
-
-        from verso.engine.io.export_stack import (
-            export_section_aligned,
-            finalize_aligned_pages,
-            write_aligned_stack,
-        )
-        from verso.gui.dialogs.export_stack import ExportStackDialog
-
-        preflight = self._export_preflight()
-        if preflight is None:
-            return
-        project, atlas, project_path = preflight
-
-        dlg = ExportStackDialog(
-            n_selected=len(self._overview.selected_rows()),
-            n_total=len(project.sections),
-            parent=self,
-        )
-        if dlg.exec() != dlg.DialogCode.Accepted:
-            return
-
-        sections = self._select_export_sections(dlg, project)
-        if sections is None:
-            return
-
-        options = dlg.options()
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-        out_dir = project_path.parent / "exports"
-        out_path = out_dir / f"aligned_stack_{timestamp}.ome.tif"
-
-        progress = QProgressDialog("Resampling sections...", "Cancel", 0, len(sections), self)
-        progress.setWindowTitle("Export aligned section stack")
-        progress.setMinimumDuration(0)
-        progress.setAutoClose(False)
-        progress.setAutoReset(False)
-        progress.setModal(True)
-        progress.show()
-        QApplication.processEvents()
-
-        entries: list = []
-        skipped: list[str] = []
-        errors: list[str] = []
-        canceled = False
-        for idx, section in enumerate(sections):
-            if progress.wasCanceled():
-                canceled = True
-                break
-            progress.setLabelText(
-                f"Resampling {idx + 1} / {len(sections)}: {Path(section.original_path).name}"
-            )
-            QApplication.processEvents()
-            try:
-                result = export_section_aligned(
-                    section,
-                    project,
-                    atlas,
-                    options.scale,
-                    apply_slice_mask=options.background is not None,
-                )
-                if result is None:
-                    skipped.append(Path(section.original_path).name)
-                else:
-                    page, valid = result
-                    entries.append((section.slice_index, page, valid))
-            except Exception as exc:  # noqa: BLE001
-                errors.append(f"{Path(section.original_path).name}: {exc}")
-            progress.setValue(idx + 1)
-            QApplication.processEvents()
-
-        if canceled:
-            progress.close()
-            return
-
-        pages = finalize_aligned_pages(entries, options) if entries else []
-        if pages:
-            try:
-                channel_names = [c.name for c in project.channels] or [
-                    f"Ch {i}" for i in range(pages[0].shape[2])
-                ]
-                write_aligned_stack(pages, channel_names, out_path)
-            except Exception as exc:  # noqa: BLE001
-                errors.append(f"writing stack: {exc}")
-
-        progress.close()
-
-        notes: list[str] = []
-        if skipped:
-            notes.append(f"Skipped {len(skipped)} section(s) without alignment.")
-        if errors:
-            self._warn_errors(
-                "Export finished with errors", errors, "\n".join(notes) + "\n\nErrors:"
-            )
-            return
-        if not pages:
-            QMessageBox.warning(
-                self,
-                "Export",
-                "No sections had a usable alignment, so no stack was written.",
-            )
-            return
-
-        msg = f"Wrote a {len(pages)}-section stack to:\n{out_path}"
-        if notes:
-            msg += "\n\n" + "\n".join(notes)
-        self._show_export_done(out_dir, msg)
