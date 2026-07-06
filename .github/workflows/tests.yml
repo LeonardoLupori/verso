@@ -22,8 +22,24 @@ jobs:
       - name: Install dependencies
         run: uv sync --group dev
 
+      # Qt needs a handful of system libraries to load even the headless
+      # "offscreen" platform plugin on a bare Ubuntu runner.
+      - name: Install Qt system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libxkbcommon0 libdbus-1-3
+
       - name: Lint
         run: uv run ruff check src/ tests/
 
-      - name: Run tests
+      - name: Format check
+        run: uv run ruff format --check src/ tests/
+
+      - name: Engine tests
         run: uv run pytest -p no:pytest-qt tests/engine/
+
+      - name: GUI tests (headless)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: uv run pytest tests/gui/
