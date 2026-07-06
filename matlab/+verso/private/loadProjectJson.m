@@ -6,7 +6,7 @@ function proj = loadProjectJson(jsonPath)
 %       AtlasShape    (1,3) double, [AP, DV, LR]
 %       AtlasName     string
 %       Ids           cellstr, section ids in project order
-%       Snapshots     containers.Map: sectionId (char) -> snapshot struct
+%       Snapshots     1xN struct array of snapshots, parallel to Ids
 %
 %   Snapshot struct fields (mirror engine/registration.py::_SectionSnapshot):
 %       Id, OriginalPath, WorkW, WorkH, FullW, FullH,
@@ -31,12 +31,17 @@ function proj = loadProjectJson(jsonPath)
 
     sectionsRaw = asCellOfStructs(raw.sections);
 
-    ids = cell(1, numel(sectionsRaw));
-    snapshots = containers.Map("KeyType", "char", "ValueType", "any");
-    for k = 1:numel(sectionsRaw)
+    n = numel(sectionsRaw);
+    ids = cell(1, n);
+    snapshots = struct([]);
+    for k = 1:n
         snap = iBuildSnapshot(sectionsRaw{k});
         ids{k} = snap.Id;
-        snapshots(snap.Id) = snap;
+        if k == 1
+            snapshots = repmat(snap, 1, n);  % preallocate once fields are known
+        else
+            snapshots(k) = snap;
+        end
     end
 
     proj = struct( ...
@@ -44,7 +49,7 @@ function proj = loadProjectJson(jsonPath)
         "AtlasShape", atlasShape, ...
         "AtlasName", string(atlas.name), ...
         "Ids", {ids}, ...
-        "Snapshots", snapshots);
+        "Snapshots", {snapshots});
 end
 
 function snap = iBuildSnapshot(s)

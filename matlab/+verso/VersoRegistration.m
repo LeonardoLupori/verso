@@ -24,7 +24,7 @@ classdef VersoRegistration < handle
         AtlasShapeVal
         AtlasNameVal
         AtlasDirOverride
-        SnapshotsMap    % containers.Map: sectionId (char) -> snapshot struct
+        Snapshots       % 1xN struct array of snapshots, project order (parallel to IdsList)
         IdsList         % cellstr, project order
         AtlasVol        % [] until first needed by image_to_atlas
     end
@@ -47,7 +47,7 @@ classdef VersoRegistration < handle
             obj.ResolutionUm = proj.ResolutionUm;
             obj.AtlasShapeVal = proj.AtlasShape;
             obj.AtlasNameVal = proj.AtlasName;
-            obj.SnapshotsMap = proj.Snapshots;
+            obj.Snapshots = proj.Snapshots;
             obj.IdsList = proj.Ids;
             obj.AtlasDirOverride = opts.AtlasDir;
             obj.AtlasVol = [];
@@ -157,8 +157,8 @@ classdef VersoRegistration < handle
             sectionId = repmat("", n, 1);
             xy = nan(n, 2);
 
-            for k = 1:numel(obj.IdsList)
-                snap = obj.SnapshotsMap(obj.IdsList{k});
+            for k = 1:numel(obj.Snapshots)
+                snap = obj.Snapshots(k);
                 if ~snap.Aligned
                     continue
                 end
@@ -333,28 +333,28 @@ classdef VersoRegistration < handle
 
     methods (Access = private)
         function snap = getSnapshot(obj, key)
-            id = obj.resolveSlice(key);
-            snap = obj.SnapshotsMap(id);
+            idx = obj.resolveSlice(key);
+            snap = obj.Snapshots(idx);
         end
 
-        function id = resolveSlice(obj, key)
+        function idx = resolveSlice(obj, key)
             key = char(key);
-            if isKey(obj.SnapshotsMap, key)
-                id = key;
+            exact = find(strcmp(obj.IdsList, key), 1);
+            if ~isempty(exact)
+                idx = exact;
                 return
             end
 
-            byStem = {};
-            byName = {};
-            for k = 1:numel(obj.IdsList)
-                snap = obj.SnapshotsMap(obj.IdsList{k});
-                [~, stem, ext] = fileparts(snap.OriginalPath);
+            byStem = [];
+            byName = [];
+            for k = 1:numel(obj.Snapshots)
+                [~, stem, ext] = fileparts(obj.Snapshots(k).OriginalPath);
                 name = [stem, ext];
                 if strcmp(stem, key)
-                    byStem{end + 1} = snap.Id;
+                    byStem(end + 1) = k; %#ok<AGROW>
                 end
                 if strcmp(name, key)
-                    byName{end + 1} = snap.Id;
+                    byName(end + 1) = k; %#ok<AGROW>
                 end
             end
 
@@ -365,13 +365,13 @@ classdef VersoRegistration < handle
             end
 
             if numel(matches) == 1
-                id = matches{1};
+                idx = matches(1);
             elseif isempty(matches)
                 error("verso:VersoRegistration:noSuchSlice", ...
                     "No section matches '%s'. Available ids: %s", key, strjoin(obj.IdsList, ", "));
             else
                 error("verso:VersoRegistration:ambiguousSlice", ...
-                    "Slice '%s' is ambiguous; candidate ids: %s", key, strjoin(matches, ", "));
+                    "Slice '%s' is ambiguous; candidate ids: %s", key, strjoin(obj.IdsList(matches), ", "));
             end
         end
 
