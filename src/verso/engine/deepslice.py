@@ -302,17 +302,10 @@ def _interpolate_bad_sections(
 ) -> int:
     """Fill bad-section anchorings by interpolating from the good DeepSlice ones."""
     from verso.engine.anchoring import quicknii_series_anchorings
-    from verso.engine.io.image_io import registration_dimensions
 
-    usable: list[tuple[Section, int, int]] = []
-    for section in project.sections:
-        try:
-            w, h = registration_dimensions(section)
-        except Exception:
-            continue
-        if w > 0 and h > 0:
-            usable.append((section, w, h))
-
+    usable: list[tuple[Section, int, int]] = [
+        (section, *section.resolution_thumbnail_wh) for section in project.sections
+    ]
     if not usable:
         return 0
 
@@ -362,17 +355,10 @@ def reset_in_progress_to_default_proposals(
         _display_space_anchoring,
         quicknii_series_anchorings,
     )
-    from verso.engine.io.image_io import registration_dimensions
 
-    usable: list[tuple[Section, int, int]] = []
-    for section in sections:
-        try:
-            w, h = registration_dimensions(section)
-        except Exception:
-            continue
-        if w > 0 and h > 0:
-            usable.append((section, w, h))
-
+    usable: list[tuple[Section, int, int]] = [
+        (section, *section.resolution_thumbnail_wh) for section in sections
+    ]
     if not usable:
         return 0
 

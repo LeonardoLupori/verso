@@ -32,8 +32,8 @@ def _make_project(tmp_path: Path) -> Project:
         name="deep",
         atlas=AtlasRef(name="allen_mouse_25um"),
         sections=[
-            Section("s001", 1, str(img1), str(img1)),
-            Section("s002", 2, str(img2), str(img2)),
+            Section("s001", 1, str(img1), str(img1), resolution_thumbnail_wh=(100, 80)),
+            Section("s002", 2, str(img2), str(img2), resolution_thumbnail_wh=(100, 80)),
         ],
     )
 
@@ -316,9 +316,27 @@ def test_apply_deepslice_discards_bad_predictions_and_interpolates(tmp_path: Pat
         name="bad-interp",
         atlas=AtlasRef(name="allen_mouse_25um"),
         sections=[
-            Section("s001", 1, str(image_paths[0]), str(image_paths[0])),
-            Section("s002", 2, str(image_paths[1]), str(image_paths[1])),
-            Section("s003", 3, str(image_paths[2]), str(image_paths[2])),
+            Section(
+                "s001",
+                1,
+                str(image_paths[0]),
+                str(image_paths[0]),
+                resolution_thumbnail_wh=(100, 80),
+            ),
+            Section(
+                "s002",
+                2,
+                str(image_paths[1]),
+                str(image_paths[1]),
+                resolution_thumbnail_wh=(100, 80),
+            ),
+            Section(
+                "s003",
+                3,
+                str(image_paths[2]),
+                str(image_paths[2]),
+                resolution_thumbnail_wh=(100, 80),
+            ),
         ],
     )
 
@@ -728,12 +746,14 @@ def test_reset_default_proposals_interpolates_flipped_keyframe_in_display_space(
                 1,
                 str(image_paths[0]),
                 str(image_paths[0]),
+                resolution_thumbnail_wh=(1000, 800),
             ),
             Section(
                 "s002",
                 2,
                 str(image_paths[1]),
                 str(image_paths[1]),
+                resolution_thumbnail_wh=(1000, 800),
             ),
             Section(
                 "s003",
@@ -741,6 +761,7 @@ def test_reset_default_proposals_interpolates_flipped_keyframe_in_display_space(
                 str(image_paths[2]),
                 str(image_paths[2]),
                 preprocessing=Preprocessing(flip_horizontal=True),
+                resolution_thumbnail_wh=(1000, 800),
             ),
         ],
     )

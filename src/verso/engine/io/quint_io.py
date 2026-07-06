@@ -396,16 +396,10 @@ def _registration_dims(section) -> tuple[int, int]:
 
     QuickNII's ``width`` and ``height`` are part of the anchoring scale:
     ``HStretch = len(u) / width`` and ``VStretch = len(v) / height``.  VERSO
-    aligns against the working thumbnail when present, so exports must report
-    that image size instead of reconstructing full-resolution dimensions from
-    the project's ``working_scale``.
+    aligns against the working thumbnail, so exports report that image size —
+    the working-resolution dimensions cached on the section at import.
     """
-    try:
-        from verso.engine.io.image_io import registration_dimensions
-
-        return registration_dimensions(section)
-    except Exception:
-        return 0, 0
+    return section.resolution_thumbnail_wh
 
 
 # ---------------------------------------------------------------------------

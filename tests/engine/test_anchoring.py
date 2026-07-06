@@ -432,6 +432,7 @@ def test_interpolate_anchorings_uses_quicknii_decomposed_space(tmp_path):
             slice_index=1,
             original_path=str(paths[0]),
             thumbnail_path=str(paths[0]),
+            resolution_thumbnail_wh=(1000, 800),
             alignment=Alignment(anchoring=stored[0], status=AlignmentStatus.COMPLETE),
         ),
         Section(
@@ -439,12 +440,14 @@ def test_interpolate_anchorings_uses_quicknii_decomposed_space(tmp_path):
             slice_index=2,
             original_path=str(paths[1]),
             thumbnail_path=str(paths[1]),
+            resolution_thumbnail_wh=(1000, 800),
         ),
         Section(
             id="s003",
             slice_index=3,
             original_path=str(paths[2]),
             thumbnail_path=str(paths[2]),
+            resolution_thumbnail_wh=(1000, 800),
             alignment=Alignment(anchoring=stored[2], status=AlignmentStatus.COMPLETE),
         ),
     ]
@@ -477,6 +480,7 @@ def test_interpolate_anchorings_with_one_keyframe_matches_quicknii(tmp_path):
             slice_index=1,
             original_path=str(paths[0]),
             thumbnail_path=str(paths[0]),
+            resolution_thumbnail_wh=(1000, 800),
             alignment=Alignment(
                 anchoring=SAMPLE_ANCHORING,
                 status=AlignmentStatus.COMPLETE,
@@ -487,6 +491,7 @@ def test_interpolate_anchorings_with_one_keyframe_matches_quicknii(tmp_path):
             slice_index=2,
             original_path=str(paths[1]),
             thumbnail_path=str(paths[1]),
+            resolution_thumbnail_wh=(1000, 800),
         ),
     ]
 
@@ -539,6 +544,7 @@ def test_interpolate_anchorings_handles_horizontally_flipped_stored_keyframe(
             slice_index=1,
             original_path=str(paths[0]),
             thumbnail_path=str(paths[0]),
+            resolution_thumbnail_wh=(1000, 800),
             alignment=Alignment(anchoring=left, status=AlignmentStatus.COMPLETE),
         ),
         Section(
@@ -546,12 +552,14 @@ def test_interpolate_anchorings_handles_horizontally_flipped_stored_keyframe(
             slice_index=2,
             original_path=str(paths[1]),
             thumbnail_path=str(paths[1]),
+            resolution_thumbnail_wh=(1000, 800),
         ),
         Section(
             id="s003",
             slice_index=3,
             original_path=str(paths[2]),
             thumbnail_path=str(paths[2]),
+            resolution_thumbnail_wh=(1000, 800),
             preprocessing=Preprocessing(flip_horizontal=True),
             alignment=Alignment(
                 anchoring=right,
@@ -600,12 +608,14 @@ def test_interpolate_anchorings_duplicate_serial_strips_inplane_rotation_keeps_t
             slice_index=10,
             original_path=str(paths[0]),
             thumbnail_path=str(paths[0]),
+            resolution_thumbnail_wh=(800, 600),
         ),
         Section(
             id="s002",
             slice_index=10,
             original_path=str(paths[1]),
             thumbnail_path=str(paths[1]),
+            resolution_thumbnail_wh=(1000, 800),
             alignment=Alignment(
                 anchoring=stored_anchoring,
                 status=AlignmentStatus.COMPLETE,
@@ -616,6 +626,7 @@ def test_interpolate_anchorings_duplicate_serial_strips_inplane_rotation_keeps_t
             slice_index=11,
             original_path=str(paths[2]),
             thumbnail_path=str(paths[2]),
+            resolution_thumbnail_wh=(1000, 800),
         ),
     ]
 
@@ -653,6 +664,7 @@ def test_interpolate_anchorings_without_atlas_shape_keeps_legacy_one_keyframe_no
             slice_index=1,
             original_path=str(paths[0]),
             thumbnail_path=str(paths[0]),
+            resolution_thumbnail_wh=(1000, 800),
             alignment=Alignment(
                 anchoring=SAMPLE_ANCHORING,
                 status=AlignmentStatus.COMPLETE,
@@ -663,6 +675,7 @@ def test_interpolate_anchorings_without_atlas_shape_keeps_legacy_one_keyframe_no
             slice_index=2,
             original_path=str(paths[1]),
             thumbnail_path=str(paths[1]),
+            resolution_thumbnail_wh=(1000, 800),
         ),
     ]
 
@@ -803,6 +816,7 @@ def test_interpolate_anchorings_sagittal_axis_strips_in_plane_rotation(tmp_path)
             slice_index=1,
             original_path=str(paths[0]),
             thumbnail_path=str(paths[0]),
+            resolution_thumbnail_wh=(1000, 800),
             alignment=Alignment(anchoring=left, status=AlignmentStatus.COMPLETE),
         ),
         Section(
@@ -810,12 +824,14 @@ def test_interpolate_anchorings_sagittal_axis_strips_in_plane_rotation(tmp_path)
             slice_index=2,
             original_path=str(paths[1]),
             thumbnail_path=str(paths[1]),
+            resolution_thumbnail_wh=(1000, 800),
         ),
         Section(
             id="s003",
             slice_index=3,
             original_path=str(paths[2]),
             thumbnail_path=str(paths[2]),
+            resolution_thumbnail_wh=(1000, 800),
             alignment=Alignment(anchoring=right, status=AlignmentStatus.COMPLETE),
         ),
     ]

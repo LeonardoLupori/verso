@@ -1556,18 +1556,9 @@ class MainWindow(QMainWindow):
             return
 
         from verso.engine.anchoring import quicknii_series_anchorings
-        from verso.engine.io.image_io import registration_dimensions
         from verso.engine.model.alignment import AlignmentStatus
 
-        usable = []
-        for section in sections:
-            try:
-                w, h = registration_dimensions(section)
-            except Exception:
-                continue
-            if w > 0 and h > 0:
-                usable.append((section, w, h))
-
+        usable = [(section, *section.resolution_thumbnail_wh) for section in sections]
         if not usable:
             return
 

@@ -13,7 +13,7 @@ DEFAULT_PROJECT_FILENAME = "project-verso.json"
 # Current project-schema version. Bumped to 1.2 when per-section pixel
 # dimensions and atlas resolution/shape were added so the file is self-contained
 # for pixel <-> atlas voxel mapping. Older files are migrated on load.
-SCHEMA_VERSION = "1.3"
+SCHEMA_VERSION = "1.2"
 
 # Mapping between the stored axis-name field and the QuickNII voxel axis index.
 # QuickNII voxel space ordering is (LR=0, AP=1, DV=2); "ML" is the storage name

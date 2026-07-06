@@ -489,19 +489,6 @@ def _extract_ome_channel_names(ome_xml: str) -> list[str]:
     return re.findall(r'<Channel[^>]*Name="([^"]+)"', ome_xml)
 
 
-def registration_dimensions(section) -> tuple[int, int]:
-    """Return dimensions of the image used for interactive registration.
-
-    Checks the canonical OME-TIFF path first, then the stored thumbnail_path
-    (legacy PNG), and falls back to the original image.
-    """
-    thumbnail = Path(section.thumbnail_path) if section.thumbnail_path else None
-    for candidate in (_canonical_thumbnail(section), thumbnail):
-        if candidate and candidate.exists():
-            return image_dimensions(candidate)
-    return image_dimensions(section.original_path)
-
-
 def load_filmstrip_thumbnail(
     section,
     working_scale: float,

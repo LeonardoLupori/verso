@@ -61,7 +61,7 @@ Top level:
 
 `Project.from_dict` is pure and **preserves** the stored `version` (no I/O). `Project.load`
 performs migration: when the file's version is older than the current `SCHEMA_VERSION`
-(`"1.2"`), it calls `backfill_metadata` (`engine/io/project_io.py`) to populate the new
+(`"1.2"`), it calls `backfill_metadata` (`engine/io/project_metadata.py`) to populate the new
 per-section pixel dimensions (from the image files, regenerating a missing thumbnail via
 `ensure_working_copy`) and the atlas `resolution_um`/`shape` (from the loaded
 `AtlasVolume`), then bumps the in-memory version. The migrated fields persist on the next

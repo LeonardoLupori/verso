@@ -236,7 +236,7 @@ def test_project_json_is_valid(tmp_path: Path):
     p.save(json_path)
 
     data = json.loads(json_path.read_text())
-    assert data["version"] == "1.3"
+    assert data["version"] == "1.2"
     assert data["interpolation_axis"] == "AP"
     assert len(data["sections"]) == 1
     assert data["sections"][0]["id"] == "s001"
