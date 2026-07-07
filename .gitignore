@@ -16,3 +16,5 @@ Visualign-master*
 !docs/*.png
 # MATLAB port of engine/registration.py — override the blanket *.m ignore.
 !matlab/**/*.m
+# MATLAB parity test fixtures — override the blanket *.json ignore.
+!matlab/tests/fixtures/**/*.json
