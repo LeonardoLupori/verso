@@ -340,6 +340,33 @@ classdef VersoRegistration < handle
         end
     end
 
+    methods (Static, Hidden)
+        % Thin forwarders exposing the +verso/private numeric primitives to the
+        % cross-language parity test (matlab/tests/tParity.m). Same test-hook
+        % pattern as the setAtlasVolumeForTesting methods above: Hidden, so they
+        % are not part of the public API -- they only let the pure primitives be
+        % checked directly against the Python golden fixture.
+        function out = warpSectionToAtlasForTesting(pointsNorm, srcPx, dstPx, workW, workH)
+            out = warpPointsSectionToAtlas(pointsNorm, srcPx, dstPx, workW, workH);
+        end
+
+        function out = warpAtlasToSectionForTesting(pointsNorm, srcPx, dstPx, workW, workH)
+            out = warpPointsAtlasToSection(pointsNorm, srcPx, dstPx, workW, workH);
+        end
+
+        function ouv = anchoringVectorsForTesting(anchoring)
+            % Returns a 3x3 matrix with rows [o; u; v].
+            [o, u, v] = anchoringToVectors(anchoring);
+            ouv = [o; u; v];
+        end
+
+        function idx = quickniiVoxelIndicesForTesting(coords)
+            % coords: (M,3) continuous [lr ap dv] -> (M,3) [lr ap dv] indices.
+            [lr, ap, dv] = quickniiVoxelIndices(coords(:, 1), coords(:, 2), coords(:, 3));
+            idx = [lr, ap, dv];
+        end
+    end
+
     methods (Access = private)
         function snap = getSnapshot(obj, key)
             idx = obj.resolveSlice(key);
