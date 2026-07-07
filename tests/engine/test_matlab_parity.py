@@ -211,7 +211,13 @@ def _voxel_cases() -> list[dict]:
 def _image_to_atlas_cases(projects: dict[str, dict]) -> list[dict]:
     specs = [
         ("plain_voxel", _section("s1", 10.0), [[30.0, 20.0], [70.0, 50.0]], "full", "voxel"),
-        ("flips_voxel", _section("s1", 10.0, flip_h=True, flip_v=True), [[30.0, 20.0]], "full", "voxel"),
+        (
+            "flips_voxel",
+            _section("s1", 10.0, flip_h=True, flip_v=True),
+            [[30.0, 20.0]],
+            "full",
+            "voxel",
+        ),
         ("working_voxel", _section("s1", 10.0), [[12.0, 8.0]], "working", "voxel"),
         ("units_um", _section("s1", 10.0), [[30.0, 20.0]], "full", "um"),
         (
@@ -325,7 +331,7 @@ def _assert_close(a, b, path: str = "") -> None:
             _assert_close(a[k], b[k], f"{path}.{k}")
     elif isinstance(a, (list, tuple)):
         assert isinstance(b, (list, tuple)) and len(a) == len(b), f"{path}: list length"
-        for i, (x, y) in enumerate(zip(a, b)):
+        for i, (x, y) in enumerate(zip(a, b, strict=True)):
             _assert_close(x, y, f"{path}[{i}]")
     elif isinstance(a, bool) or isinstance(b, bool):
         assert a == b, f"{path}: {a!r} != {b!r}"
