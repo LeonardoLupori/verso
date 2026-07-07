@@ -39,9 +39,19 @@ class SlicingPositionBox(QGroupBox):
         """
         self._plot.getPlotItem().getAxis("left").setLabel(f"{name} (mm)", color="#aaa")
 
-    def update_plot(self, sections: list, current_index: int) -> None:
-        """Redraw the position strip chart."""
-        from verso.engine.model.alignment import AlignmentStatus
+    # Translucency for the dots so they blend into the plot background; the hues
+    # themselves come from status.STATUS_COLOR (the filmstrip's traffic lights).
+    _DOT_ALPHA = 220
+
+    def update_plot(self, sections: list, current_index: int, dirty_ids: set[str]) -> None:
+        """Redraw the position strip chart.
+
+        Dots are coloured by each section's *align* step status via
+        :func:`section_step_status`, so an unsaved (dirty) section shows yellow
+        exactly as its Align filmstrip dot does.  ``dirty_ids`` is the set of
+        section ids with unsaved align edits (from the GUI edit registry).
+        """
+        from verso.engine.model.status import STATUS_COLOR, section_step_status
 
         pi = self._plot.getPlotItem()
         pi.clear()
@@ -49,57 +59,52 @@ class SlicingPositionBox(QGroupBox):
         if not sections:
             return
 
-        x_complete, y_complete = [], []
-        x_progress, y_progress = [], []
-        x_none, y_none = [], []
-
+        # Group dots by align status. STATUS_COLOR is ordered gray → yellow →
+        # green, so drawing in its order keeps the "further along" dots on top.
+        buckets = {status: ([], []) for status in STATUS_COLOR}
         for section in sections:
             pos = section.alignment.position_mm
             if pos is None or all(v == 0.0 for v in (section.alignment.anchoring or [])):
                 continue
             # X is the physical slice index so spacing matches how interpolation
             # is parameterized (uneven gaps stay uneven), not the list rank.
-            x = section.slice_index
-            s = section.alignment.status
-            if s == AlignmentStatus.COMPLETE:
-                x_complete.append(x)
-                y_complete.append(pos)
-            elif s == AlignmentStatus.IN_PROGRESS:
-                x_progress.append(x)
-                y_progress.append(pos)
-            else:
-                x_none.append(x)
-                y_none.append(pos)
+            status = section_step_status(section, "align", dirty=section.id in dirty_ids)
+            xs, ys = buckets[status]
+            xs.append(section.slice_index)
+            ys.append(pos)
 
-        def _add_scatter(xs, ys, color, size=6) -> None:
+        for status, (xs, ys) in buckets.items():
             if not xs:
-                return
+                continue
+            color = pg.mkColor(STATUS_COLOR[status])
+            color.setAlpha(self._DOT_ALPHA)
             pi.addItem(
                 pg.ScatterPlotItem(
                     x=xs,
                     y=ys,
                     symbol="o",
-                    size=size,
-                    brush=pg.mkBrush(*color),
+                    size=6,
+                    brush=pg.mkBrush(color),
                     pen=pg.mkPen(None),
                 )
             )
 
-        _add_scatter(x_none, y_none, (130, 130, 130, 180))
-        _add_scatter(x_progress, y_progress, (255, 193, 7, 220))
-        _add_scatter(x_complete, y_complete, (76, 175, 80, 220))
-
+        # Highlight the current slice: keep its status colour but ring it in white
+        # and draw it larger, so the selection is obvious without hiding the state.
         if 0 <= current_index < len(sections):
             section = sections[current_index]
             pos = section.alignment.position_mm
             if pos is not None and any(v != 0.0 for v in (section.alignment.anchoring or [])):
+                status = section_step_status(section, "align", dirty=section.id in dirty_ids)
+                color = pg.mkColor(STATUS_COLOR[status])
+                color.setAlpha(self._DOT_ALPHA)
                 pi.addItem(
                     pg.ScatterPlotItem(
                         x=[section.slice_index],
                         y=[pos],
                         symbol="o",
-                        size=11,
-                        brush=pg.mkBrush(255, 255, 255, 230),
-                        pen=pg.mkPen(None),
+                        size=10,
+                        brush=pg.mkBrush(color),
+                        pen=pg.mkPen("w", width=2),
                     )
                 )
