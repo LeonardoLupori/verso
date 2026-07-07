@@ -27,8 +27,8 @@ from PyQt6.QtWidgets import (
 
 from verso.engine.io.image_io import WORKING_SCALE
 from verso.engine.model.project import Section
-from verso.engine.preprocessing import channel_lut
 from verso.gui.widgets.canvas import ImageCanvas
+from verso.gui.widgets.channel_display import push_channel_display
 
 if TYPE_CHECKING:
     from verso.engine.atlas import AtlasVolume
@@ -254,36 +254,14 @@ class SectionCanvasPanel(QWidget):
     # ------------------------------------------------------------------
 
     def _display_image(self) -> None:
-        if self._raw_image is None:
-            self.canvas.clear()
-            self._channel_planes_key = None
-            return
-        img = self._raw_image
-        if img.ndim == 2:
-            img = img[..., np.newaxis]
-        flip_h = bool(self._section and self._section.preprocessing.flip_horizontal)
-        flip_v = bool(self._section and self._section.preprocessing.flip_vertical)
-        if flip_h:
-            img = np.fliplr(img)
-        if flip_v:
-            img = np.flipud(img)
-        n = min(img.shape[2], len(self._channels))
-
-        # Push raw planes only when section / flip / channel-count actually
-        # changed; this is the only path that touches the GPU texture.
-        planes_key = (self._planes_version, flip_h, flip_v, n)
-        if planes_key != self._channel_planes_key:
-            planes = [np.ascontiguousarray(img[:, :, i]) for i in range(n)]
-            self.canvas.set_channel_planes(planes)
-            self._channel_planes_key = planes_key
-
-        # Apply per-channel LUT / visibility — drives the brightness slider.
-        for i in range(n):
-            spec = self._channels[i]
-            if not getattr(spec, "visible", True) or float(spec.scale) <= 0:
-                self.canvas.set_channel_visible(i, False)
-            else:
-                self.canvas.set_channel_lut(i, channel_lut(spec))
+        self._channel_planes_key = push_channel_display(
+            self.canvas,
+            self._raw_image,
+            self._section,
+            self._channels,
+            self._planes_version,
+            self._channel_planes_key,
+        )
 
     # ------------------------------------------------------------------
     # Atlas overlay pipeline

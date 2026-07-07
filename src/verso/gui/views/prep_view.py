@@ -22,7 +22,6 @@ from verso.engine.model.project import ChannelSpec, Preprocessing, Section
 from verso.engine.preprocessing import (
     apply_brush_stroke,
     apply_freehand_stroke,
-    channel_lut,
     detect_foreground,
     load_mask,
     mask_to_rgba,
@@ -30,6 +29,7 @@ from verso.engine.preprocessing import (
 )
 from verso.gui.utils import require
 from verso.gui.widgets.canvas import ImageCanvas
+from verso.gui.widgets.channel_display import push_channel_display
 from verso.gui.widgets.view_chrome import make_view_status_bar
 
 if TYPE_CHECKING:
@@ -545,42 +545,15 @@ class PrepView(QWidget):
     # Display / mask state
     # ------------------------------------------------------------------
 
-    def _push_channel_planes(self, img: np.ndarray, flip_h: bool, flip_v: bool, n: int) -> None:
-        """Push raw uint8 planes to the canvas (only when section / flip changes)."""
-        planes: list[np.ndarray | None] = [np.ascontiguousarray(img[:, :, i]) for i in range(n)]
-        self._canvas.set_channel_planes(planes)
-
     def _display_image(self) -> None:
-        if self._raw_image is None:
-            self._canvas.clear()
-            self._channel_planes_key = None
-            return
-        img = self._raw_image
-        if img.ndim == 2:
-            img = img[..., np.newaxis]
-        flip_h = bool(self._section and self._section.preprocessing.flip_horizontal)
-        flip_v = bool(self._section and self._section.preprocessing.flip_vertical)
-        if flip_h:
-            img = np.fliplr(img)
-        if flip_v:
-            img = np.flipud(img)
-        n = min(img.shape[2], len(self._channels))
-
-        # Re-push raw planes only when section / flip / channel count changes;
-        # this is the only path that touches the GPU texture.
-        planes_key = (self._planes_version, flip_h, flip_v, n)
-        if planes_key != self._channel_planes_key:
-            self._push_channel_planes(img, flip_h, flip_v, n)
-            self._channel_planes_key = planes_key
-
-        # Apply per-channel LUT + visibility — this is what the brightness
-        # slider drives, and it's the cheap path (a 1 KB table swap per tick).
-        for i in range(n):
-            spec = self._channels[i]
-            if not getattr(spec, "visible", True) or float(spec.scale) <= 0:
-                self._canvas.set_channel_visible(i, False)
-            else:
-                self._canvas.set_channel_lut(i, channel_lut(spec))
+        self._channel_planes_key = push_channel_display(
+            self._canvas,
+            self._raw_image,
+            self._section,
+            self._channels,
+            self._planes_version,
+            self._channel_planes_key,
+        )
 
     def _load_or_init_mask(self) -> None:
         if self._section is None or self._raw_image is None:
