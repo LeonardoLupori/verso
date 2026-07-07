@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from verso.engine.drafts import commit_alignment
 from verso.engine.model.alignment import Alignment, AlignmentStatus
 from verso.gui.utils import require
 from verso.gui.widgets.navigator import NavigatorPanel
@@ -392,8 +393,7 @@ class AlignView(QWidget):
                 aspect_ratio=w / h,
             )
             self._sync_position_from_anchoring(section.alignment.anchoring)
-        section.alignment.stored_anchoring = list(section.alignment.anchoring)
-        section.alignment.status = AlignmentStatus.COMPLETE
+        commit_alignment(section)
         self._reset_undo()
         self._set_dirty(False)
         self._state.sync_baseline(section.id, "align", copy.deepcopy(section.alignment))

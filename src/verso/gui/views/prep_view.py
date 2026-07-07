@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from verso.engine.drafts import PrepDraft, persist_prep_draft
+from verso.engine.drafts import PrepDraft, commit_prep_draft
 from verso.engine.model.project import ChannelSpec, Preprocessing, Section
 from verso.engine.preprocessing import (
     apply_brush_stroke,
@@ -430,7 +430,7 @@ class PrepView(QWidget):
             self._section.preprocessing.flip_vertical,
         )
         changed = self._mask_dirty or flip_changed
-        persist_prep_draft(self._section, draft)
+        commit_prep_draft(self._section, draft)
 
         self._mask_dirty = False
         self._saved_undo_depth = len(self._undo_stack)

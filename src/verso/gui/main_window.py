@@ -644,8 +644,8 @@ class MainWindow(QMainWindow):
         """
         from verso.engine.drafts import (
             commit_alignment,
+            commit_prep_draft,
             commit_warp,
-            persist_prep_draft,
         )
 
         project = self._state.project
@@ -671,7 +671,7 @@ class MainWindow(QMainWindow):
                     # Flip invalidation already happened at toggle time, so this
                     # only writes masks — it won't clobber an alignment the user
                     # redid after flipping.
-                    persist_prep_draft(section, draft)
+                    commit_prep_draft(section, draft)
                 self._state.clear_dirty(section.id, "prep")
             # Commit align before warp so warp can reach COMPLETE.
             if "align" in steps and self._state.is_dirty(section.id, "align"):

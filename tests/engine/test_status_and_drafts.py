@@ -7,8 +7,8 @@ import numpy as np
 from verso.engine.drafts import (
     PrepDraft,
     commit_alignment,
+    commit_prep_draft,
     commit_warp,
-    persist_prep_draft,
     slice_mask_path_for,
     wipe_alignment_for_flip,
 )
@@ -126,8 +126,17 @@ def test_commit_alignment_noop_on_zero_plane():
     assert section.alignment.status == AlignmentStatus.NOT_STARTED
 
 
+def test_commit_warp_empty_resets_to_not_started():
+    # A warp with no control points is not a finished warp: it resets to
+    # NOT_STARTED even when a usable plane exists, matching the per-view save.
+    section = _section(alignment=Alignment(anchoring=[1.0] * 9, status=AlignmentStatus.COMPLETE))
+    section.warp.status = AlignmentStatus.COMPLETE
+    assert commit_warp(section) is False
+    assert section.warp.status == AlignmentStatus.NOT_STARTED
+
+
 def test_commit_warp_requires_usable_plane():
-    section = _section()
+    section = _section(warp=WarpState(control_points=[ControlPoint(0, 0, 0, 0)]))
     assert commit_warp(section) is False
     section.alignment.status = AlignmentStatus.COMPLETE
     assert commit_warp(section) is True
@@ -170,11 +179,11 @@ def test_wipe_alignment_for_flip_resets_everything():
 
 
 # ---------------------------------------------------------------------------
-# persist_prep_draft
+# commit_prep_draft
 # ---------------------------------------------------------------------------
 
 
-def test_persist_prep_draft_writes_mask_and_sets_path(tmp_path):
+def test_commit_prep_draft_writes_mask_and_sets_path(tmp_path):
     section = _section(
         original_path=str(tmp_path / "img.png"),
         thumbnail_path=str(tmp_path / "thumbnails" / "img.tif"),
@@ -183,14 +192,14 @@ def test_persist_prep_draft_writes_mask_and_sets_path(tmp_path):
     mask[1:3, 1:3] = True
     draft = PrepDraft(slice_mask=mask, mask_dirty=True)
 
-    persist_prep_draft(section, draft)
+    commit_prep_draft(section, draft)
 
     expected = slice_mask_path_for(section)
     assert expected.exists()
     assert section.preprocessing.slice_mask_path == str(expected)
 
 
-def test_persist_prep_draft_preserves_alignment_through_flip(tmp_path):
+def test_commit_prep_draft_preserves_alignment_through_flip(tmp_path):
     """Flips are invalidated at toggle time, so persisting a prep draft must
     never wipe an alignment the user (re)did after flipping."""
     section = _section(
@@ -203,7 +212,7 @@ def test_persist_prep_draft_preserves_alignment_through_flip(tmp_path):
     section.preprocessing.flip_horizontal = True  # current differs from base (False)
     draft = PrepDraft(base_flip_h=False, base_flip_v=False)
 
-    persist_prep_draft(section, draft)
+    commit_prep_draft(section, draft)
 
     assert section.alignment.status == AlignmentStatus.COMPLETE
     assert section.alignment.stored_anchoring == [1.0] * 9

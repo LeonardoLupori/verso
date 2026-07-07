@@ -4,7 +4,7 @@ This module holds the pure-engine side of the persistent unsaved-edits model:
 
 - :class:`PrepDraft` — an in-memory slice-mask edit for one section, kept
   resident until the user saves.
-- :func:`persist_prep_draft` — write a prep draft's masks to disk.
+- :func:`commit_prep_draft` — write a prep draft's masks to disk.
 - :func:`commit_alignment` / :func:`commit_warp` — promote in-memory align/warp
   edits to their saved state.
 - :func:`wipe_alignment_for_flip` — invalidate alignment + warp after a flip.
@@ -70,7 +70,7 @@ def wipe_alignment_for_flip(section: Section) -> None:
     section.warp.status = AlignmentStatus.NOT_STARTED
 
 
-def persist_prep_draft(section: Section, draft: PrepDraft) -> None:
+def commit_prep_draft(section: Section, draft: PrepDraft) -> None:
     """Write *draft*'s masks to disk and update ``section.preprocessing`` paths.
 
     A flip invalidates the alignment **at the moment the user toggles it** (the
@@ -102,13 +102,20 @@ def commit_alignment(section: Section) -> bool:
 def commit_warp(section: Section) -> bool:
     """Mark the section's warp saved, committing its alignment plane too.
 
+    An **empty** warp (no control points) is not a finished warp, so it resets to
+    NOT_STARTED (matching the per-view Warp save) and returns False.
+
     Placing control points means the user accepted the section's affine plane,
     so the alignment is promoted to COMPLETE via :func:`commit_alignment` when it
     isn't already.  Without this the next save's auto-interpolation would treat
     the plane as unfinished, re-guess it, and leave the warp sitting on a
-    different plane.  Returns False without changing state only when there is no
-    usable plane to commit (a zero/empty anchoring).
+    different plane.  Returns False without promoting to COMPLETE when there are
+    no control points, or when there is no usable plane to commit (a zero/empty
+    anchoring).
     """
+    if not section.warp.control_points:
+        section.warp.status = AlignmentStatus.NOT_STARTED
+        return False
     if section.alignment.status != AlignmentStatus.COMPLETE and not commit_alignment(section):
         return False
     section.warp.status = AlignmentStatus.COMPLETE
@@ -118,8 +125,8 @@ def commit_warp(section: Section) -> bool:
 __all__ = [
     "PrepDraft",
     "commit_alignment",
+    "commit_prep_draft",
     "commit_warp",
-    "persist_prep_draft",
     "slice_mask_path_for",
     "wipe_alignment_for_flip",
 ]
