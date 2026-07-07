@@ -98,7 +98,7 @@ Where:
 - `unit_u = u / |u|`, `u_stretch = |u|`
 - `unit_v = v / |v|`, `v_stretch = |v|`
 
-Interpolation (linear regression / piecewise linear) is performed in unpacked space, then repacked to the 9-component anchoring format. VERSO's `quicknii_series_anchorings()` in `engine/registration.py` mirrors this algorithm and parameterizes it on the project's `interpolation_axis` (the original QuickNII algorithm is coronal-only).
+Interpolation (linear regression / piecewise linear) is performed in unpacked space, then repacked to the 9-component anchoring format. VERSO's `quicknii_series_anchorings()` in `engine/anchoring.py` mirrors this algorithm and parameterizes it on the project's `interpolation_axis` (the original QuickNII algorithm is coronal-only).
 
 ## VisuAlign JSON format
 
@@ -187,9 +187,11 @@ Export QuickNII XML / JSON, Export VisuAlign JSON).
 
 Internal helpers:
 - `_markers_to_control_points(markers, width, height)` — `[[ox, oy, nx, ny]]`
-  pixel arrays (or legacy `{x, y, dx, dy}` dicts) → `[ControlPoint]` (normalised).
-- `_control_points_to_markers(cps, width, height)` — `[ControlPoint]` →
-  `[[src_x·w, src_y·h, dst_x·w, dst_y·h]]` pixel arrays.
+  pixel arrays (or legacy `{x, y, dx, dy}` dicts) → `[ControlPoint]`
+  (working-resolution pixels; only the legacy normalised dicts are multiplied by `width`/`height`).
+- `_control_points_to_markers(cps)` — `[ControlPoint]` →
+  `[[src_x, src_y, dst_x, dst_y]]` pixel arrays (rounded to 6 dp; pixel values pass
+  straight through, no scaling).
 
 ### Round-trip guarantee
 

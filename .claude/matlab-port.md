@@ -99,10 +99,12 @@ port:
   1-indexed; the floor/ceil formulas themselves stay 0-based).
 - **Nonlinear warp** (`engine/warping.py`): piecewise-affine Delaunay warp,
   VisuAlign-compatible.
-  - Control points are normalized `[0,1]²` (`ControlPoint.src_x/y`,
-    `dst_x/y` in `project-verso.json`), and get **four invisible corner
-    anchors** prepended before triangulating:
-    `[-0.1,-0.1], [1.1,-0.1], [-0.1,1.1], [1.1,1.1]` (identity, src==dst).
+  - Control points are stored in **working-resolution pixels**
+    (`ControlPoint.src_x/y`, `dst_x/y` in `project-verso.json`) and are
+    normalized to `[0,1]²` internally (divided by `work_w`/`work_h` in
+    `prepareWarp`); they then get **four invisible corner anchors** prepended
+    before triangulating: `[-0.1,-0.1], [1.1,-0.1], [-0.1,1.1], [1.1,1.1]`
+    (identity, src==dst).
   - Before triangulating, points are scaled by `[aspect, 1]` where
     `aspect = work_w / work_h` (the section's working-resolution aspect
     ratio) — Delaunay triangulation is invariant to uniform scaling but not

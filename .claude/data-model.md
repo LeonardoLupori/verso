@@ -48,7 +48,7 @@ Top level:
 
 | Field | Type | Notes |
 |---|---|---|
-| `version` | str | Schema version. Current `"1.2"`. Older files load and are **migrated on load** (see "Schema migration" below): `"1.0"` defaults `interpolation_axis="AP"`; pre-`1.2` files backfill per-section pixel dimensions and atlas `resolution_um`/`shape`. Migrated state persists on the next save. |
+| `version` | str | Schema version the file was written under; currently `"1.2"`. Informational only — see "Schema versioning" below. **Early development: no migration / backward-compatibility support.** |
 | `name` | str | Project display name. |
 | `atlas` | `AtlasRef` | `{name, source, resolution_um, shape}`. `source` defaults to `"brainglobe"`. `resolution_um` is the isotropic atlas voxel size (microns); `shape` is the atlas voxel grid `[x, y, z]` in QuickNII/brainglobe order. Both are cached so the project file is self-contained for pixel ↔ atlas voxel mapping without re-fetching the atlas; `0.0` / `[0, 0, 0]` until populated. |
 | `interpolation_axis` | str | Brain axis the cutting series runs along: `"AP"` (coronal, default), `"ML"` (sagittal), or `"DV"` (horizontal). Set at project creation; drives the QuickNII voxel axis used by `quicknii_series_anchorings`. See "Interpolation axis" below. |
@@ -57,17 +57,18 @@ Top level:
 | `working_scale` | float | Ratio `working_long_side / original_long_side`, **uniform across all sections**. Derived once at import from the largest image so its longest side fits within `THUMBNAIL_MAX_SIDE` (2000 px); see `compute_working_scale` in `engine/io/image_io.py`. Full-resolution export scales back up by this factor. Default `0.2`. |
 | `sections` | `list[Section]` | Sections in the cutting series. |
 
-### Schema migration
+### Schema versioning
 
-`Project.from_dict` is pure and **preserves** the stored `version` (no I/O). `Project.load`
-performs migration: when the file's version is older than the current `SCHEMA_VERSION`
-(`"1.2"`), it calls `backfill_metadata` (`engine/io/project_metadata.py`) to populate the new
-per-section pixel dimensions (from the image files, regenerating a missing thumbnail via
-`ensure_working_copy`) and the atlas `resolution_um`/`shape` (from the loaded
-`AtlasVolume`), then bumps the in-memory version. The migrated fields persist on the next
-`save`. New projects are populated at import (in the New Project flow) so they are written
-complete; if the atlas cannot be fetched at creation, the file is left pre-`1.2` so the next
-load completes it.
+VERSO is in **early development: there is no schema migration or backward-compatibility
+support.** The `version` field records the schema a file was written under, but nothing
+compares or upgrades it — `Project.load` simply calls `Project.from_dict`, and older or
+foreign project files are not guaranteed to load. When the schema changes, expect to
+recreate projects rather than migrate them.
+
+Missing *metadata* on an otherwise-current file (per-section pixel dimensions, atlas
+`resolution_um`/`shape` — the `0` / `0.0` / `(0, 0, 0)` sentinels) can be backfilled in
+place by `backfill_metadata` (`engine/io/project_metadata.py`), which reads the image files
+and the `AtlasVolume`. This is best-effort population of unset fields, not version migration.
 
 ### `ChannelSpec`
 
@@ -214,13 +215,13 @@ All model types are `@dataclass`es in `engine/model/`:
 | Class | File | Notes |
 |---|---|---|
 | `Project` | `model/project.py` | Top-level container; `save(path)` / `load(path)` round-trip JSON. |
-| `AtlasRef` | `model/project.py` | `{name, source}`. |
+| `AtlasRef` | `model/project.py` | `{name, source, resolution_um, shape}`. |
 | `ChannelSpec` | `model/project.py` | Per-project channel display config. |
 | `Section` | `model/project.py` | One histological section. |
 | `Preprocessing` | `model/project.py` | Flips + slice-mask path. |
 | `Alignment` | `model/alignment.py` | 9-float anchoring + status + proposal/stored variants. |
 | `WarpState` | `model/alignment.py` | List of `ControlPoint`s + status. |
-| `ControlPoint` | `model/alignment.py` | `(src_x, src_y, dst_x, dst_y)` normalised. |
+| `ControlPoint` | `model/alignment.py` | `(src_x, src_y, dst_x, dst_y)` in working-resolution pixels. |
 
 Each class implements `to_dict()` / `from_dict()` for JSON round-trip.
 `Project.save(path)` writes formatted JSON; `Project.load(path)`
@@ -303,7 +304,7 @@ DeepSlice is coronal-only and is disabled in the UI when
 When some sections are aligned and others are not, VERSO fills the
 unaligned ones with linearly-interpolated proposals so the user starts
 each section near the right pose. Implementation:
-`engine/registration.py` (`quicknii_series_anchorings`,
+`engine/anchoring.py` (`quicknii_series_anchorings`,
 `interpolate_anchorings`); matches QuickNII's `MgmtPanel.dointerpolate`.
 
 The 9-float anchoring is unpacked into 11 components (midpoint xyz,
