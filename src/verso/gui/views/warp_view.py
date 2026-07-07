@@ -35,7 +35,6 @@ if TYPE_CHECKING:
 class WarpView(QWidget):
     """Canvas view for nonlinear warp via per-section control points."""
 
-    dirty_changed = pyqtSignal(bool)
     # Emitted whenever the control-point set changes (add / delete) so the
     # filmstrip status dot can refresh even when the dirty flag doesn't flip.
     cp_changed = pyqtSignal()
@@ -72,12 +71,10 @@ class WarpView(QWidget):
         self._warp_timer.setInterval(33)
         self._warp_timer.timeout.connect(self._panel.update_overlay)
 
-        # Snapshot of section.warp at section-load time, used to report whether
-        # there's persisted state to Clear.  CP edits are no longer discarded on
-        # navigation — they persist on the Section and dirtiness lives in the
-        # edit registry.
-        self._baseline_warp: WarpState | None = None
-        self._dirty = False
+        # Dirty flag and last-saved baseline are the single source of truth in
+        # AppState, keyed by (section.id, "warp").  This view reads them via
+        # ``_state.is_dirty`` / ``_saved_warp`` and mutates them through
+        # ``_set_dirty`` — it keeps no local copy of either.
 
         # In-memory undo history of control-point snapshots for the active
         # slice.  Reset whenever the baseline is re-snapshotted (section / view
@@ -141,23 +138,12 @@ class WarpView(QWidget):
         self._cp_dragging = -1
         self._reset_undo()
         self._panel.update_overlay()
-        # Re-snapshot in case the section was loaded before activate. When the
-        # slice is still dirty, recover the genuine last-saved baseline from the
-        # stash rather than re-snapshotting the (dirty) section — otherwise
-        # "Clear edits" would revert to the unsaved edits instead of discarding
-        # them.
+        # Re-sync the baseline in case the section was loaded before activate.
+        # A no-op while dirty, so the stashed last-saved warp survives.  The
+        # save bar's dirty state is refreshed by the window on view entry.
         section = self._panel.section
         if section is not None:
-            if self._state.is_dirty(section.id, "warp"):
-                stashed = self._state.get_baseline(section.id, "warp")
-                self._baseline_warp = (
-                    stashed if stashed is not None else copy.deepcopy(section.warp)
-                )
-                self._set_dirty(True)
-            else:
-                self._baseline_warp = copy.deepcopy(section.warp)
-                self._state.pop_baseline(section.id, "warp")
-                self._set_dirty(False)
+            self._state.sync_baseline(section.id, "warp", copy.deepcopy(section.warp))
 
     def deactivate(self) -> None:
         """Release warp hooks so other views see a clean panel."""
@@ -257,20 +243,12 @@ class WarpView(QWidget):
         self._cp_drag_start_dst = None
         self._reset_undo()
         if section is None:
-            self._baseline_warp = None
-            self._set_dirty(False)
             return
-        # Persisted CP edits survive navigation; mirror the registry dirty state.
-        # When the slice is still dirty, recover the genuine last-saved baseline
-        # from the stash rather than re-snapshotting the (dirty) section.
-        if self._state.is_dirty(section.id, "warp"):
-            stashed = self._state.get_baseline(section.id, "warp")
-            self._baseline_warp = stashed if stashed is not None else copy.deepcopy(section.warp)
-            self._set_dirty(True)
-        else:
-            self._baseline_warp = copy.deepcopy(section.warp)
-            self._state.pop_baseline(section.id, "warp")
-            self._set_dirty(False)
+        # Persisted CP edits survive navigation; the section's dirty state and
+        # last-saved baseline live in AppState.  Re-sync the baseline (a no-op
+        # while dirty, so the stash survives).  The window refreshes the save
+        # bar for the new section.
+        self._state.sync_baseline(section.id, "warp", copy.deepcopy(section.warp))
 
     def _on_overlay_updated(self, _anchoring, _display_w, _display_h) -> None:
         if not self._active:
@@ -448,10 +426,18 @@ class WarpView(QWidget):
     # ------------------------------------------------------------------
 
     def is_dirty(self) -> bool:
-        return self._dirty
+        section = self._panel.section
+        return section is not None and self._state.is_dirty(section.id, "warp")
+
+    def _saved_warp(self) -> WarpState | None:
+        """The last-saved warp baseline for the current section, if any."""
+        section = self._panel.section
+        if section is None:
+            return None
+        return self._state.get_baseline(section.id, "warp")  # type: ignore[return-value]
 
     def has_persisted_state(self) -> bool:
-        baseline = self._baseline_warp
+        baseline = self._saved_warp()
         if baseline is None:
             return False
         return bool(baseline.control_points)
@@ -477,25 +463,25 @@ class WarpView(QWidget):
             section.warp.status = AlignmentStatus.COMPLETE
         else:
             section.warp.status = AlignmentStatus.NOT_STARTED
-        self._baseline_warp = copy.deepcopy(section.warp)
-        self._state.pop_baseline(section.id, "warp")
         self._reset_undo()
         self._set_dirty(False)
+        self._state.sync_baseline(section.id, "warp", copy.deepcopy(section.warp))
         return True
 
     def revert(self) -> bool:
         """Discard unsaved control-point edits, restoring the last-saved warp."""
         section = self._panel.section
-        if section is None or self._baseline_warp is None:
+        baseline = self._saved_warp()
+        if section is None or baseline is None:
             return False
-        section.warp = copy.deepcopy(self._baseline_warp)
+        section.warp = copy.deepcopy(baseline)
         self._cp_hovered = -1
         self._cp_dragging = -1
         self._cp_drag_start_norm = None
         self._cp_drag_start_dst = None
-        self._state.pop_baseline(section.id, "warp")
         self._reset_undo()
         self._set_dirty(False)
+        self._state.sync_baseline(section.id, "warp", copy.deepcopy(section.warp))
         if self._active:
             self._panel.update_overlay()
         return True
@@ -511,10 +497,9 @@ class WarpView(QWidget):
         self._cp_dragging = -1
         self._cp_drag_start_norm = None
         self._cp_drag_start_dst = None
-        self._baseline_warp = copy.deepcopy(section.warp)
-        self._state.pop_baseline(section.id, "warp")
         self._reset_undo()
         self._set_dirty(False)
+        self._state.sync_baseline(section.id, "warp", copy.deepcopy(section.warp))
         if self._active:
             self._panel.update_overlay()
         return True
@@ -536,7 +521,8 @@ class WarpView(QWidget):
         self._cp_drag_start_dst = None
         self._warp_timer.stop()
         self._panel.update_overlay()
-        base_cps = self._baseline_warp.control_points if self._baseline_warp else []
+        baseline = self._saved_warp()
+        base_cps = baseline.control_points if baseline else []
         self._set_dirty(previous != base_cps)
         self.cp_changed.emit()
 
@@ -555,11 +541,16 @@ class WarpView(QWidget):
         self._undo_stack.clear()
 
     def _set_dirty(self, dirty: bool) -> None:
-        if self._dirty == dirty:
+        """Flip the current section's ``warp`` dirty flag in AppState.
+
+        AppState is the single source of truth; ``mark_dirty``/``clear_dirty``
+        are idempotent and emit ``dirty_changed`` only on a real transition,
+        which drives the save bar and filmstrip dot.
+        """
+        section = self._panel.section
+        if section is None:
             return
         if dirty:
-            section = self._panel.section
-            if section is not None and self._baseline_warp is not None:
-                self._state.set_baseline(section.id, "warp", copy.deepcopy(self._baseline_warp))
-        self._dirty = dirty
-        self.dirty_changed.emit(dirty)
+            self._state.mark_dirty(section.id, "warp")
+        else:
+            self._state.clear_dirty(section.id, "warp")

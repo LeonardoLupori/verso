@@ -114,6 +114,8 @@ class JobController:
         worker = self._batch_mask_job.worker if self._batch_mask_job is not None else None
         project = self._state.project
         if worker is not None and project is not None:
+            import copy
+
             from verso.engine.drafts import PrepDraft
 
             by_id = {s.id: s for s in project.sections}
@@ -130,6 +132,11 @@ class JobController:
                         base_flip_v=section.preprocessing.flip_vertical,
                     ),
                 )
+                # Stash the last-saved baseline before dirtying so "Clear edits"
+                # can revert — the mask edit lives in the draft, so the section's
+                # current preprocessing is still the last-saved state. Mirrors the
+                # DeepSlice flow; sync_baseline on load is a no-op while dirty.
+                self._state.set_baseline(sid, "prep", copy.deepcopy(section.preprocessing))
                 self._state.mark_dirty(sid, "prep")
 
         self._window._overview.refresh()

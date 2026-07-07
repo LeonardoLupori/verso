@@ -145,9 +145,22 @@ class AppState(QObject):
 
         Stores only if absent so the first stash — taken at the clean→dirty
         transition — captures the genuine last-saved value, never a later
-        mid-edit state.
+        mid-edit state.  Used by batch flows (e.g. DeepSlice) that dirty a
+        section *after* mutating it, so the pre-edit snapshot is supplied here.
         """
         self._baselines.setdefault((section_id, step), snapshot)
+
+    def sync_baseline(self, section_id: str, step: str, snapshot: object) -> None:
+        """Refresh the baseline from the current state of a *clean* section.
+
+        Views call this when they load/activate a section: while **clean** the
+        section is at its last-saved state, so the baseline is (re)set to it;
+        while **dirty** the genuine last-saved snapshot stashed at the
+        clean→dirty transition is kept so "Clear edits" reverts correctly even
+        after navigating away and back.
+        """
+        if (section_id, step) not in self._dirty:
+            self._baselines[(section_id, step)] = snapshot
 
     def get_baseline(self, section_id: str, step: str) -> object | None:
         return self._baselines.get((section_id, step))

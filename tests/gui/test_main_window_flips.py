@@ -10,7 +10,7 @@ saved (previously ``PrepView.save()`` / ``Ctrl+S`` wiped it).
 from types import SimpleNamespace
 
 from verso.engine.model.alignment import Alignment, AlignmentStatus, ControlPoint, WarpState
-from verso.engine.model.project import Preprocessing, Section
+from verso.engine.model.project import Section
 from verso.gui.main_window import MainWindow
 from verso.gui.views.prep_view import PrepView
 
@@ -38,6 +38,9 @@ class _FakeState:
     def set_baseline(self, _section_id, _step, _snapshot):
         pass
 
+    def sync_baseline(self, _section_id, _step, _snapshot):
+        pass
+
     def get_baseline(self, _section_id, _step):
         return None
 
@@ -50,14 +53,11 @@ def _make_prep_mock(section: Section, base_flip: tuple[bool, bool]) -> SimpleNam
     mock = SimpleNamespace(
         _section=section,
         _state=_FakeState(),
-        _baseline_preprocessing=Preprocessing(),
         _prep_base_flip=base_flip,
         _mask_dirty=False,
         _current_mask=None,
         _undo_stack=[],
         _saved_undo_depth=0,
-        _dirty=True,
-        dirty_changed=SimpleNamespace(emit=lambda _v: None),
         alignment_invalidated=SimpleNamespace(emit=lambda: None),
     )
     mock._set_dirty = lambda v: PrepView._set_dirty(mock, v)

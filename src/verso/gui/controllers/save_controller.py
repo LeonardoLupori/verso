@@ -1,11 +1,22 @@
-"""Collapses the per-view Save / Clear edits / Reset handling into one path.
+"""The per-view Save / Clear edits / Reset controller.
 
 Prep, Align and Warp each expose the same ``save()/revert()/clear()`` contract
 and each properties page carries a ``save_bar``. Rather than nine near-identical
 handlers on the window, the three views register here by step name and the
-save-bar signals dispatch through a single parameterized path. The dependent-UI
-refresh itself stays on the window (its coordinator role); this controller only
-routes the button clicks.
+save-bar signals dispatch through a single parameterized path.
+
+This controller is also the one place that turns AppState's dirty state — the
+single source of truth — into save-bar button states, so the save bars are a
+pure view of the registry:
+
+- ``_on_dirty_changed`` updates one bar when the current section's dirty flag
+  flips during editing (driven by ``AppState.dirty_changed``);
+- ``refresh_all`` re-syncs all three bars (dirty + reset-enabled) whenever the
+  current section or active view changes (the window calls it after loading the
+  view so ``has_persisted_state`` reads the freshly-synced baseline).
+
+The dependent-UI refresh (project write, overview, filmstrip) stays on the
+window in its coordinator role.
 """
 
 from __future__ import annotations
@@ -17,17 +28,44 @@ if TYPE_CHECKING:
 
 
 class SaveController:
-    """Routes each view's save-bar buttons to that view's save/revert/clear."""
+    """Routes save-bar buttons and mirrors AppState dirty state onto the bars."""
 
     def __init__(self, window: MainWindow) -> None:
         self._window = window
         self._state = window._state
         # step -> (view, properties page); filled by register() as views are wired.
         self._views: dict[str, tuple[object, object]] = {}
+        # Drive the save bars from the single source of truth: an edit that flips
+        # a section's dirty flag emits AppState.dirty_changed, which enables or
+        # disables the matching bar's Save / Clear buttons.
+        self._state.dirty_changed.connect(self._on_dirty_changed)
 
     def register(self, step: str, view, page) -> None:
         """Associate a step name ("prep"/"align"/"warp") with its view and page."""
         self._views[step] = (view, page)
+
+    def refresh_all(self) -> None:
+        """Re-sync every save bar's dirty + reset-enabled to the current section.
+
+        Called by the window whenever the current section or active view changes,
+        after the view has re-synced its baseline into AppState.
+        """
+        section = self._state.current_section
+        for step, (view, page) in self._views.items():
+            dirty = section is not None and self._state.is_dirty(section.id, step)
+            page.save_bar.set_dirty(dirty)
+            page.save_bar.set_reset_enabled(view.has_persisted_state())
+
+    def _on_dirty_changed(self, section_id: str, step: str) -> None:
+        """Reflect one section/step's dirty flag onto its save bar while editing."""
+        section = self._state.current_section
+        if section is None or section.id != section_id:
+            return
+        entry = self._views.get(step)
+        if entry is None:
+            return
+        _view, page = entry
+        page.save_bar.set_dirty(self._state.is_dirty(section_id, step))
 
     def on_save(self, step: str) -> None:
         view, _ = self._views[step]

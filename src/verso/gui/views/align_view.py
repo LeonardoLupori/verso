@@ -43,7 +43,6 @@ _MAX_INPLANE_DEG = 45.0
 class AlignView(QWidget):
     """Canvas view for atlas alignment (affine anchoring)."""
 
-    dirty_changed = pyqtSignal(bool)
     anchoring_changed = pyqtSignal(list)
     alignments_updated = pyqtSignal()
 
@@ -58,12 +57,10 @@ class AlignView(QWidget):
         self._state = state
         self._reverse_axis = False
         self._interpolation_axis = 1
-        # Snapshot of section.alignment taken at section-load time; used as the
-        # undo floor and to report the last-saved plane.  Navigator edits are no
-        # longer discarded on navigation — they persist on the Section and the
-        # section's dirty state is tracked in the edit registry.
-        self._baseline_alignment: Alignment | None = None
-        self._dirty = False
+        # Dirty flag and last-saved baseline are the single source of truth in
+        # AppState, keyed by (section.id, "align").  This view reads them via
+        # ``_state.is_dirty`` / ``_saved_alignment`` and mutates them through
+        # ``_set_dirty`` — it keeps no local copy of either.
         self._active = False
 
         # In-memory undo history of anchoring snapshots for the active slice.
@@ -146,20 +143,13 @@ class AlignView(QWidget):
         self._panel.overlay_post_processor = None
         self._panel.cursor_to_atlas_mapper = None
         self._panel.update_overlay()
-        # Re-snapshot in case the section was already loaded before activate.
+        # Re-sync the baseline in case the section was loaded before activate.
+        # A no-op while dirty, so the stashed last-saved plane survives.  The
+        # save bar's dirty state is refreshed by the window on view entry.
         self._reset_undo()
         section = self._panel.section
         if section is not None:
-            if self._state.is_dirty(section.id, "align"):
-                stashed = self._state.get_baseline(section.id, "align")
-                self._baseline_alignment = (
-                    stashed if stashed is not None else copy.deepcopy(section.alignment)
-                )
-                self._set_dirty(True)
-            else:
-                self._baseline_alignment = copy.deepcopy(section.alignment)
-                self._state.pop_baseline(section.id, "align")
-                self._set_dirty(False)
+            self._state.sync_baseline(section.id, "align", copy.deepcopy(section.alignment))
 
     def deactivate(self) -> None:
         """Release any state set on the panel."""
@@ -195,23 +185,13 @@ class AlignView(QWidget):
         self._navigator.set_stretch_enabled(section is not None)
         self._reset_undo()
         if section is None:
-            self._baseline_alignment = None
             self._navigator.set_anchoring(None)
-            self._set_dirty(False)
             return
-        # Persisted edits are not discarded on navigation; reflect the section's
-        # registry dirty state instead of forcing clean.  When still dirty,
-        # recover the genuine last-saved baseline from the stash.
-        if self._state.is_dirty(section.id, "align"):
-            stashed = self._state.get_baseline(section.id, "align")
-            self._baseline_alignment = (
-                stashed if stashed is not None else copy.deepcopy(section.alignment)
-            )
-            self._set_dirty(True)
-        else:
-            self._baseline_alignment = copy.deepcopy(section.alignment)
-            self._state.pop_baseline(section.id, "align")
-            self._set_dirty(False)
+        # Persisted edits are not discarded on navigation; the section's dirty
+        # state and last-saved baseline live in AppState.  Re-sync the baseline
+        # (a no-op while dirty, so the stash survives).  The window refreshes the
+        # save bar for the new section.
+        self._state.sync_baseline(section.id, "align", copy.deepcopy(section.alignment))
 
     def _on_overlay_updated(self, anchoring, _display_w, _display_h) -> None:
         self._navigator.set_anchoring(anchoring)
@@ -375,13 +355,23 @@ class AlignView(QWidget):
     # ------------------------------------------------------------------
 
     def is_dirty(self) -> bool:
-        return self._dirty
+        section = self._panel.section
+        return section is not None and self._state.is_dirty(section.id, "align")
+
+    def _saved_alignment(self) -> Alignment | None:
+        """The last-saved alignment baseline for the current section, if any."""
+        section = self._panel.section
+        if section is None:
+            return None
+        return self._state.get_baseline(section.id, "align")  # type: ignore[return-value]
 
     def has_persisted_state(self) -> bool:
-        baseline = self._baseline_alignment
-        if baseline is None:
+        section = self._panel.section
+        if section is None:
             return False
-        stored = baseline.stored_anchoring
+        # ``stored_anchoring`` only changes on save/clear, so it reflects the
+        # last-saved plane even mid-edit — no baseline lookup needed.
+        stored = section.alignment.stored_anchoring
         return bool(stored) and any(v != 0.0 for v in stored)
 
     def save(self) -> bool:
@@ -404,22 +394,22 @@ class AlignView(QWidget):
             self._sync_position_from_anchoring(section.alignment.anchoring)
         section.alignment.stored_anchoring = list(section.alignment.anchoring)
         section.alignment.status = AlignmentStatus.COMPLETE
-        self._baseline_alignment = copy.deepcopy(section.alignment)
-        self._state.pop_baseline(section.id, "align")
         self._reset_undo()
         self._set_dirty(False)
+        self._state.sync_baseline(section.id, "align", copy.deepcopy(section.alignment))
         self.alignments_updated.emit()
         return True
 
     def revert(self) -> bool:
         """Discard unsaved anchoring edits, restoring the last-saved alignment."""
         section = self._panel.section
-        if section is None or self._baseline_alignment is None:
+        baseline = self._saved_alignment()
+        if section is None or baseline is None:
             return False
-        section.alignment = copy.deepcopy(self._baseline_alignment)
-        self._state.pop_baseline(section.id, "align")
+        section.alignment = copy.deepcopy(baseline)
         self._reset_undo()
         self._set_dirty(False)
+        self._state.sync_baseline(section.id, "align", copy.deepcopy(section.alignment))
         self._sync_position_from_anchoring(section.alignment.anchoring)
         self._panel.update_overlay()
         self.anchoring_changed.emit(list(section.alignment.anchoring))
@@ -441,10 +431,9 @@ class AlignView(QWidget):
         section.alignment.proposal_run_id = None
         section.warp.control_points.clear()
         section.warp.status = AlignmentStatus.NOT_STARTED
-        self._baseline_alignment = copy.deepcopy(section.alignment)
-        self._state.pop_baseline(section.id, "align")
         self._reset_undo()
         self._set_dirty(False)
+        self._state.sync_baseline(section.id, "align", copy.deepcopy(section.alignment))
         self.alignments_updated.emit()
         return True
 
@@ -462,7 +451,7 @@ class AlignView(QWidget):
         section.alignment.anchoring = previous
         self._sync_position_from_anchoring(previous)
         self._panel.update_overlay()
-        baseline = self._baseline_alignment
+        baseline = self._saved_alignment()
         base_anchoring = baseline.anchoring if baseline is not None else None
         self._set_dirty(previous != base_anchoring)
         self.anchoring_changed.emit(previous)
@@ -494,13 +483,16 @@ class AlignView(QWidget):
                 self._panel.update_overlay()
 
     def _set_dirty(self, dirty: bool) -> None:
-        if self._dirty == dirty:
+        """Flip the current section's ``align`` dirty flag in AppState.
+
+        AppState is the single source of truth; ``mark_dirty``/``clear_dirty``
+        are idempotent and emit ``dirty_changed`` only on a real transition,
+        which drives the save bar and filmstrip dot.
+        """
+        section = self._panel.section
+        if section is None:
             return
         if dirty:
-            section = self._panel.section
-            if section is not None and self._baseline_alignment is not None:
-                self._state.set_baseline(
-                    section.id, "align", copy.deepcopy(self._baseline_alignment)
-                )
-        self._dirty = dirty
-        self.dirty_changed.emit(dirty)
+            self._state.mark_dirty(section.id, "align")
+        else:
+            self._state.clear_dirty(section.id, "align")

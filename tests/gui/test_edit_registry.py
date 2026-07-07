@@ -82,6 +82,36 @@ def test_load_project_clears_registry_and_drafts(_qapp):
     assert not state.has_prep_draft("s1")
 
 
+def test_sync_baseline_refreshes_while_clean_but_not_while_dirty(_qapp):
+    state = AppState()
+    state.load_project(_project())
+
+    # Clean: sync stores the supplied snapshot as the baseline.
+    state.sync_baseline("s0", "align", "saved-v1")
+    assert state.get_baseline("s0", "align") == "saved-v1"
+
+    # Still clean: a later sync refreshes it (e.g. re-loading a clean section).
+    state.sync_baseline("s0", "align", "saved-v2")
+    assert state.get_baseline("s0", "align") == "saved-v2"
+
+    # Dirty: the stashed last-saved value must survive navigation, so sync is a
+    # no-op even though the section object may now hold the unsaved edit.
+    state.mark_dirty("s0", "align")
+    state.sync_baseline("s0", "align", "dirty-edit")
+    assert state.get_baseline("s0", "align") == "saved-v2"
+
+
+def test_set_baseline_keeps_first_stash(_qapp):
+    state = AppState()
+    state.load_project(_project())
+
+    # Batch flows (DeepSlice / masks) dirty a section after mutating it and stash
+    # the pre-edit snapshot via set_baseline; the first stash wins.
+    state.set_baseline("s0", "prep", "saved")
+    state.set_baseline("s0", "prep", "later")
+    assert state.get_baseline("s0", "prep") == "saved"
+
+
 def test_clear_all_edits(_qapp):
     state = AppState()
     state.load_project(_project())

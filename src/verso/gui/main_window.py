@@ -455,10 +455,9 @@ class MainWindow(QMainWindow):
         )
         for step, view, page in view_bindings:
             self._saves.register(step, view, page)
-            view.dirty_changed.connect(page.save_bar.set_dirty)
-            # Mirror the view's dirty state into the persistent edit registry for
-            # the section currently loaded in that view.
-            view.dirty_changed.connect(lambda dirty, s=step: self._on_view_dirty_changed(s, dirty))
+            # The views mutate AppState directly (the single source of truth) and
+            # SaveController drives the save bars off AppState.dirty_changed — no
+            # per-view dirty signal to mirror here.
             page.save_bar.save_requested.connect(lambda s=step: self._saves.on_save(s))
             page.save_bar.revert_requested.connect(lambda s=step: self._saves.on_revert(s))
             page.save_bar.reset_requested.connect(lambda s=step: self._saves.on_clear(s))
@@ -759,16 +758,6 @@ class MainWindow(QMainWindow):
         if mode == "prep":
             self._prep.flush_draft()
 
-    def _on_view_dirty_changed(self, step: str, dirty: bool) -> None:
-        """Mirror a view's dirty state into the registry for the current section."""
-        section = self._state.current_section
-        if section is None:
-            return
-        if dirty:
-            self._state.mark_dirty(section.id, step)
-        else:
-            self._state.clear_dirty(section.id, step)
-
     def _on_prep_invalidated_alignment(self) -> None:
         """A prep Clear/Reset wiped the current section's alignment + warp."""
         section = self._state.current_section
@@ -882,10 +871,14 @@ class MainWindow(QMainWindow):
         self._refresh_filmstrip_dots()
 
     def _refresh_reset_enabled(self) -> None:
-        """Sync each bar's Reset button to whether the slice has persisted state."""
-        self._props.prep.save_bar.set_reset_enabled(self._prep.has_persisted_state())
-        self._props.align.save_bar.set_reset_enabled(self._align.has_persisted_state())
-        self._props.warp.save_bar.set_reset_enabled(self._warp.has_persisted_state())
+        """Re-sync every save bar (dirty + Reset) to the current section.
+
+        Delegates to SaveController, which reads dirty state from AppState (the
+        single source of truth) and each view's ``has_persisted_state``.  Called
+        after the active view has re-synced its baseline (section/view change,
+        save, revert) so the reads are current.
+        """
+        self._saves.refresh_all()
 
     # ------------------------------------------------------------------
     # Filmstrip status dots
@@ -1630,7 +1623,10 @@ class MainWindow(QMainWindow):
         project = self._state.project
         if project is None:
             return
-        self._props.align.slicing_position.update_plot(project.sections, self._state.section_index)
+        dirty_ids = {s.id for s in project.sections if self._state.is_dirty(s.id, "align")}
+        self._props.align.slicing_position.update_plot(
+            project.sections, self._state.section_index, dirty_ids
+        )
 
     def _show_atlas_info(self) -> None:
         atlas = self._state.atlas

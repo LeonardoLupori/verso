@@ -39,7 +39,6 @@ if TYPE_CHECKING:
 class PrepView(QWidget):
     """Canvas view for the Prep (mask drawing / flip) step."""
 
-    dirty_changed = pyqtSignal(bool)
     mask_negative_changed = pyqtSignal(bool)
     mask_visibility_changed = pyqtSignal(bool)
     brush_size_changed = pyqtSignal(int)
@@ -94,11 +93,12 @@ class PrepView(QWidget):
         # away; tells refresh_display() to restore them on re-entry so the
         # overlay doesn't render empty when returning to the same section.
         self._arrays_released = False
-        # Snapshot of section.preprocessing taken at load_section time; restored
-        # by discard() so unsaved edits roll back when the user switches view
-        # or slice.
-        self._baseline_preprocessing: Preprocessing | None = None
-        self._dirty = False
+        # The prep dirty flag and the last-saved ``Preprocessing`` baseline are
+        # the single source of truth in AppState, keyed by (section.id, "prep").
+        # This view reads them via ``_state.is_dirty`` / ``_saved_preprocessing``
+        # and mutates them through ``_set_dirty``.  The mask/flip edit mechanics
+        # below (``_mask_dirty``, ``_saved_undo_depth``, ``_prep_base_flip``)
+        # stay local — they are prep-internal, not the shared dirty concern.
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -171,13 +171,10 @@ class PrepView(QWidget):
         self._stroke_active = False
         self._canvas.clear()
         if section is None:
-            self._baseline_preprocessing = None
             self._prep_base_flip = (False, False)
-            self._set_dirty(False)
             self._status_label.setText("No section loaded")
             return
 
-        self._baseline_preprocessing = copy.deepcopy(section.preprocessing)
         # Default last-saved flips = current (clean) flips; a resident draft
         # overrides this below to carry the saved flips across navigation.
         self._prep_base_flip = (
@@ -213,19 +210,13 @@ class PrepView(QWidget):
         if draft is not None and draft.mask_dirty:
             self._current_mask = draft.slice_mask
             self._mask_dirty = True
-        # Reflect the section's persistent dirty state (mask/flip edits).
-        # When still dirty, recover the genuine last-saved baseline from the
-        # stash (the section's flips may already carry the unsaved edit).
-        if self._state.is_dirty(section.id, "prep"):
-            stashed = self._state.get_baseline(section.id, "prep")
-            if stashed is not None:
-                self._baseline_preprocessing = stashed
-            self._set_dirty(True)
-        else:
-            self._state.pop_baseline(section.id, "prep")
-            self._set_dirty(False)
+        # Sync the last-saved Preprocessing baseline into AppState (a no-op
+        # while dirty, so a stashed baseline carried across navigation survives —
+        # the section's flips may already hold the unsaved edit).  The window
+        # refreshes the save bar for the new section.
+        self._state.sync_baseline(section.id, "prep", copy.deepcopy(section.preprocessing))
         # -1 means the saved state is not reachable via undo (dirty on load).
-        self._saved_undo_depth = -1 if self._dirty else 0
+        self._saved_undo_depth = -1 if self._state.is_dirty(section.id, "prep") else 0
         self._display_image()
         self._update_mask_overlay()
 
@@ -348,15 +339,11 @@ class PrepView(QWidget):
             return
         self._current_mask = self._undo_stack.pop()
         at_saved = self._saved_undo_depth >= 0 and len(self._undo_stack) == self._saved_undo_depth
-        flip_dirty = (
-            self._section is not None
-            and self._baseline_preprocessing is not None
-            and (
-                self._section.preprocessing.flip_horizontal
-                != self._baseline_preprocessing.flip_horizontal
-                or self._section.preprocessing.flip_vertical
-                != self._baseline_preprocessing.flip_vertical
-            )
+        # ``_prep_base_flip`` holds the last-saved flips, so compare against it
+        # to tell whether a flip toggle still leaves the slice dirty.
+        flip_dirty = self._section is not None and (
+            self._section.preprocessing.flip_horizontal != self._prep_base_flip[0]
+            or self._section.preprocessing.flip_vertical != self._prep_base_flip[1]
         )
         if at_saved and not flip_dirty:
             self._mask_dirty = False
@@ -380,7 +367,7 @@ class PrepView(QWidget):
         section = self._section
         if section is None:
             return
-        if self._dirty:
+        if self._state.is_dirty(section.id, "prep"):
             draft = PrepDraft(
                 slice_mask=self._current_mask if self._mask_dirty else None,
                 mask_dirty=self._mask_dirty,
@@ -401,14 +388,23 @@ class PrepView(QWidget):
         self._set_dirty(True)
 
     def is_dirty(self) -> bool:
-        return self._dirty
+        return self._section is not None and self._state.is_dirty(self._section.id, "prep")
+
+    def _saved_preprocessing(self) -> Preprocessing | None:
+        """The last-saved preprocessing baseline for the current section."""
+        if self._section is None:
+            return None
+        return self._state.get_baseline(self._section.id, "prep")  # type: ignore[return-value]
 
     def has_persisted_state(self) -> bool:
         """Whether Clear has anything to wipe in the project for this slice."""
-        baseline = self._baseline_preprocessing
-        if baseline is None:
+        if self._section is None:
             return False
-        return bool(baseline.slice_mask_path or baseline.flip_horizontal or baseline.flip_vertical)
+        # ``slice_mask_path`` only changes on save/clear and flips are tracked by
+        # ``_prep_base_flip`` (last-saved), so both reflect the persisted state
+        # even mid-edit — no baseline lookup needed.
+        base_h, base_v = self._prep_base_flip
+        return bool(self._section.preprocessing.slice_mask_path) or base_h or base_v
 
     def save(self) -> bool:
         """Persist the current draft to disk + section.
@@ -439,13 +435,14 @@ class PrepView(QWidget):
         self._mask_dirty = False
         self._saved_undo_depth = len(self._undo_stack)
         self._state.pop_prep_draft(self._section.id)
-        self._baseline_preprocessing = copy.deepcopy(self._section.preprocessing)
-        self._state.pop_baseline(self._section.id, "prep")
         self._prep_base_flip = (
             self._section.preprocessing.flip_horizontal,
             self._section.preprocessing.flip_vertical,
         )
         self._set_dirty(False)
+        self._state.sync_baseline(
+            self._section.id, "prep", copy.deepcopy(self._section.preprocessing)
+        )
         return changed
 
     def revert(self) -> bool:
@@ -455,11 +452,11 @@ class PrepView(QWidget):
         save, then reloads mask + flips from the baseline so the canvas matches.
         Does not touch on-disk state.
         """
-        if self._section is None or self._baseline_preprocessing is None:
+        baseline = self._saved_preprocessing()
+        if self._section is None or baseline is None:
             return False
-        self._section.preprocessing = copy.deepcopy(self._baseline_preprocessing)
+        self._section.preprocessing = copy.deepcopy(baseline)
         self._state.pop_prep_draft(self._section.id)
-        self._state.pop_baseline(self._section.id, "prep")
         self._current_mask = None
         self._mask_dirty = False
         self._undo_stack.clear()
@@ -471,6 +468,9 @@ class PrepView(QWidget):
             self._section.preprocessing.flip_vertical,
         )
         self._set_dirty(False)
+        self._state.sync_baseline(
+            self._section.id, "prep", copy.deepcopy(self._section.preprocessing)
+        )
         if self._raw_image is not None:
             self._load_or_init_mask()
             self._display_image()
@@ -505,10 +505,11 @@ class PrepView(QWidget):
         if flip_changed:
             self._wipe_alignment_for_flip()
 
-        self._baseline_preprocessing = copy.deepcopy(self._section.preprocessing)
-        self._state.pop_baseline(self._section.id, "prep")
         self._prep_base_flip = (False, False)
         self._set_dirty(False)
+        self._state.sync_baseline(
+            self._section.id, "prep", copy.deepcopy(self._section.preprocessing)
+        )
 
         # Reload from the now-empty state so the canvas matches.
         if self._raw_image is not None:
@@ -527,14 +528,18 @@ class PrepView(QWidget):
         wipe_alignment_for_flip(self._section)
 
     def _set_dirty(self, dirty: bool) -> None:
-        if self._dirty == dirty:
+        """Flip the current section's ``prep`` dirty flag in AppState.
+
+        AppState is the single source of truth; ``mark_dirty``/``clear_dirty``
+        are idempotent and emit ``dirty_changed`` only on a real transition,
+        which drives the save bar and filmstrip dot.
+        """
+        if self._section is None:
             return
-        if dirty and self._section is not None and self._baseline_preprocessing is not None:
-            self._state.set_baseline(
-                self._section.id, "prep", copy.deepcopy(self._baseline_preprocessing)
-            )
-        self._dirty = dirty
-        self.dirty_changed.emit(dirty)
+        if dirty:
+            self._state.mark_dirty(self._section.id, "prep")
+        else:
+            self._state.clear_dirty(self._section.id, "prep")
 
     # ------------------------------------------------------------------
     # Display / mask state
