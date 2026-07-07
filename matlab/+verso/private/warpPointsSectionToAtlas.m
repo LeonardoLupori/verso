@@ -16,43 +16,11 @@ function out = warpPointsSectionToAtlas(pointsNorm, srcPx, dstPx, workW, workH)
 %       points; does not affect POINTSNORM, already normalised).
 %
 %   OUT: (M, 2) normalised atlas-space points.
-    pts = reshape(double(pointsNorm), [], 2);
-    wh = [double(workW), double(workH)];
-
-    srcPx = reshape(double(srcPx), [], 2);
-    dstPx = reshape(double(dstPx), [], 2);
-    srcNorm = srcPx ./ wh;
-    dstNorm = dstPx ./ wh;
-    aspect = workW / workH;
-
-    out = min(max(pts, 0.0), 1.0);
+    [pts, srcNorm, dstNorm, scale] = prepareWarp(pointsNorm, srcPx, dstPx, workW, workH);
     if isempty(dstNorm) || npAllClose(srcNorm, dstNorm)
+        out = min(max(pts, 0.0), 1.0);
         return
     end
-
-    corners = [-0.1 -0.1; 1.1 -0.1; -0.1 1.1; 1.1 1.1];
-    srcAll = [corners; srcNorm];
-    dstAll = [corners; dstNorm];
-
-    scale = [aspect, 1.0];
-    DT = delaunayTriangulation(dstAll .* scale);
-    [triId, bary] = pointLocation(DT, pts .* scale);
-
-    valid = ~isnan(triId);
-    if ~any(valid)
-        return
-    end
-
-    vertIdx = DT.ConnectivityList(triId(valid), :);  % (Nvalid, 3)
-    baryValid = bary(valid, :);                       % (Nvalid, 3)
-
-    srcU = srcAll(:, 1);
-    srcV = srcAll(:, 2);
-    uVerts = srcU(vertIdx);  % linear indexing preserves shape: (Nvalid, 3)
-    vVerts = srcV(vertIdx);  % (Nvalid, 3)
-    outU = sum(baryValid .* uVerts, 2);
-    outV = sum(baryValid .* vVerts, 2);
-
-    out(valid, 1) = min(max(outU, 0.0), 1.0);
-    out(valid, 2) = min(max(outV, 0.0), 1.0);
+    % Triangulate the section (dst) anchors; interpolate the atlas (src) coords.
+    out = barycentricMap(withCorners(dstNorm), withCorners(srcNorm), pts, scale);
 end

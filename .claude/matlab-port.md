@@ -136,8 +136,11 @@ matlab/
 │   └── private/                  helpers, package-internal only
 │       ├── loadProjectJson.m
 │       ├── anchoringToVectors.m
-│       ├── warpPointsSectionToAtlas.m
-│       ├── warpPointsAtlasToSection.m
+│       ├── warpPointsSectionToAtlas.m   thin wrapper over barycentricMap
+│       ├── warpPointsAtlasToSection.m   thin wrapper (roles swapped)
+│       ├── prepareWarp.m                shared normalise + [aspect,1] scale
+│       ├── withCorners.m                prepend the four corner anchors
+│       ├── barycentricMap.m             shared triangulate + interpolate core
 │       ├── quickniiVoxelIndices.m
 │       ├── boundaryMask.m
 │       ├── resolveAtlasDir.m
