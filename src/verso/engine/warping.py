@@ -74,6 +74,73 @@ def _tri_scale(aspect: float) -> np.ndarray:
     return np.array([float(aspect), 1.0])
 
 
+def _prepare_warp(
+    points_norm: np.ndarray,
+    src_px: np.ndarray,
+    dst_px: np.ndarray,
+    work_w: int,
+    work_h: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Normalise the query + control points and compute the triangulation scale.
+
+    Shared front-end for the two point-mapping directions.
+
+    Returns:
+        ``(pts, src_norm, dst_norm, scale)`` — the query points (already in
+        ``[0, 1]``), the control points normalised to ``[0, 1]²`` by the working
+        image size, and the anisotropy factor from :func:`_tri_scale`.
+    """
+    pts = np.asarray(points_norm, dtype=np.float64).reshape(-1, 2)
+    wh = np.array([work_w, work_h], dtype=np.float64)
+    src_norm = np.asarray(src_px, dtype=np.float64).reshape(-1, 2) / wh
+    dst_norm = np.asarray(dst_px, dtype=np.float64).reshape(-1, 2) / wh
+    scale = _tri_scale(work_w / work_h)
+    return pts, src_norm, dst_norm, scale
+
+
+def _barycentric_map(
+    tri_pts: np.ndarray,
+    value_pts: np.ndarray,
+    query: np.ndarray,
+    scale: np.ndarray,
+) -> np.ndarray:
+    """Piecewise-affine map of ``query`` by barycentric interpolation.
+
+    Triangulates ``tri_pts`` (scaled to VisuAlign's aspect via ``scale``),
+    locates each query point's enclosing triangle, and interpolates the
+    corresponding ``value_pts`` with that point's barycentric weights. The two
+    warp directions differ only in which set is triangulated and which is
+    interpolated, so both call this with the roles swapped.
+
+    Args:
+        tri_pts: (N, 2) normalised points to triangulate (corner anchors included).
+        value_pts: (N, 2) normalised values to interpolate, aligned with ``tri_pts``.
+        query: (M, 2) normalised points to map.
+        scale: (2,) anisotropy factor applied to the triangulation and queries.
+
+    Returns:
+        (M, 2) interpolated values clipped to ``[0, 1]``; query points outside
+        the convex hull pass through unchanged (clipped).
+    """
+    tri = Delaunay(tri_pts * scale)
+    simplices = tri.find_simplex(query * scale)
+
+    out = np.clip(query.copy(), 0.0, 1.0)
+    valid = simplices >= 0
+    if not np.any(valid):
+        return out
+
+    T = tri.transform[simplices[valid], :2]
+    r = query[valid] * scale - tri.transform[simplices[valid], 2]
+    b = np.einsum("ijk,ik->ij", T, r)
+    bary = np.column_stack([b, 1.0 - b.sum(axis=1)])
+
+    idx = tri.simplices[simplices[valid]]
+    out[valid, 0] = np.clip((bary * value_pts[idx, 0]).sum(axis=1), 0.0, 1.0)
+    out[valid, 1] = np.clip((bary * value_pts[idx, 1]).sum(axis=1), 0.0, 1.0)
+    return out
+
+
 def find_atlas_position(
     s: float,
     t: float,
@@ -129,38 +196,11 @@ def warp_points_section_to_atlas(
     Returns:
         (M, 2) normalised atlas-space points.
     """
-    pts = np.asarray(points_norm, dtype=np.float64).reshape(-1, 2)
-    wh = np.array([work_w, work_h], dtype=np.float64)
-    src_norm = np.asarray(src_px, dtype=np.float64).reshape(-1, 2) / wh
-    dst_norm = np.asarray(dst_px, dtype=np.float64).reshape(-1, 2) / wh
-    aspect = work_w / work_h
-
+    pts, src_norm, dst_norm, scale = _prepare_warp(points_norm, src_px, dst_px, work_w, work_h)
     if len(dst_norm) == 0 or np.allclose(src_norm, dst_norm):
         return np.clip(pts, 0.0, 1.0)
-
-    src_all = _with_corners(src_norm)
-    dst_all = _with_corners(dst_norm)
-
-    scale = _tri_scale(aspect)
-    tri = Delaunay(dst_all * scale)
-    simplices = tri.find_simplex(pts * scale)
-
-    out = np.clip(pts.copy(), 0.0, 1.0)
-    valid = simplices >= 0
-    if not np.any(valid):
-        return out
-
-    T = tri.transform[simplices[valid], :2]
-    r = pts[valid] * scale - tri.transform[simplices[valid], 2]
-    b = np.einsum("ijk,ik->ij", T, r)
-    bary = np.column_stack([b, 1.0 - b.sum(axis=1)])
-
-    idx = tri.simplices[simplices[valid]]
-    out_u = (bary * src_all[idx, 0]).sum(axis=1)
-    out_v = (bary * src_all[idx, 1]).sum(axis=1)
-    out[valid, 0] = np.clip(out_u, 0.0, 1.0)
-    out[valid, 1] = np.clip(out_v, 0.0, 1.0)
-    return out
+    # Triangulate the section (dst) anchors; interpolate the atlas (src) coords.
+    return _barycentric_map(_with_corners(dst_norm), _with_corners(src_norm), pts, scale)
 
 
 def warp_points_atlas_to_section(
@@ -187,38 +227,11 @@ def warp_points_atlas_to_section(
     Returns:
         (M, 2) normalised section-space points.
     """
-    pts = np.asarray(points_norm, dtype=np.float64).reshape(-1, 2)
-    wh = np.array([work_w, work_h], dtype=np.float64)
-    src_norm = np.asarray(src_px, dtype=np.float64).reshape(-1, 2) / wh
-    dst_norm = np.asarray(dst_px, dtype=np.float64).reshape(-1, 2) / wh
-    aspect = work_w / work_h
-
+    pts, src_norm, dst_norm, scale = _prepare_warp(points_norm, src_px, dst_px, work_w, work_h)
     if len(src_norm) == 0 or np.allclose(src_norm, dst_norm):
         return np.clip(pts, 0.0, 1.0)
-
-    src_all = _with_corners(src_norm)
-    dst_all = _with_corners(dst_norm)
-
-    scale = _tri_scale(aspect)
-    tri = Delaunay(src_all * scale)
-    simplices = tri.find_simplex(pts * scale)
-
-    out = np.clip(pts.copy(), 0.0, 1.0)
-    valid = simplices >= 0
-    if not np.any(valid):
-        return out
-
-    T = tri.transform[simplices[valid], :2]
-    r = pts[valid] * scale - tri.transform[simplices[valid], 2]
-    b = np.einsum("ijk,ik->ij", T, r)
-    bary = np.column_stack([b, 1.0 - b.sum(axis=1)])
-
-    idx = tri.simplices[simplices[valid]]
-    out_x = (bary * dst_all[idx, 0]).sum(axis=1)
-    out_y = (bary * dst_all[idx, 1]).sum(axis=1)
-    out[valid, 0] = np.clip(out_x, 0.0, 1.0)
-    out[valid, 1] = np.clip(out_y, 0.0, 1.0)
-    return out
+    # Triangulate the atlas (src) anchors; interpolate the section (dst) coords.
+    return _barycentric_map(_with_corners(src_norm), _with_corners(dst_norm), pts, scale)
 
 
 def build_backward_remap(
