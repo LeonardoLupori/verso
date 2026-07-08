@@ -208,7 +208,9 @@ def propagate_series_anchorings(
             slice_indices=[slice_indices[i] for i in order],
             atlas_shape=atlas_shape,
             interpolation_axis=k,
-            stored_anchorings=([stored_anchorings[i] for i in order] if stored_anchorings is not None else None),
+            stored_anchorings=(
+                [stored_anchorings[i] for i in order] if stored_anchorings is not None else None
+            ),
             reverse_axis=reverse_axis,
             center_proposals=center_proposals,
         )
@@ -397,7 +399,9 @@ def interpolate_anchorings(
 
     stored_indices: list[int] = []
     for idx, section in enumerate(ordered):
-        if section.alignment.status == AlignmentStatus.COMPLETE and is_anchored(section.alignment.stored_anchoring):
+        if section.alignment.status == AlignmentStatus.COMPLETE and is_anchored(
+            section.alignment.stored_anchoring
+        ):
             stored_indices.append(idx)
 
     stored_anchorings_for_series = [
@@ -465,7 +469,9 @@ def initialize_default_anchorings(
     )
 
     stored_indices = {
-        section.slice_index for section, anch in zip(sections, stored_anchorings, strict=False) if anch is not None
+        section.slice_index
+        for section, anch in zip(sections, stored_anchorings, strict=False)
+        if anch is not None
     }
 
     for section, anchoring, anch in zip(sections, propagated, stored_anchorings, strict=False):
