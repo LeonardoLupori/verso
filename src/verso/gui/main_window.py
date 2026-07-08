@@ -1365,16 +1365,25 @@ class MainWindow(QMainWindow):
     def _confirm_flip(self, section) -> bool:
         """Return True when the flip may proceed.
 
-        Shows a warning dialog when the section has an existing alignment and
+        Shows a warning dialog when the section has an alignment that is
+        genuinely saved or has unsaved edits, and
         ``dialog_prefs.show_align_deletion`` is True.  If the user ticks
         "Do not show again", the flag is persisted to the project.
-        """
-        from verso.engine.model.alignment import AlignmentStatus
 
+        ``section.alignment.status``/``anchoring`` alone aren't enough:
+        ``interpolate_anchorings`` seeds every not-yet-aligned section with an
+        IN_PROGRESS default guess on project load, which isn't something the
+        user did and isn't what flipping would actually destroy.  Instead,
+        check the same "saved" signal the Align save-bar uses
+        (``stored_anchoring``, only ever set by an explicit commit) plus the
+        per-step dirty flag for an in-progress unsaved edit.
+        """
+        stored = section.alignment.stored_anchoring
         has_alignment = (
-            section.alignment.status != AlignmentStatus.NOT_STARTED
+            (bool(stored) and any(v != 0.0 for v in stored))
             or bool(section.warp.control_points)
-            or (section.alignment.anchoring and any(v != 0.0 for v in section.alignment.anchoring))
+            or self._state.is_dirty(section.id, "align")
+            or self._state.is_dirty(section.id, "warp")
         )
         if not has_alignment:
             return True
