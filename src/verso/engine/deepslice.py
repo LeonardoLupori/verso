@@ -150,11 +150,12 @@ def run_deepslice_suggestions(
         )
 
 
-def apply_deepslice_suggestions(project: Project, result: DeepSliceRunResult) -> int:
+def apply_deepslice_suggestions(project: Project, result: DeepSliceRunResult) -> set[str]:
     """Apply DeepSlice suggestions to matching project sections.
 
     Matching prefers copied filename stem, then serial number.  Matching
-    sections become editable ``IN_PROGRESS`` alignments with DeepSlice metadata.
+    sections become editable ``IN_PROGRESS`` alignments. Returns the ids of the
+    sections whose alignment was set.
     """
     return apply_deepslice_suggestions_with_atlas(project, result, atlas_shape=None)
 
@@ -164,7 +165,7 @@ def apply_deepslice_suggestions_with_atlas(
     result: DeepSliceRunResult,
     atlas_shape: tuple[int, int, int] | None,
     reverse_axis: bool = False,
-) -> int:
+) -> set[str]:
     """Apply DeepSlice suggestions to project sections.
 
     Suggestions from :func:`run_deepslice_suggestions` carry anchorings in raw
@@ -196,7 +197,6 @@ def apply_deepslice_suggestions_with_atlas(
     by_original_stem = {Path(s.original_path).stem: s for s in project.sections}
     by_slice_index = {s.slice_index: s for s in project.sections}
     bad_ids = set(result.bad_section_ids)
-    applied = 0
     applied_section_ids: set[str] = set()
 
     for suggestion in result.suggestions:
@@ -224,15 +224,8 @@ def apply_deepslice_suggestions_with_atlas(
             continue
         raw = list(suggestion.anchoring)
         anchoring = _to_quicknii_convention(raw, atlas_shape) if atlas_shape is not None else raw
-        section.alignment.set_auto_proposal(
-            anchoring,
-            source="deepslice",
-            proposal_anchoring=list(anchoring),
-            confidence=suggestion.confidence,
-            run_id=result.run_id,
-        )
+        section.alignment.set_auto_proposal(anchoring, source="deepslice")
         section.warp.reset()
-        applied += 1
         applied_section_ids.add(section.id)
 
     if atlas_shape is not None and applied_section_ids:
@@ -240,16 +233,11 @@ def apply_deepslice_suggestions_with_atlas(
         # are interpolated, so they fill from correctly-oriented neighbours.
         _orient_series_to_convention(project, applied_section_ids, reverse_axis)
 
+    filled_ids: set[str] = set()
     if atlas_shape is not None and bad_ids and applied_section_ids:
-        applied += _interpolate_bad_sections(
-            project,
-            atlas_shape,
-            applied_section_ids,
-            bad_ids,
-            result.run_id,
-        )
+        filled_ids = _interpolate_bad_sections(project, atlas_shape, applied_section_ids, bad_ids)
 
-    return applied
+    return applied_section_ids | filled_ids
 
 
 def _orient_series_to_convention(
@@ -289,7 +277,6 @@ def _orient_series_to_convention(
     for section, ap in zip(good, reversed(ap_centers), strict=False):
         flipped = set_center_position_along_axis(section.alignment.anchoring, ap, ap_axis)
         section.alignment.anchoring = flipped
-        section.alignment.proposal_anchoring = list(flipped)
 
 
 def _interpolate_bad_sections(
@@ -297,23 +284,25 @@ def _interpolate_bad_sections(
     atlas_shape: tuple[int, int, int],
     applied_section_ids: set[str],
     bad_ids: set[str],
-    run_id: str,
-) -> int:
-    """Fill bad-section anchorings by interpolating from the good DeepSlice ones."""
+) -> set[str]:
+    """Fill bad-section anchorings by interpolating from the good DeepSlice ones.
+
+    Returns the ids of the sections that were filled.
+    """
     from verso.engine.anchoring import quicknii_series_anchorings
 
     usable: list[tuple[Section, int, int]] = [
         (section, *section.resolution_thumbnail_wh) for section in project.sections
     ]
     if not usable:
-        return 0
+        return set()
 
     stored = [
         section.alignment.anchoring if section.id in applied_section_ids else None
         for section, _, _ in usable
     ]
     if not any(a is not None for a in stored):
-        return 0
+        return set()
 
     # DeepSlice is coronal-only, so this interpolation always runs along AP.
     propagated = quicknii_series_anchorings(
@@ -325,18 +314,13 @@ def _interpolate_bad_sections(
         center_proposals=False,
     )
 
-    filled = 0
+    filled: set[str] = set()
     for (section, _, _), anchoring, st in zip(usable, propagated, stored, strict=False):
         if st is not None or section.id not in bad_ids:
             continue
-        section.alignment.set_auto_proposal(
-            anchoring,
-            source="deepslice_bad_interpolated",
-            proposal_anchoring=list(anchoring),
-            run_id=run_id,
-        )
+        section.alignment.set_auto_proposal(anchoring, source="deepslice_bad_interpolated")
         section.warp.reset()
-        filled += 1
+        filled.add(section.id)
     return filled
 
 

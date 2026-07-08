@@ -178,9 +178,6 @@ class JobController:
             section.alignment.status = AlignmentStatus.NOT_STARTED
             section.alignment.source = None
             section.alignment.stored_anchoring = None
-            section.alignment.proposal_anchoring = None
-            section.alignment.proposal_confidence = None
-            section.alignment.proposal_run_id = None
             section.warp.control_points.clear()
             section.warp.status = AlignmentStatus.NOT_STARTED
 
@@ -249,7 +246,7 @@ class JobController:
         # revert to their genuine baseline via "Clear edits".
         baselines = {s.id: copy.deepcopy(s.alignment) for s in project.sections}
 
-        applied = apply_deepslice_suggestions_with_atlas(
+        touched = apply_deepslice_suggestions_with_atlas(
             project,
             result,
             atlas.shape if atlas is not None else None,
@@ -261,10 +258,9 @@ class JobController:
         # DeepSlice proposals are unsaved edits: flag the sections it touched as
         # dirty so the Overview table and filmstrip show them yellow until the
         # user saves (mirroring the batch-mask flow).
-        for section in project.sections:
-            if section.alignment.proposal_run_id == result.run_id:
-                self._state.set_baseline(section.id, "align", baselines[section.id])
-                self._state.mark_dirty(section.id, "align")
+        for section_id in touched:
+            self._state.set_baseline(section_id, "align", baselines[section_id])
+            self._state.mark_dirty(section_id, "align")
 
         self._window._overview.refresh()
         # Reload the current view so the align SaveBar reflects the new dirty
@@ -272,7 +268,7 @@ class JobController:
         self._window._on_section_changed(self._state.section_index)
         self._window._refresh_filmstrip_dots()
         self._window._update_slicing_position()
-        self._window._statusbar.showMessage(f"Applied {applied} DeepSlice suggestions", 5000)
+        self._window._statusbar.showMessage(f"Applied {len(touched)} DeepSlice suggestions", 5000)
 
     def _on_deepslice_error(self, message: str) -> None:
         QMessageBox.warning(self._window, "DeepSlice failed", message)

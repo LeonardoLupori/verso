@@ -75,9 +75,6 @@ class Alignment:
     status: AlignmentStatus = AlignmentStatus.NOT_STARTED
     source: str | None = None
     stored_anchoring: list[float] | None = None
-    proposal_anchoring: list[float] | None = None
-    proposal_confidence: float | None = None
-    proposal_run_id: str | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -98,39 +95,24 @@ class Alignment:
         """
         return is_anchored(self.anchoring)
 
-    def set_auto_proposal(
-        self,
-        anchoring: list[float],
-        *,
-        source: str,
-        proposal_anchoring: list[float] | None = None,
-        confidence: float | None = None,
-        run_id: str | None = None,
-    ) -> None:
+    def set_auto_proposal(self, anchoring: list[float], *, source: str) -> None:
         """Reset this alignment to an automatically-generated IN_PROGRESS proposal.
 
         Drops all saved/derived plane state (the stored anchoring and the
-        derived ``position_mm``) so the alignment is entirely the fresh guess,
-        and records the proposal provenance. Callers typically follow with
-        :meth:`WarpState.reset` since the plane moved.
+        derived ``position_mm``) so the alignment is entirely the fresh guess.
+        Callers typically follow with :meth:`WarpState.reset` since the plane
+        moved.
 
         Args:
             anchoring: The propagated 9-value anchoring to adopt as live.
             source: Provenance tag for the guess (e.g. ``"deepslice"``,
                 ``"quicknii_default"``).
-            proposal_anchoring: Optional automated-proposal anchoring to record;
-                ``None`` clears any previous proposal.
-            confidence: Optional proposal confidence.
-            run_id: Optional id of the run that produced the proposal.
         """
         self.anchoring = anchoring
         self.position_mm = None
         self.status = AlignmentStatus.IN_PROGRESS
         self.source = source
         self.stored_anchoring = None
-        self.proposal_anchoring = proposal_anchoring
-        self.proposal_confidence = confidence
-        self.proposal_run_id = run_id
 
     def to_dict(self) -> dict[str, Any]:
         data = {
@@ -142,12 +124,6 @@ class Alignment:
             data["source"] = self.source
         if self.stored_anchoring is not None:
             data["stored_anchoring"] = self.stored_anchoring
-        if self.proposal_anchoring is not None:
-            data["proposal_anchoring"] = self.proposal_anchoring
-        if self.proposal_confidence is not None:
-            data["proposal_confidence"] = self.proposal_confidence
-        if self.proposal_run_id is not None:
-            data["proposal_run_id"] = self.proposal_run_id
         return data
 
     @classmethod
@@ -158,9 +134,6 @@ class Alignment:
             status=AlignmentStatus(d.get("status", "not_started")),
             source=d.get("source"),
             stored_anchoring=d.get("stored_anchoring"),
-            proposal_anchoring=d.get("proposal_anchoring"),
-            proposal_confidence=d.get("proposal_confidence"),
-            proposal_run_id=d.get("proposal_run_id"),
         )
 
 

@@ -107,15 +107,12 @@ def test_apply_deepslice_suggestions_marks_editable_and_clears_warp(tmp_path: Pa
         ],
     )
 
-    applied = apply_deepslice_suggestions(project, result)
+    touched = apply_deepslice_suggestions(project, result)
 
     s0 = project.sections[0]
-    assert applied == 1
+    assert touched == {s0.id}
     assert s0.alignment.status == AlignmentStatus.IN_PROGRESS
     assert s0.alignment.source == "deepslice"
-    assert s0.alignment.proposal_anchoring == [1.0] * 9
-    assert s0.alignment.proposal_confidence == 0.5
-    assert s0.alignment.proposal_run_id == "run-1"
     assert s0.warp.control_points == []
 
 
@@ -132,9 +129,9 @@ def test_apply_deepslice_suggestions_matches_temporary_id_filename(tmp_path: Pat
         ],
     )
 
-    applied = apply_deepslice_suggestions(project, result)
+    touched = apply_deepslice_suggestions(project, result)
 
-    assert applied == 1
+    assert len(touched) == 1
     assert project.sections[0].alignment.source == "deepslice"
 
 
@@ -365,12 +362,12 @@ def test_apply_deepslice_discards_bad_predictions_and_interpolates(tmp_path: Pat
         bad_section_ids=["s002"],
     )
 
-    applied = apply_deepslice_suggestions_with_atlas(
+    touched = apply_deepslice_suggestions_with_atlas(
         project,
         result,
         atlas_shape=(528, 320, 456),
     )
-    assert applied == 3  # 2 from DeepSlice, 1 interpolated.
+    assert len(touched) == 3  # 2 from DeepSlice, 1 interpolated.
 
     s2 = project.sections[1]
     assert s2.alignment.source == "deepslice_bad_interpolated"
@@ -486,8 +483,8 @@ def test_run_deepslice_uses_user_serial_as_filename_prefix(tmp_path: Path, monke
     monkeypatch.setattr(subprocess, "run", fake_run)
 
     result = run_deepslice_suggestions(project)
-    applied = apply_deepslice_suggestions(project, result)
-    assert applied == 3
+    touched = apply_deepslice_suggestions(project, result)
+    assert len(touched) == 3
     # Each section keeps its own anchoring — matched via the serial prefix.
     assert project.sections[0].alignment.anchoring == [1.0] * 9  # serial 10
     assert project.sections[2].alignment.anchoring == [3.0] * 9  # serial 50
@@ -686,8 +683,6 @@ def test_reset_in_progress_to_default_proposals_clears_deepslice_metadata(tmp_pa
         section.alignment.anchoring = [1.0] * 9
         section.alignment.status = AlignmentStatus.IN_PROGRESS
         section.alignment.source = "deepslice"
-        section.alignment.proposal_anchoring = [1.0] * 9
-        section.alignment.proposal_confidence = 0.5
         section.warp.control_points.append(ControlPoint(0.1, 0.2, 0.3, 0.4))
 
     changed = reset_in_progress_to_default_proposals(
@@ -699,8 +694,6 @@ def test_reset_in_progress_to_default_proposals_clears_deepslice_metadata(tmp_pa
     for section in project.sections:
         assert section.alignment.status == AlignmentStatus.IN_PROGRESS
         assert section.alignment.source == "quicknii_default"
-        assert section.alignment.proposal_anchoring is None
-        assert section.alignment.proposal_confidence is None
         assert section.warp.control_points == []
 
 

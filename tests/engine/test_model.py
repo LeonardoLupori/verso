@@ -34,9 +34,6 @@ def test_alignment_round_trip():
         status=AlignmentStatus.COMPLETE,
         source="deepslice",
         stored_anchoring=[9.0, 8.0, 7.0, 6.0, 5.0, 4.0, 3.0, 2.0, 1.0],
-        proposal_anchoring=[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0],
-        proposal_confidence=0.87,
-        proposal_run_id="run-1",
     )
     assert Alignment.from_dict(a.to_dict()) == a
 
@@ -52,9 +49,6 @@ def test_alignment_loads_legacy_dict_without_metadata():
     assert a.position_mm == 2.0
     assert a.source is None
     assert a.stored_anchoring is None
-    assert a.proposal_anchoring is None
-    assert a.proposal_confidence is None
-    assert a.proposal_run_id is None
 
 
 def test_alignment_writes_position_mm_not_ap_position_mm():

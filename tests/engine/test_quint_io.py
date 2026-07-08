@@ -169,9 +169,6 @@ def test_load_deepslice_marks_suggestions_in_progress(tmp_path: Path):
 
     assert s0.alignment.status == AlignmentStatus.IN_PROGRESS
     assert s0.alignment.source == "deepslice"
-    # proposal_anchoring is set from the already-converted BrainGlobe anchoring
-    assert s0.alignment.proposal_anchoring == _LOADED_ANCHORING_0
-    assert s0.alignment.proposal_confidence == 0.91
 
 
 # ---------------------------------------------------------------------------

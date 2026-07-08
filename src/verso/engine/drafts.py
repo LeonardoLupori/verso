@@ -39,9 +39,6 @@ def wipe_alignment_for_flip(section: Section) -> None:
     section.alignment.status = AlignmentStatus.NOT_STARTED
     section.alignment.source = None
     section.alignment.stored_anchoring = None
-    section.alignment.proposal_anchoring = None
-    section.alignment.proposal_confidence = None
-    section.alignment.proposal_run_id = None
     section.warp.control_points.clear()
     section.warp.status = AlignmentStatus.NOT_STARTED
 
