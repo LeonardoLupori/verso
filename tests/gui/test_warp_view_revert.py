@@ -63,7 +63,7 @@ def _make_warp_mock(section: Section, state: AppState) -> SimpleNamespace:
         _reset_undo=lambda: None,
     )
     # Dirty flag + baseline are the single source of truth in AppState; the mock
-    # drives them through the real DraftCanvasView / WarpView methods (which
+    # drives them through the real BaseCanvasView / WarpView methods (which
     # resolve via WarpView's MRO), so the base save/revert flow runs for real.
     mock._current_section = lambda: WarpView._current_section(mock)
     mock._saved_state = lambda: WarpView._saved_state(mock)

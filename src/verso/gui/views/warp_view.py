@@ -26,7 +26,7 @@ from PyQt6.QtWidgets import (
 from verso.engine.drafts import commit_warp
 from verso.engine.model.alignment import AlignmentStatus, ControlPoint, WarpState
 from verso.gui.utils import require
-from verso.gui.views.draft_canvas_view import DraftCanvasView
+from verso.gui.views.base_canvas_view import BaseCanvasView
 from verso.gui.widgets.section_canvas_panel import SectionCanvasPanel
 from verso.gui.widgets.view_chrome import make_view_status_bar
 
@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from verso.gui.state import AppState
 
 
-class WarpView(DraftCanvasView):
+class WarpView(BaseCanvasView):
     """Canvas view for nonlinear warp via per-section control points."""
 
     STEP = "warp"
@@ -73,7 +73,7 @@ class WarpView(DraftCanvasView):
         self._warp_timer.timeout.connect(self._panel.update_overlay)
 
         # Dirty flag, last-saved baseline, and the undo stack live in the base
-        # (DraftCanvasView) keyed by (section.id, "warp").
+        # (BaseCanvasView) keyed by (section.id, "warp").
         self._build_ui()
         self._wire_panel()
 
@@ -407,7 +407,7 @@ class WarpView(DraftCanvasView):
             self.cp_changed.emit()
 
     # ------------------------------------------------------------------
-    # Draft-view hooks (see DraftCanvasView)
+    # Draft-view hooks (see BaseCanvasView)
     # ------------------------------------------------------------------
 
     def _current_section(self) -> Section | None:

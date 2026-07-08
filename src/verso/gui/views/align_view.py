@@ -26,7 +26,7 @@ from PyQt6.QtWidgets import (
 from verso.engine.drafts import commit_alignment
 from verso.engine.model.alignment import Alignment, AlignmentStatus
 from verso.gui.utils import require
-from verso.gui.views.draft_canvas_view import DraftCanvasView
+from verso.gui.views.base_canvas_view import BaseCanvasView
 from verso.gui.widgets.navigator import NavigatorPanel
 from verso.gui.widgets.section_canvas_panel import SectionCanvasPanel
 from verso.gui.widgets.view_chrome import make_view_status_bar
@@ -43,7 +43,7 @@ from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 _MAX_INPLANE_DEG = 45.0
 
 
-class AlignView(DraftCanvasView):
+class AlignView(BaseCanvasView):
     """Canvas view for atlas alignment (affine anchoring)."""
 
     STEP = "align"
@@ -62,7 +62,7 @@ class AlignView(DraftCanvasView):
         self._reverse_axis = False
         self._interpolation_axis = 1
         # Dirty flag, last-saved baseline, and the undo stack live in the base
-        # (DraftCanvasView) keyed by (section.id, "align").  A continuous run of
+        # (BaseCanvasView) keyed by (section.id, "align").  A continuous run of
         # pan events is coalesced into a single undo step via the idle timer.
         self._active = False
         self._pan_run_active = False
@@ -348,7 +348,7 @@ class AlignView(DraftCanvasView):
         self.anchoring_changed.emit(new_anchoring)
 
     # ------------------------------------------------------------------
-    # Draft-view hooks (see DraftCanvasView)
+    # Draft-view hooks (see BaseCanvasView)
     # ------------------------------------------------------------------
 
     def _current_section(self) -> Section | None:

@@ -1,10 +1,11 @@
-"""Shared base for the draft-editing canvas views (Prep / Align / Warp).
+"""Shared base for the editable canvas views (Prep / Align / Warp).
 
 Owns the parts that were copy-pasted across the three views: the shallow undo
 stack, the dirty-flag plumbing into AppState, and the save / revert / clear
 skeletons.  Each view supplies the small view-specific pieces through the hook
 methods below, so the "unsaved edits that survive navigation and revert to
-last-saved" contract lives in exactly one place.
+last-saved" contract lives in exactly one place.  (The read-only Overview table
+is not a canvas view and does not derive from this.)
 
 Two snapshot-ish concepts meet here; keep them distinct:
 
@@ -28,7 +29,7 @@ if TYPE_CHECKING:
     from verso.gui.state import AppState
 
 
-class DraftCanvasView(QWidget):
+class BaseCanvasView(QWidget):
     """Base class for a canvas view whose edits are unsaved drafts.
 
     Subclasses set :attr:`STEP` (``"prep"`` / ``"align"`` / ``"warp"``) and
