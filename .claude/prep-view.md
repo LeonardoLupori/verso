@@ -18,17 +18,22 @@ Display / draft state, held in `PrepView` (never persisted directly):
 
 ```python
 _current_mask: np.ndarray | None       # H×W bool, working-res, storage frame
-_mask_dirty: bool                      # in-memory mask differs from saved PNG
-_baseline_preprocessing: Preprocessing # deep-copy snapshot at load time
-_dirty: bool                           # any draft change since baseline
+_saved_mask: np.ndarray | None         # last-saved mask, in-memory, for undo compare
 _mask_visible: bool                    # eye toggle + M shortcut
 _negative_mask: bool                   # N shortcut + checkbox
 _mask_opacity: float
 _mask_color: (r, g, b)
 _draw_mode: "freehand" | "brush"       # default "freehand"
 _brush_radius: int                     # mask pixels (Alt+wheel to adjust)
-_undo_stack: list[np.ndarray]          # slice mask only, depth 20
+_undo_stack: list[np.ndarray]          # slice mask only, shallow (base _UNDO_LIMIT)
 ```
+
+`PrepView` derives from `gui/views/base_canvas_view.py::BaseCanvasView` (shared
+with Align/Warp): the dirty flag, last-saved baseline, and save/revert/clear/undo
+flow live there. The unsaved mask is the draft store's `"prep"` **working**
+payload (so it survives navigation and drives the Overview mask dot); an unsaved
+flip is detected by comparing `section.preprocessing` to the baseline. Prep is
+"dirty" when either differs from the last-saved state.
 
 Masks are stored in the **unflipped** (storage) frame; flips are applied at
 display time via `np.fliplr` / `np.flipud`. Mouse coordinates from the canvas
@@ -143,13 +148,14 @@ A `dirty_changed(bool)` signal is emitted whenever `_dirty` transitions.
 
 ## 6. Undo stack
 
-- Single Python list `_undo_stack: list[np.ndarray]` for the slice mask
-  only.
+- The undo stack (`_undo_stack`) and `undo()` are provided by `BaseCanvasView`;
+  Prep's snapshots are slice-mask copies (`_capture_edit` / `_restore`).
 - Snapshot pushed before every stroke (freehand or brush), autodetect,
   clear, or erode/expand.
-- Max depth 20; oldest popped on overflow.
-- `undo_mask_edit()` (bound to **U** and `Ctrl+Z`) pops and restores.
-- The undo stack is cleared on `load_section`, `discard`, and `clear`.
+- Shallow depth (base `_UNDO_LIMIT`); oldest popped on overflow.
+- `undo()` (bound to **U** and `Ctrl+Z`) pops and restores; undoing back to the
+  saved mask clears the dirty flag (compared against `_saved_mask`).
+- The undo stack is cleared on `load_section`, save, revert, and clear.
 
 ---
 

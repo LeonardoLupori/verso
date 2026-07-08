@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from verso.engine.drafts import PrepDraft, commit_prep_draft
+from verso.engine.drafts import commit_prep_draft
 from verso.engine.model.project import ChannelSpec, Preprocessing, Section
 from verso.engine.preprocessing import (
     apply_brush_stroke,
@@ -28,6 +28,7 @@ from verso.engine.preprocessing import (
     morph_mask,
 )
 from verso.gui.utils import require
+from verso.gui.views.base_canvas_view import BaseCanvasView
 from verso.gui.widgets.canvas import ImageCanvas
 from verso.gui.widgets.channel_display import push_channel_display
 from verso.gui.widgets.view_chrome import make_view_status_bar
@@ -36,32 +37,39 @@ if TYPE_CHECKING:
     from verso.gui.state import AppState
 
 
-class PrepView(QWidget):
-    """Canvas view for the Prep (mask drawing / flip) step."""
+class PrepView(BaseCanvasView):
+    """Canvas view for the Prep (mask drawing / flip) step.
+
+    The step's two sub-edits map onto the shared draft model like this: the
+    in-progress slice **mask** is parked in the DraftStore's ``"prep"`` working
+    payload (so it survives navigation and drives the Overview mask dot), while
+    the **flips** live on ``section.preprocessing`` and are compared against the
+    last-saved baseline.  ``_saved_mask`` holds the last-saved mask in memory so
+    undo can tell when an edit has returned to the saved state.
+    """
+
+    STEP = "prep"
 
     mask_negative_changed = pyqtSignal(bool)
     mask_visibility_changed = pyqtSignal(bool)
     brush_size_changed = pyqtSignal(int)
     draw_mode_changed = pyqtSignal(str)  # "freehand" | "brush"
-    # Emitted when a prep save/clear flips the section and thereby invalidates
-    # its alignment + warp, so MainWindow can clear their dirty flags + refresh.
+    # Emitted when a prep clear/reset removes a saved flip and thereby
+    # invalidates the section's alignment + warp, so MainWindow can clear their
+    # dirty flags + refresh.
     alignment_invalidated = pyqtSignal()
 
-    _UNDO_LIMIT = 20
     _DRAW_COLOR = (80, 160, 255)
     _ERASE_COLOR = (255, 90, 90)
 
     def __init__(self, state: AppState, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self._state = state
+        super().__init__(state, parent)
         self._section: Section | None = None
-        # Last-saved flip flags for the loaded section, carried across navigation
-        # via the prep draft store so save() can detect a flip change even after
-        # the baseline was re-snapshotted on reload.
-        self._prep_base_flip: tuple[bool, bool] = (False, False)
         self._raw_image: np.ndarray | None = None
+        # ``_current_mask`` is the live edit / render buffer; ``_saved_mask`` is
+        # the last-saved mask, kept in memory for undo's clean-state check.
         self._current_mask: np.ndarray | None = None
-        self._mask_dirty = False
+        self._saved_mask: np.ndarray | None = None
         self._mask_opacity = 0.4
         self._mask_color = (255, 255, 255)
         self._negative_mask = False
@@ -75,10 +83,6 @@ class PrepView(QWidget):
         # previous key, skipping the GPU texture update.
         self._channel_planes_key: tuple | None = None
         self._planes_version: int = 0
-        self._undo_stack: list[np.ndarray] = []
-        # Stack depth at the last save (or 0 for a clean load). -1 means the
-        # saved state is not reachable by undoing (section was dirty on load).
-        self._saved_undo_depth: int = 0
         self._stroke_points: list[tuple[float, float]] = []
         self._stroke_active = False
         # Latched at stroke start from the Shift modifier — releasing Shift
@@ -89,16 +93,9 @@ class PrepView(QWidget):
         # "brush" (live disk painting). Brush radius is in mask pixels.
         self._draw_mode = "freehand"
         self._brush_radius = 20
-        # Set by flush_draft() when the mask arrays are released on navigation
-        # away; tells refresh_display() to restore them on re-entry so the
-        # overlay doesn't render empty when returning to the same section.
-        self._arrays_released = False
-        # The prep dirty flag and the last-saved ``Preprocessing`` baseline are
-        # the single source of truth in AppState, keyed by (section.id, "prep").
-        # This view reads them via ``_state.is_dirty`` / ``_saved_preprocessing``
-        # and mutates them through ``_set_dirty``.  The mask/flip edit mechanics
-        # below (``_mask_dirty``, ``_saved_undo_depth``, ``_prep_base_flip``)
-        # stay local — they are prep-internal, not the shared dirty concern.
+        # Set by _wipe() when a saved flip is removed, so _after_clear() knows to
+        # emit alignment_invalidated after the clear has settled.
+        self._clear_invalidated_alignment = False
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -133,8 +130,8 @@ class PrepView(QWidget):
         shortcuts = [
             (Qt.Key.Key_M, lambda: self.set_mask_visible(not self._mask_visible)),
             (Qt.Key.Key_N, lambda: self.set_mask_negative(not self._negative_mask)),
-            (Qt.Key.Key_U, self.undo_mask_edit),
-            (QKeySequence.StandardKey.Undo, self.undo_mask_edit),
+            (Qt.Key.Key_U, self.undo),
+            (QKeySequence.StandardKey.Undo, self.undo),
             (Qt.Key.Key_B, lambda: self._select_draw_mode("brush")),
             (Qt.Key.Key_F, lambda: self._select_draw_mode("freehand")),
         ]
@@ -164,23 +161,14 @@ class PrepView(QWidget):
         self._section = section
         self._raw_image = None
         self._current_mask = None
-        self._mask_dirty = False
-        self._arrays_released = False
+        self._saved_mask = None
         self._undo_stack.clear()
         self._stroke_points.clear()
         self._stroke_active = False
         self._canvas.clear()
         if section is None:
-            self._prep_base_flip = (False, False)
             self._status_label.setText("No section loaded")
             return
-
-        # Default last-saved flips = current (clean) flips; a resident draft
-        # overrides this below to carry the saved flips across navigation.
-        self._prep_base_flip = (
-            section.preprocessing.flip_horizontal,
-            section.preprocessing.flip_vertical,
-        )
 
         import os
 
@@ -199,52 +187,23 @@ class PrepView(QWidget):
             QMessageBox.warning(self, "Cannot load image", str(exc))
             return
 
-        # Check out any resident draft now that the image is available.  Its
-        # base_flip carries the last-saved flip state across navigation.
-        draft = self._state.pop_prep_draft(section.id)
-        if draft is not None:
-            self._prep_base_flip = (draft.base_flip_h, draft.base_flip_v)
-
-        self._load_or_init_mask()
-        # Overlay any resident draft edits on top of the disk-loaded mask.
-        if draft is not None and draft.mask_dirty:
-            self._current_mask = draft.slice_mask
-            self._mask_dirty = True
-        # Sync the last-saved Preprocessing baseline into AppState (a no-op
-        # while dirty, so a stashed baseline carried across navigation survives —
-        # the section's flips may already hold the unsaved edit).  The window
-        # refreshes the save bar for the new section.
+        # The saved mask comes from disk; a resident working payload (an unsaved
+        # edit carried across navigation) overrides it for display.
+        self._saved_mask = self._load_saved_mask()
+        working = self._state.get_working(section.id, "prep")
+        self._current_mask = working if working is not None else self._saved_mask
+        # Sync the last-saved Preprocessing baseline into AppState (a no-op while
+        # dirty, so a stash carried across navigation survives — the section's
+        # flips may already hold the unsaved edit).  The window refreshes the
+        # save bar for the new section.
         self._state.sync_baseline(section.id, "prep", copy.deepcopy(section.preprocessing))
-        # -1 means the saved state is not reachable via undo (dirty on load).
-        self._saved_undo_depth = -1 if self._state.is_dirty(section.id, "prep") else 0
         self._display_image()
         self._update_mask_overlay()
 
     def refresh_display(self) -> None:
         """Re-render from cache after preprocessing parameter changes."""
-        # If the mask was released by flush_draft() on a prior navigation
-        # away, re-checkout the resident draft / reload from disk before
-        # rendering — otherwise re-entry on the same section shows no overlay.
-        if self._arrays_released:
-            self._restore_released_masks()
         self._display_image()
         self._update_mask_overlay()
-
-    def _restore_released_masks(self) -> None:
-        """Reload the slice mask released by :meth:`flush_draft`.
-
-        Mirrors the mask-checkout portion of :meth:`load_section` (disk load
-        plus any resident draft overlay) without disturbing the still-valid
-        dirty state, baseline, or flip bookkeeping held in memory.
-        """
-        self._arrays_released = False
-        if self._section is None or self._raw_image is None:
-            return
-        draft = self._state.pop_prep_draft(self._section.id)
-        self._load_or_init_mask()
-        if draft is not None and draft.mask_dirty:
-            self._current_mask = draft.slice_mask
-            self._mask_dirty = True
 
     def set_mask_visible(self, visible: bool) -> None:
         visible = bool(visible)
@@ -310,8 +269,7 @@ class PrepView(QWidget):
         ]
         img = self._raw_image[:, :, visible] if visible else self._raw_image
         self._current_mask = detect_foreground(img)
-        self._mask_dirty = True
-        self._set_dirty(True)
+        self._mark_mask_edited()
         self._update_mask_overlay()
 
     def clear_mask(self) -> None:
@@ -320,8 +278,7 @@ class PrepView(QWidget):
         self._ensure_mask()
         self._push_undo()
         self._current_mask = np.zeros(self._raw_image.shape[:2], dtype=bool)
-        self._mask_dirty = True
-        self._set_dirty(True)
+        self._mark_mask_edited()
         self._update_mask_overlay()
 
     def apply_morph(self, pixels: int, operation: str) -> None:
@@ -330,56 +287,8 @@ class PrepView(QWidget):
         self._ensure_mask()
         self._push_undo()
         self._current_mask = morph_mask(self._current_mask, pixels, operation)
-        self._mask_dirty = True
-        self._set_dirty(True)
+        self._mark_mask_edited()
         self._update_mask_overlay()
-
-    def undo_mask_edit(self) -> None:
-        if not self._undo_stack:
-            return
-        self._current_mask = self._undo_stack.pop()
-        at_saved = self._saved_undo_depth >= 0 and len(self._undo_stack) == self._saved_undo_depth
-        # ``_prep_base_flip`` holds the last-saved flips, so compare against it
-        # to tell whether a flip toggle still leaves the slice dirty.
-        flip_dirty = self._section is not None and (
-            self._section.preprocessing.flip_horizontal != self._prep_base_flip[0]
-            or self._section.preprocessing.flip_vertical != self._prep_base_flip[1]
-        )
-        if at_saved and not flip_dirty:
-            self._mask_dirty = False
-            self._set_dirty(False)
-        else:
-            self._mask_dirty = True
-            self._set_dirty(True)
-        self._update_mask_overlay()
-
-    # ------------------------------------------------------------------
-    # Draft / save / clear / flush
-    # ------------------------------------------------------------------
-
-    def flush_draft(self) -> None:
-        """Stash unsaved edits into the resident draft store; release arrays.
-
-        Called when navigating away from a prep section so its in-RAM mask
-        survives (keyed by section id) without this view holding the array.
-        The section stays dirty in the registry — this only moves the payload.
-        """
-        section = self._section
-        if section is None:
-            return
-        if self._state.is_dirty(section.id, "prep"):
-            draft = PrepDraft(
-                slice_mask=self._current_mask if self._mask_dirty else None,
-                mask_dirty=self._mask_dirty,
-                base_flip_h=self._prep_base_flip[0],
-                base_flip_v=self._prep_base_flip[1],
-            )
-            self._state.set_prep_draft(section.id, draft)
-        self._current_mask = None
-        self._arrays_released = True
-        self._undo_stack.clear()
-        self._stroke_points.clear()
-        self._stroke_active = False
 
     def mark_flip_changed(self) -> None:
         """Called by MainWindow after toggling a flip flag on the section."""
@@ -387,138 +296,150 @@ class PrepView(QWidget):
             return
         self._set_dirty(True)
 
-    def is_dirty(self) -> bool:
-        return self._section is not None and self._state.is_dirty(self._section.id, "prep")
-
-    def _saved_preprocessing(self) -> Preprocessing | None:
-        """The last-saved preprocessing baseline for the current section."""
-        if self._section is None:
-            return None
-        return self._state.get_baseline(self._section.id, "prep")  # type: ignore[return-value]
-
     def has_persisted_state(self) -> bool:
         """Whether Clear has anything to wipe in the project for this slice."""
         if self._section is None:
             return False
-        # ``slice_mask_path`` only changes on save/clear and flips are tracked by
-        # ``_prep_base_flip`` (last-saved), so both reflect the persisted state
-        # even mid-edit — no baseline lookup needed.
-        base_h, base_v = self._prep_base_flip
-        return bool(self._section.preprocessing.slice_mask_path) or base_h or base_v
+        # The last-saved baseline reflects the persisted mask path + flips even
+        # mid-edit; fall back to the section itself before a baseline is stashed.
+        baseline = self._saved_state()
+        pp = baseline if baseline is not None else self._section.preprocessing
+        return bool(pp.slice_mask_path) or bool(pp.flip_horizontal) or bool(pp.flip_vertical)
 
-    def save(self) -> bool:
-        """Persist the current draft to disk + section.
+    # ------------------------------------------------------------------
+    # Draft-view hooks (see BaseCanvasView)
+    # ------------------------------------------------------------------
 
-        Writes the slice mask PNG and updates the section's preprocessing
-        paths.  A flip already invalidated the alignment + warp at the moment
-        it was toggled (see ``_invalidate_alignment_for_flip``), so saving the
-        prep draft never touches the alignment here.
+    def _current_section(self) -> Section | None:
+        return self._section
 
-        Returns True iff anything actually changed.
-        """
-        if self._section is None:
+    def _capture_edit(self) -> np.ndarray:
+        # Callers all run _ensure_mask() first, so the mask is never None here.
+        return require(self._current_mask).copy()
+
+    def _restore(self, snapshot: np.ndarray) -> None:
+        self._current_mask = snapshot
+        self._update_mask_overlay()
+
+    def _matches_saved(self, snapshot: np.ndarray) -> bool:
+        if self._flip_is_dirty():
             return False
+        return self._saved_mask is not None and np.array_equal(snapshot, self._saved_mask)
 
-        draft = PrepDraft(
-            slice_mask=self._current_mask if self._mask_dirty else None,
-            mask_dirty=self._mask_dirty,
-            base_flip_h=self._prep_base_flip[0],
-            base_flip_v=self._prep_base_flip[1],
-        )
-        flip_changed = self._prep_base_flip != (
-            self._section.preprocessing.flip_horizontal,
-            self._section.preprocessing.flip_vertical,
-        )
-        changed = self._mask_dirty or flip_changed
-        commit_prep_draft(self._section, draft)
+    def _saved_copy(self) -> Preprocessing:
+        return copy.deepcopy(require(self._section).preprocessing)
 
-        self._mask_dirty = False
-        self._saved_undo_depth = len(self._undo_stack)
-        self._state.pop_prep_draft(self._section.id)
-        self._prep_base_flip = (
-            self._section.preprocessing.flip_horizontal,
-            self._section.preprocessing.flip_vertical,
-        )
-        self._set_dirty(False)
-        self._state.sync_baseline(
-            self._section.id, "prep", copy.deepcopy(self._section.preprocessing)
-        )
-        return changed
-
-    def revert(self) -> bool:
-        """Discard unsaved prep edits, restoring the last-saved preprocessing.
-
-        Drops the resident mask draft and any flip toggled since the last
-        save, then reloads mask + flips from the baseline so the canvas matches.
-        Does not touch on-disk state.
-        """
-        baseline = self._saved_preprocessing()
-        if self._section is None or baseline is None:
-            return False
-        self._section.preprocessing = copy.deepcopy(baseline)
-        self._state.pop_prep_draft(self._section.id)
-        self._current_mask = None
-        self._mask_dirty = False
-        self._undo_stack.clear()
-        self._saved_undo_depth = 0
-        self._stroke_points.clear()
-        self._stroke_active = False
-        self._prep_base_flip = (
-            self._section.preprocessing.flip_horizontal,
-            self._section.preprocessing.flip_vertical,
-        )
-        self._set_dirty(False)
-        self._state.sync_baseline(
-            self._section.id, "prep", copy.deepcopy(self._section.preprocessing)
-        )
+    def _apply_saved(self, baseline: Preprocessing) -> None:
+        section = require(self._section)
+        section.preprocessing = copy.deepcopy(baseline)
+        self._state.pop_working(section.id, "prep")
         if self._raw_image is not None:
-            self._load_or_init_mask()
+            self._saved_mask = self._load_saved_mask()
+            self._current_mask = self._saved_mask
             self._display_image()
             self._update_mask_overlay()
-        return True
 
-    def clear(self) -> bool:
-        """Wipe this slice's prep state: mask, flips.
+    def _commit(self) -> bool:
+        section = require(self._section)
+        mask = self._state.get_working(section.id, "prep")
+        changed = mask is not None or self._flip_is_dirty()
+        commit_prep_draft(section, mask)
+        self._state.pop_working(section.id, "prep")
+        if mask is not None:
+            self._saved_mask = mask
+        return changed
 
-        Deletes the on-disk PNG, drops any resident draft, and resets the
-        section's preprocessing to defaults.  If a saved flip is thereby
-        removed, the slice's alignment + warp are invalidated too.
+    def _wipe(self) -> None:
+        """Wipe this slice's prep state: mask + flips.
+
+        Deletes the on-disk PNG and resets preprocessing to defaults.  If a
+        previously-*saved* flip is thereby removed, the slice's alignment + warp
+        are invalidated (emitted from _after_clear once the wipe has settled).
         """
-        if self._section is None:
-            return False
+        section = require(self._section)
+        baseline = self._saved_state()
+        self._clear_invalidated_alignment = bool(
+            baseline is not None and (baseline.flip_horizontal or baseline.flip_vertical)
+        )
 
-        # A previously-saved flip is being undone → alignment no longer valid.
-        flip_changed = self._prep_base_flip[0] or self._prep_base_flip[1]
-
-        path_str = self._section.preprocessing.slice_mask_path
+        path_str = section.preprocessing.slice_mask_path
         if path_str:
             with contextlib.suppress(OSError):
                 Path(path_str).unlink(missing_ok=True)
 
-        self._section.preprocessing = Preprocessing()
-        self._current_mask = None
-        self._mask_dirty = False
-        self._undo_stack.clear()
-        self._saved_undo_depth = 0
-        self._state.pop_prep_draft(self._section.id)
-
-        if flip_changed:
+        section.preprocessing = Preprocessing()
+        self._state.pop_working(section.id, "prep")
+        if self._clear_invalidated_alignment:
             self._wipe_alignment_for_flip()
 
-        self._prep_base_flip = (False, False)
-        self._set_dirty(False)
-        self._state.sync_baseline(
-            self._section.id, "prep", copy.deepcopy(self._section.preprocessing)
-        )
-
-        # Reload from the now-empty state so the canvas matches.
         if self._raw_image is not None:
-            self._load_or_init_mask()
+            self._saved_mask = self._load_saved_mask()
+            self._current_mask = self._saved_mask
             self._display_image()
             self._update_mask_overlay()
-        if flip_changed:
+
+    def _end_edit_gesture(self) -> None:
+        self._stroke_points.clear()
+        self._stroke_active = False
+
+    def _after_undo_restore(self) -> None:
+        self._sync_working()
+
+    def _after_clear(self) -> None:
+        if self._clear_invalidated_alignment:
             self.alignment_invalidated.emit()
-        return True
+
+    # ------------------------------------------------------------------
+    # Prep-specific draft helpers
+    # ------------------------------------------------------------------
+
+    def _mark_mask_edited(self) -> None:
+        """Park the current mask as the unsaved working payload + mark dirty."""
+        if self._section is None:
+            return
+        self._state.set_working(self._section.id, "prep", self._current_mask)
+        self._set_dirty(True)
+
+    def _sync_working(self) -> None:
+        """Set or drop the working mask so it matches the current edit.
+
+        Used after undo: if the mask is back at the saved state the payload is
+        dropped (mask clean); otherwise the current mask is (re)parked.
+        """
+        if self._section is None:
+            return
+        if self._current_mask is not None and not self._mask_matches_saved():
+            self._state.set_working(self._section.id, "prep", self._current_mask)
+        else:
+            self._state.pop_working(self._section.id, "prep")
+
+    def _mask_matches_saved(self) -> bool:
+        return self._saved_mask is not None and np.array_equal(self._current_mask, self._saved_mask)
+
+    def _flip_is_dirty(self) -> bool:
+        if self._section is None:
+            return False
+        baseline = self._saved_state()
+        if baseline is None:
+            return False
+        pp = self._section.preprocessing
+        return (
+            baseline.flip_horizontal != pp.flip_horizontal
+            or baseline.flip_vertical != pp.flip_vertical
+        )
+
+    def _load_saved_mask(self) -> np.ndarray | None:
+        """Load the last-saved slice mask from disk (or zeros if none)."""
+        if self._section is None or self._raw_image is None:
+            return None
+        shape = self._raw_image.shape[:2]
+        path = self._section.preprocessing.slice_mask_path
+        if path and Path(path).exists():
+            try:
+                return load_mask(path, shape)
+            except Exception:
+                pass
+        return np.zeros(shape, dtype=bool)
 
     def _wipe_alignment_for_flip(self) -> None:
         if self._section is None:
@@ -526,20 +447,6 @@ class PrepView(QWidget):
         from verso.engine.drafts import wipe_alignment_for_flip
 
         wipe_alignment_for_flip(self._section)
-
-    def _set_dirty(self, dirty: bool) -> None:
-        """Flip the current section's ``prep`` dirty flag in AppState.
-
-        AppState is the single source of truth; ``mark_dirty``/``clear_dirty``
-        are idempotent and emit ``dirty_changed`` only on a real transition,
-        which drives the save bar and filmstrip dot.
-        """
-        if self._section is None:
-            return
-        if dirty:
-            self._state.mark_dirty(self._section.id, "prep")
-        else:
-            self._state.clear_dirty(self._section.id, "prep")
 
     # ------------------------------------------------------------------
     # Display / mask state
@@ -554,21 +461,6 @@ class PrepView(QWidget):
             self._planes_version,
             self._channel_planes_key,
         )
-
-    def _load_or_init_mask(self) -> None:
-        if self._section is None or self._raw_image is None:
-            self._current_mask = None
-            return
-
-        shape = self._raw_image.shape[:2]
-        path = self._section.preprocessing.slice_mask_path
-        if path and Path(path).exists():
-            try:
-                self._current_mask = load_mask(path, shape)
-                return
-            except Exception:
-                pass
-        self._current_mask = np.zeros(shape, dtype=bool)
 
     def _ensure_mask(self) -> None:
         if self._current_mask is None and self._raw_image is not None:
@@ -600,13 +492,6 @@ class PrepView(QWidget):
         if self._section and self._section.preprocessing.flip_vertical:
             mask = np.flipud(mask)
         return np.ascontiguousarray(mask)
-
-    def _push_undo(self) -> None:
-        if self._current_mask is None:
-            return
-        self._undo_stack.append(self._current_mask.copy())
-        if len(self._undo_stack) > self._UNDO_LIMIT:
-            self._undo_stack.pop(0)
 
     # ------------------------------------------------------------------
     # Tool / stroke handling
@@ -681,8 +566,7 @@ class PrepView(QWidget):
             add=not self._stroke_erase,
         )
         self._stroke_points.clear()
-        self._mask_dirty = True
-        self._set_dirty(True)
+        self._mark_mask_edited()
         self._update_mask_overlay()
 
     def _paint_brush_segment(self, display_points: list[tuple[float, float]]) -> None:
@@ -694,8 +578,7 @@ class PrepView(QWidget):
             radius=self._brush_radius,
             add=not self._stroke_erase,
         )
-        self._mask_dirty = True
-        self._set_dirty(True)
+        self._mark_mask_edited()
         self._update_mask_overlay()
 
     def _clamped_display_point(self, x: float, y: float) -> tuple[float, float]:

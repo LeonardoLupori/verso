@@ -116,26 +116,20 @@ class JobController:
         if worker is not None and project is not None:
             import copy
 
-            from verso.engine.drafts import PrepDraft
-
             by_id = {s.id: s for s in project.sections}
             for sid, mask in worker.results.items():
                 section = by_id.get(sid)
                 if section is None:
                     continue
-                self._state.set_prep_draft(
-                    sid,
-                    PrepDraft(
-                        slice_mask=mask,
-                        mask_dirty=True,
-                        base_flip_h=section.preprocessing.flip_horizontal,
-                        base_flip_v=section.preprocessing.flip_vertical,
-                    ),
-                )
+                # The detected mask is an unsaved edit: park it in the draft
+                # store's "prep" working payload (kept in RAM, shown yellow until
+                # the user saves).
+                self._state.set_working(sid, "prep", mask)
                 # Stash the last-saved baseline before dirtying so "Clear edits"
-                # can revert — the mask edit lives in the draft, so the section's
-                # current preprocessing is still the last-saved state. Mirrors the
-                # DeepSlice flow; sync_baseline on load is a no-op while dirty.
+                # can revert — the mask edit lives in the working payload, so the
+                # section's current preprocessing is still the last-saved state.
+                # Mirrors the DeepSlice flow; sync_baseline on load is a no-op
+                # while dirty.
                 self._state.set_baseline(sid, "prep", copy.deepcopy(section.preprocessing))
                 self._state.mark_dirty(sid, "prep")
 

@@ -5,7 +5,6 @@ from __future__ import annotations
 import numpy as np
 
 from verso.engine.drafts import (
-    PrepDraft,
     commit_alignment,
     commit_prep_draft,
     commit_warp,
@@ -190,13 +189,22 @@ def test_commit_prep_draft_writes_mask_and_sets_path(tmp_path):
     )
     mask = np.zeros((4, 4), dtype=bool)
     mask[1:3, 1:3] = True
-    draft = PrepDraft(slice_mask=mask, mask_dirty=True)
 
-    commit_prep_draft(section, draft)
+    commit_prep_draft(section, mask)
 
     expected = slice_mask_path_for(section)
     assert expected.exists()
     assert section.preprocessing.slice_mask_path == str(expected)
+
+
+def test_commit_prep_draft_none_mask_is_noop(tmp_path):
+    """A flip-only save passes mask=None: nothing is written, path untouched."""
+    section = _section(
+        original_path=str(tmp_path / "img.png"),
+        thumbnail_path=str(tmp_path / "thumbnails" / "img.tif"),
+    )
+    commit_prep_draft(section, None)
+    assert section.preprocessing.slice_mask_path is None
 
 
 def test_commit_prep_draft_preserves_alignment_through_flip(tmp_path):
@@ -210,9 +218,8 @@ def test_commit_prep_draft_preserves_alignment_through_flip(tmp_path):
         ),
     )
     section.preprocessing.flip_horizontal = True  # current differs from base (False)
-    draft = PrepDraft(base_flip_h=False, base_flip_v=False)
 
-    commit_prep_draft(section, draft)
+    commit_prep_draft(section, None)
 
     assert section.alignment.status == AlignmentStatus.COMPLETE
     assert section.alignment.stored_anchoring == [1.0] * 9

@@ -11,7 +11,6 @@ from verso.gui.draft_store import DraftStore
 
 if TYPE_CHECKING:
     from verso.engine.atlas import AtlasVolume
-    from verso.engine.drafts import PrepDraft
     from verso.engine.model.project import Project, Section
 
 
@@ -134,20 +133,20 @@ class AppState(QObject):
         return self._drafts.pop_saved(section_id, step)
 
     # ------------------------------------------------------------------
-    # Prep mask drafts (resident in RAM until saved) — the "prep" working payload
+    # Working payloads (resident in RAM until saved) — Prep's slice mask
     # ------------------------------------------------------------------
 
-    def get_prep_draft(self, section_id: str) -> PrepDraft | None:
-        return self._drafts.get_working(section_id, "prep")  # type: ignore[return-value]
+    def get_working(self, section_id: str, step: str) -> object | None:
+        return self._drafts.get_working(section_id, step)
 
-    def set_prep_draft(self, section_id: str, draft: PrepDraft) -> None:
-        self._drafts.set_working(section_id, "prep", draft)
+    def set_working(self, section_id: str, step: str, payload: object) -> None:
+        self._drafts.set_working(section_id, step, payload)
 
-    def pop_prep_draft(self, section_id: str) -> PrepDraft | None:
-        return self._drafts.pop_working(section_id, "prep")  # type: ignore[return-value]
+    def pop_working(self, section_id: str, step: str) -> object | None:
+        return self._drafts.pop_working(section_id, step)
 
-    def has_prep_draft(self, section_id: str) -> bool:
-        return self._drafts.has_working(section_id, "prep")
+    def has_working(self, section_id: str, step: str) -> bool:
+        return self._drafts.has_working(section_id, step)
 
     # ------------------------------------------------------------------
     # Section selection

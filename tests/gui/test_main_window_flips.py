@@ -4,7 +4,8 @@ Toggling a flip changes the image coordinate frame, so the alignment + warp are
 wiped the instant the flip is toggled (``MainWindow._invalidate_alignment_for_flip``)
 rather than deferred to prep save.  Doing it at toggle time keeps a re-alignment
 performed in the new orientation from being clobbered when the flip is later
-saved (previously ``PrepView.save()`` / ``Ctrl+S`` wiped it).
+saved.  (That prep save itself never touches the alignment is covered at the
+engine level by ``test_commit_prep_draft_preserves_alignment_through_flip``.)
 """
 
 from types import SimpleNamespace
@@ -12,56 +13,18 @@ from types import SimpleNamespace
 from verso.engine.model.alignment import Alignment, AlignmentStatus, ControlPoint, WarpState
 from verso.engine.model.project import Section
 from verso.gui.main_window import MainWindow
-from verso.gui.views.prep_view import PrepView
 
 
 class _FakeState:
-    """Minimal AppState stand-in for the prep-draft store / dirty registry."""
+    """Minimal AppState stand-in for the dirty registry / baselines."""
 
     section_index = 0
-
-    def pop_prep_draft(self, _section_id):
-        return None
-
-    def set_prep_draft(self, _section_id, _draft):
-        pass
-
-    def mark_dirty(self, _section_id, _step):
-        pass
 
     def clear_dirty(self, _section_id, _step):
         pass
 
-    def is_dirty(self, _section_id, _step):
-        return False
-
-    def set_baseline(self, _section_id, _step, _snapshot):
-        pass
-
-    def sync_baseline(self, _section_id, _step, _snapshot):
-        pass
-
-    def get_baseline(self, _section_id, _step):
-        return None
-
     def pop_baseline(self, _section_id, _step):
         return None
-
-
-def _make_prep_mock(section: Section, base_flip: tuple[bool, bool]) -> SimpleNamespace:
-    """SimpleNamespace that quacks like PrepView for save() calls."""
-    mock = SimpleNamespace(
-        _section=section,
-        _state=_FakeState(),
-        _prep_base_flip=base_flip,
-        _mask_dirty=False,
-        _current_mask=None,
-        _undo_stack=[],
-        _saved_undo_depth=0,
-        alignment_invalidated=SimpleNamespace(emit=lambda: None),
-    )
-    mock._set_dirty = lambda v: PrepView._set_dirty(mock, v)
-    return mock
 
 
 def _make_window_mock() -> SimpleNamespace:
@@ -119,38 +82,3 @@ def test_flip_toggle_noop_when_nothing_aligned():
 
     assert section.alignment.status == AlignmentStatus.NOT_STARTED
     assert section.alignment.anchoring == [0.0] * 9
-
-
-def test_save_does_not_wipe_alignment_on_flip():
-    """Saving a prep draft must never touch the alignment — a re-alignment done
-    after the flip survives the save (the bug behind Ctrl+S resetting slices)."""
-    section = _stored_anchoring_section()
-    # Flip toggled but its invalidation already happened at toggle time; here the
-    # user has re-aligned in the new frame, so save must preserve that work.
-    section.preprocessing.flip_horizontal = True
-    mock = _make_prep_mock(section, base_flip=(False, False))
-
-    PrepView.save(mock)
-
-    assert section.alignment.status == AlignmentStatus.COMPLETE
-    assert section.alignment.stored_anchoring is not None
-
-
-def test_save_without_flip_change_preserves_alignment():
-    section = _stored_anchoring_section()
-    mock = _make_prep_mock(section, base_flip=(False, False))
-
-    PrepView.save(mock)
-
-    assert section.alignment.status == AlignmentStatus.COMPLETE
-    assert section.alignment.stored_anchoring is not None
-
-
-def test_unsaved_flip_does_not_wipe_alignment_before_save():
-    section = _stored_anchoring_section()
-    # Flip toggled but not yet saved — alignment must remain intact until save.
-    section.preprocessing.flip_horizontal = True
-    _make_prep_mock(section, base_flip=(False, False))
-
-    assert section.alignment.status == AlignmentStatus.COMPLETE
-    assert section.alignment.stored_anchoring is not None

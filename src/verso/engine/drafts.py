@@ -2,9 +2,7 @@
 
 This module holds the pure-engine side of the persistent unsaved-edits model:
 
-- :class:`PrepDraft` — an in-memory slice-mask edit for one section, kept
-  resident until the user saves.
-- :func:`commit_prep_draft` — write a prep draft's masks to disk.
+- :func:`commit_prep_draft` — write an unsaved slice mask to disk.
 - :func:`commit_alignment` / :func:`commit_warp` — promote in-memory align/warp
   edits to their saved state.
 - :func:`wipe_alignment_for_flip` — invalidate alignment + warp after a flip.
@@ -15,7 +13,6 @@ None of this imports Qt, so it stays usable from scripts and tests.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -23,27 +20,6 @@ import numpy as np
 from verso.engine.model.alignment import AlignmentStatus
 from verso.engine.model.project import Section
 from verso.engine.preprocessing import save_mask
-
-
-@dataclass
-class PrepDraft:
-    """A resident, unsaved prep edit for one section (slice mask only).
-
-    The mask is stored unflipped (matching the on-disk convention); flips live on
-    ``section.preprocessing`` and need no draft.  ``slice_mask`` is ``None`` when
-    unset; a ``None`` mask with ``mask_dirty`` True means the user cleared the
-    mask (the saved file, if any, should be removed).
-
-    ``base_flip_*`` capture the section's last-saved flip flags at the moment the
-    draft was created so the GUI can carry them across navigation for its
-    Clear/Reset logic.  They no longer drive alignment invalidation: a flip wipes
-    the alignment the instant it is toggled, not when the draft is persisted.
-    """
-
-    slice_mask: np.ndarray | None = None
-    mask_dirty: bool = False
-    base_flip_h: bool = False
-    base_flip_v: bool = False
 
 
 def slice_mask_path_for(section: Section) -> Path:
@@ -70,19 +46,22 @@ def wipe_alignment_for_flip(section: Section) -> None:
     section.warp.status = AlignmentStatus.NOT_STARTED
 
 
-def commit_prep_draft(section: Section, draft: PrepDraft) -> None:
-    """Write *draft*'s masks to disk and update ``section.preprocessing`` paths.
+def commit_prep_draft(section: Section, mask: np.ndarray | None) -> None:
+    """Write an unsaved slice *mask* to disk and update the preprocessing path.
+
+    ``mask`` is the section's in-progress slice mask (``None`` when only flips
+    changed, in which case there is nothing to write — flips live on
+    ``section.preprocessing`` and are persisted with the project).
 
     A flip invalidates the alignment **at the moment the user toggles it** (the
-    GUI wipes the alignment + warp then), not here — so persisting a prep draft
-    only writes masks and never touches the alignment.  This keeps an alignment
-    the user (re)did *after* a flip from being clobbered when the flip is later
-    saved.  ``draft.base_flip_*`` are retained only so the GUI can carry the
-    last-saved flip across navigation for its Clear/Reset logic.
+    GUI wipes the alignment + warp then), not here — so committing a prep draft
+    only writes the mask and never touches the alignment.  This keeps an
+    alignment the user (re)did *after* a flip from being clobbered when the flip
+    is later saved.
     """
-    if draft.mask_dirty and draft.slice_mask is not None:
+    if mask is not None:
         path = slice_mask_path_for(section)
-        save_mask(draft.slice_mask, path)
+        save_mask(mask, path)
         section.preprocessing.slice_mask_path = str(path)
 
 
@@ -123,7 +102,6 @@ def commit_warp(section: Section) -> bool:
 
 
 __all__ = [
-    "PrepDraft",
     "commit_alignment",
     "commit_prep_draft",
     "commit_warp",

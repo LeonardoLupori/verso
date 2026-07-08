@@ -409,31 +409,24 @@ class OverviewView(QWidget):
         pos = section.alignment.position_mm
         t.setItem(row, _COL_AP, self._make_cell(f"{pos:.2f}" if pos is not None else "—"))
 
-        prep_dirty = self._state.is_dirty(section.id, "prep")
-        draft = self._state.get_prep_draft(section.id)
-        if draft is not None:
-            # The flushed draft carries per-sub-step dirty flags, so colour each
-            # sub-step independently — editing only the mask yellows just the
-            # Slice-mask dot, not Flip.
-            mask_dirty = draft.mask_dirty
+        # Prep is one registry step with two independently-shown sub-states.
+        # Both derive from the single (section, "prep") draft entry: an unsaved
+        # mask edit is parked in the "working" payload, and the last-saved flips
+        # live in the baseline — so colour each sub-step on its own.
+        mask_dirty = self._state.has_working(section.id, "prep")
+        baseline = self._state.get_baseline(section.id, "prep")
+        if baseline is not None:
             flip_dirty = (
-                draft.base_flip_h != section.preprocessing.flip_horizontal
-                or draft.base_flip_v != section.preprocessing.flip_vertical
+                baseline.flip_horizontal != section.preprocessing.flip_horizontal
+                or baseline.flip_vertical != section.preprocessing.flip_vertical
             )
         else:
-            # No draft — the section is the one currently open in Prep, whose
-            # live edits aren't flushed yet, so we only know the aggregate prep
-            # flag.  Fall back to it for any not-yet-saved sub-step.
-            mask_dirty = flip_dirty = False
+            flip_dirty = False
 
         def prep_status(is_done: bool, sub_dirty: bool) -> AlignmentStatus:
-            if draft is not None:
-                if sub_dirty:
-                    return AlignmentStatus.IN_PROGRESS
-                return AlignmentStatus.COMPLETE if is_done else AlignmentStatus.NOT_STARTED
-            if is_done:
-                return AlignmentStatus.COMPLETE
-            return AlignmentStatus.IN_PROGRESS if prep_dirty else AlignmentStatus.NOT_STARTED
+            if sub_dirty:
+                return AlignmentStatus.IN_PROGRESS
+            return AlignmentStatus.COMPLETE if is_done else AlignmentStatus.NOT_STARTED
 
         # Flip is a state, not a task: both flipped and un-flipped are valid end
         # states, so it gets a plain H / V / H+V label (regular colour) instead

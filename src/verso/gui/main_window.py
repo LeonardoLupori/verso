@@ -474,10 +474,7 @@ class MainWindow(QMainWindow):
 
     def _switch_view(self, index: int) -> None:
         modes = ("overview", "prep", "align", "warp")
-        leaving_mode = self._current_mode
         entering_mode = modes[index]
-        if leaving_mode != entering_mode:
-            self._flush_view_draft(leaving_mode)
 
         # Release panel hooks from whichever Align/Warp view currently owns it.
         if self._current_mode == "align":
@@ -666,12 +663,11 @@ class MainWindow(QMainWindow):
         #    front since we mutate the registry inside the loop.
         for section, steps in self._state.dirty_sections():
             if "prep" in steps:
-                draft = self._state.pop_prep_draft(section.id)
-                if draft is not None:
-                    # Flip invalidation already happened at toggle time, so this
-                    # only writes masks — it won't clobber an alignment the user
-                    # redid after flipping.
-                    commit_prep_draft(section, draft)
+                # Flip invalidation already happened at toggle time, so this only
+                # writes the mask (None when only flips changed) — it won't
+                # clobber an alignment the user redid after flipping.
+                mask = self._state.pop_working(section.id, "prep")
+                commit_prep_draft(section, mask)
                 self._state.clear_dirty(section.id, "prep")
             # Commit align before warp so warp can reach COMPLETE.
             if "align" in steps and self._state.is_dirty(section.id, "align"):
@@ -747,16 +743,6 @@ class MainWindow(QMainWindow):
         if view is None:
             return False
         return view.save()
-
-    def _flush_view_draft(self, mode: str) -> None:
-        """Persist the leaving view's in-RAM edits before a slice/view swap.
-
-        Edits are no longer discarded on navigation.  Prep flushes its mask
-        arrays into the resident draft store (keyed by section id); Align/Warp
-        keep their edits directly on the Section, so nothing to do.
-        """
-        if mode == "prep":
-            self._prep.flush_draft()
 
     def _on_prep_invalidated_alignment(self) -> None:
         """A prep Clear/Reset wiped the current section's alignment + warp."""
@@ -1043,10 +1029,9 @@ class MainWindow(QMainWindow):
         QMessageBox.warning(self, "Atlas load failed", message)
 
     def _on_section_changed(self, index: int) -> None:
-        # Flush (not discard) the leaving section's in-RAM edits so they persist
-        # across the swap; prep masks move into the resident draft store.
-        self._flush_view_draft(self._current_mode)
-
+        # Unsaved edits persist across the swap without an explicit flush: Prep's
+        # mask lives in the draft store's working payload, Align/Warp edits live
+        # on the Section.
         section = self._state.current_section
         self._filmstrip.set_current(index)
 
