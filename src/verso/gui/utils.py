@@ -89,7 +89,7 @@ def warn_if_missing_dimensions(parent: QWidget, sections: list) -> bool:
     Registration needs each section's working-resolution image size, cached as
     ``resolution_thumbnail_wh`` at import. A ``(0, 0)`` value means the project
     file is corrupt or was never fully imported — proceeding would raise deep in
-    the QuickNII math. When any section is affected, a dialog naming the exact
+    the anchoring math. When any section is affected, a dialog naming the exact
     slices and the missing attribute is shown and this returns ``False`` so the
     caller can abort; otherwise it returns ``True``.
     """

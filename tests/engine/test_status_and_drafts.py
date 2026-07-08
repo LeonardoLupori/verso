@@ -149,13 +149,13 @@ def test_commit_warp_requires_usable_plane():
 
 
 def test_commit_warp_promotes_proposal_plane():
-    # A warp placed on an uncommitted (e.g. quicknii_default) plane must promote
+    # A warp placed on an uncommitted (e.g. series_interpolation) plane must promote
     # that plane to COMPLETE so the next save's interpolation can't overwrite it.
     section = _section(
         alignment=Alignment(
             current_anchoring=[1.0, 2.0] + [0.0] * 7,
             status=AlignmentStatus.IN_PROGRESS,
-            source="quicknii_default",
+            source="series_interpolation",
         ),
         warp=WarpState(control_points=[ControlPoint(0, 0, 0, 0)]),
     )

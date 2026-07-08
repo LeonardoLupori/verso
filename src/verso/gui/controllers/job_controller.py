@@ -177,7 +177,7 @@ class JobController:
         for section in project.sections:
             reset_alignment(section)
 
-        self._window._initialize_quicknii_anchorings(project.sections)
+        self._window._initialize_default_anchorings(project.sections)
         self._window._sync_position_mm(project.sections)
 
         self._window._overview.refresh()

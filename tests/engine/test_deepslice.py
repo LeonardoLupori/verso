@@ -8,9 +8,9 @@ import numpy as np
 from PIL import Image
 
 from verso.engine.anchoring import (
-    quicknii_pack_anchoring,
-    quicknii_unpack_anchoring,
+    pack_series_anchoring,
     reset_in_progress_to_default_proposals,
+    unpack_series_anchoring,
 )
 from verso.engine.deepslice import (
     DeepSliceRunResult,
@@ -385,7 +385,7 @@ def test_apply_deepslice_orients_series_to_verso_convention(tmp_path: Path):
     """DeepSlice's AP order is realigned to VERSO's default-proposal direction.
 
     DeepSlice 1.2.7 auto-detects indexing direction, so it can return a series
-    that scrolls opposite to VERSO's own QuickNII proposals.  Apply re-orients
+    that scrolls opposite to VERSO's own default proposals.  Apply re-orients
     it: with ``reverse_axis=False`` the AP centre must *decrease* with
     ``slice_index`` (VERSO's default), and with ``reverse_axis=True`` it must
     *increase* — regardless of how DeepSlice happened to order the input.
@@ -693,7 +693,7 @@ def test_reset_in_progress_to_default_proposals_clears_deepslice_metadata(tmp_pa
     assert changed == 2
     for section in project.sections:
         assert section.alignment.status == AlignmentStatus.IN_PROGRESS
-        assert section.alignment.source == "quicknii_default"
+        assert section.alignment.source == "series_interpolation"
         assert section.warp.control_points == []
 
 
@@ -723,12 +723,12 @@ def test_reset_default_proposals_interpolates_flipped_keyframe_in_display_space(
     ]
     unpacked_right = list(unpacked_left)
     unpacked_right[1] = 100.0
-    left = quicknii_pack_anchoring(unpacked_left, 1000, 800)
+    left = pack_series_anchoring(unpacked_left, 1000, 800)
     # Section 3 is flipped to restore coherent orientation. After flipping,
     # the user aligns the atlas in display space — u points the same anatomical
     # direction as the unflipped keyframe. Both keyframes have the same u vector
     # in display space, so interpolation propagates the angle correctly.
-    right = quicknii_pack_anchoring(unpacked_right, 1000, 800)
+    right = pack_series_anchoring(unpacked_right, 1000, 800)
 
     project = Project(
         name="deep",
@@ -771,7 +771,7 @@ def test_reset_default_proposals_interpolates_flipped_keyframe_in_display_space(
     )
 
     assert changed == 1
-    middle = quicknii_unpack_anchoring(project.sections[1].alignment.current_anchoring, 1000, 800)
+    middle = unpack_series_anchoring(project.sections[1].alignment.current_anchoring, 1000, 800)
     np.testing.assert_allclose(middle[4], math.sin(angle), atol=1e-9)
     np.testing.assert_allclose(middle[1], 300.0, atol=1e-9)
 
@@ -793,6 +793,6 @@ def test_reset_to_default_can_clear_complete_alignments(tmp_path: Path):
     assert changed == 2
     for section in project.sections:
         assert section.alignment.status == AlignmentStatus.IN_PROGRESS
-        assert section.alignment.source == "quicknii_default"
+        assert section.alignment.source == "series_interpolation"
         assert section.alignment.current_anchoring != [1.0] * 9
         assert section.warp.control_points == []

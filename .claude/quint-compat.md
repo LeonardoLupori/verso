@@ -98,7 +98,7 @@ Where:
 - `unit_u = u / |u|`, `u_stretch = |u|`
 - `unit_v = v / |v|`, `v_stretch = |v|`
 
-Interpolation (linear regression / piecewise linear) is performed in unpacked space, then repacked to the 9-component anchoring format. VERSO's `quicknii_series_anchorings()` in `engine/anchoring.py` mirrors this algorithm and parameterizes it on the project's `interpolation_axis` (the original QuickNII algorithm is coronal-only).
+Interpolation (linear regression / piecewise linear) is performed in unpacked space, then repacked to the 9-component anchoring format. VERSO's `propagate_series_anchorings()` in `engine/anchoring.py` mirrors this algorithm and parameterizes it on the project's `interpolation_axis` (the original QuickNII algorithm is coronal-only).
 
 ## VisuAlign JSON format
 

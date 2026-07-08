@@ -3,14 +3,14 @@ function [labels, inBounds] = sampleLabelsAt(atlas, grid)
 %   [LABELS, INBOUNDS] = SAMPLELABELSAT(ATLAS, GRID) samples ATLAS.Annotation
 %   (as returned by loadAtlasVolume) at the atlas voxel coordinates in GRID,
 %   an (H, W, 3) array with GRID(:,:,1)=LR, GRID(:,:,2)=AP, GRID(:,:,3)=DV
-%   (QuickNII voxel order, matching the anchoring formula).
+%   (anchoring voxel order).
 %
 %   LABELS: (H, W) int32, valid everywhere (clamped) -- caller decides what
 %       to do with out-of-bounds pixels using INBOUNDS.
 %   INBOUNDS: (H, W) logical -- true where the voxel is inside the atlas volume.
 %
 %   Mirrors engine/atlas.py::AtlasVolume.sample_labels_at.
-    [lrIdx, apIdx, dvIdx] = quickniiVoxelIndices(grid(:, :, 1), grid(:, :, 2), grid(:, :, 3));
+    [lrIdx, apIdx, dvIdx] = sampleVoxelIndices(grid(:, :, 1), grid(:, :, 2), grid(:, :, 3));
 
     sz = size(atlas.Annotation);
     apMax = sz(1); dvMax = sz(2); lrMax = sz(3);

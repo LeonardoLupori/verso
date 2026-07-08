@@ -1,9 +1,9 @@
 """Atlas volume loading, slicing, and color mapping via brainglobe-atlasapi.
 
-Coordinate mapping (QuickNII voxel → brainglobe Allen Mouse 25µm):
-  QuickNII  (x=LR, y=AP, z=DV)  →  annotation[ceil(y), ceil(z), floor(x)]
-  Voxel selection matches VisuAlign/QUINT (floor in QuickNII convention); see
-  ``_quicknii_floor_indices`` for why AP/DV use ceil and LR uses floor.
+Coordinate mapping (anchoring voxel order → brainglobe Allen Mouse 25µm):
+  anchoring order (x=LR, y=AP, z=DV)  →  annotation[ceil(y), ceil(z), floor(x)]
+  Voxel selection matches VisuAlign/QUINT (floor in anchoring order); see
+  ``_sample_voxel_indices`` for why AP/DV use ceil and LR uses floor.
   The annotation volume has shape (AP=528, DV=320, LR=456) for allen_mouse_25um.
 """
 
@@ -14,14 +14,14 @@ import numpy as np
 from verso.engine.anchoring import make_atlas_sample_grid
 
 
-def _quicknii_floor_indices(
+def _sample_voxel_indices(
     lr_c: np.ndarray, ap_c: np.ndarray, dv_c: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Voxel indices matching VisuAlign/QUINT (and PyNutil) sampling exactly.
 
     VisuAlign's ``getInt32Slice`` truncates (``floor``) the voxel coordinate in
-    *QuickNII* convention.  AP and DV are array-reversed there relative to
-    BrainGlobe (see ``anchoring._to_quicknii_convention``), so flooring a
+    anchoring axis order.  AP and DV are array-reversed there relative to
+    BrainGlobe (see ``quint_io._to_quicknii_convention``), so flooring a
     reversed axis is equivalent to taking the **ceil** of the BrainGlobe
     coordinate::
 
@@ -133,8 +133,8 @@ class AtlasVolume:
             in_bounds: same leading shape, bool   — True where the voxel is inside the atlas volume
         """
         # Keep floats for bounds check — converting first can overflow int32 for extreme anchorings.
-        # Use VisuAlign/QUINT-matching voxel selection (see _quicknii_floor_indices).
-        lr_f, ap_f, dv_f = _quicknii_floor_indices(grid[..., 0], grid[..., 1], grid[..., 2])
+        # Use VisuAlign/QUINT-matching voxel selection (see _sample_voxel_indices).
+        lr_f, ap_f, dv_f = _sample_voxel_indices(grid[..., 0], grid[..., 1], grid[..., 2])
 
         ap_max, dv_max, lr_max = self._annotation.shape
         in_bounds: np.ndarray = (
@@ -181,7 +181,7 @@ class AtlasVolume:
         """Voxel ``(width, height)`` of the canonical plane orthogonal to ``axis``.
 
         Args:
-            axis: Slicing axis in QuickNII voxel order (0 = LR/ML, 1 = AP, 2 = DV).
+            axis: Slicing axis in anchoring voxel order (0 = LR/ML, 1 = AP, 2 = DV).
 
         Returns:
             ``(width_vox, height_vox)`` — the two atlas extents in the plane,
@@ -206,7 +206,7 @@ class AtlasVolume:
 
         Args:
             position: Voxel coordinate along ``axis`` (the slice location).
-            axis: Slicing axis in QuickNII voxel order (0 = LR, 1 = AP, 2 = DV).
+            axis: Slicing axis in anchoring voxel order (0 = LR, 1 = AP, 2 = DV).
 
         Returns:
             9-element anchoring ``[o, u, v]`` in atlas voxel space.
@@ -314,9 +314,9 @@ class AtlasVolume:
         v = np.array(anchoring[6:9])
         voxel = o + s * u + t * v
 
-        # Match VisuAlign/QUINT voxel selection (see _quicknii_floor_indices) so the
+        # Match VisuAlign/QUINT voxel selection (see _sample_voxel_indices) so the
         # region named under the cursor is the one VisuAlign/PyNutil would report.
-        lr_f, ap_f, dv_f = _quicknii_floor_indices(voxel[0], voxel[1], voxel[2])
+        lr_f, ap_f, dv_f = _sample_voxel_indices(voxel[0], voxel[1], voxel[2])
         ap, dv, lr = int(ap_f), int(dv_f), int(lr_f)
 
         ap_max, dv_max, lr_max = self._annotation.shape
@@ -351,7 +351,7 @@ class AtlasVolume:
             in_bounds: same leading shape, bool   — True where the voxel is
                 inside the atlas volume.
         """
-        lr_f, ap_f, dv_f = _quicknii_floor_indices(grid[..., 0], grid[..., 1], grid[..., 2])
+        lr_f, ap_f, dv_f = _sample_voxel_indices(grid[..., 0], grid[..., 1], grid[..., 2])
         ap_max, dv_max, lr_max = self._reference.shape
         in_bounds = (
             (ap_f >= 0)
@@ -400,17 +400,17 @@ class AtlasVolume:
 
         u_axis, v_axis = _in_plane_axes(axis)
         ap_dim, dv_dim, lr_dim = self._annotation.shape
-        # BrainGlobe shape (AP, DV, LR) indexed by QuickNII axis (ML=0, AP=1, DV=2).
-        qn_dims = (lr_dim, ap_dim, dv_dim)
-        u_dim = float(qn_dims[u_axis])
-        v_dim = float(qn_dims[v_axis])
+        # BrainGlobe shape (AP, DV, LR) indexed by anchoring axis order (ML=0, AP=1, DV=2).
+        dims = (lr_dim, ap_dim, dv_dim)
+        u_dim = float(dims[u_axis])
+        v_dim = float(dims[v_axis])
 
         u_span = u_dim
         v_span = u_span / aspect_ratio if aspect_ratio > 0 else v_dim
         v_span = min(v_span, v_dim)
 
         origin = [0.0, 0.0, 0.0]
-        origin[axis] = float(qn_dims[axis]) / 2.0
+        origin[axis] = float(dims[axis]) / 2.0
         origin[u_axis] = 0.0
         origin[v_axis] = (v_dim - v_span) / 2.0
 

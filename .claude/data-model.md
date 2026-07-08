@@ -50,8 +50,8 @@ Top level:
 |---|---|---|
 | `version` | str | Schema version the file was written under; currently `"1.2"`. Informational only — see "Schema versioning" below. **Early development: no migration / backward-compatibility support.** |
 | `name` | str | Project display name. |
-| `atlas` | `AtlasRef` | `{name, source, resolution_um, shape}`. `source` defaults to `"brainglobe"`. `resolution_um` is the isotropic atlas voxel size (microns); `shape` is the atlas voxel grid `[x, y, z]` in QuickNII/brainglobe order. Both are cached so the project file is self-contained for pixel ↔ atlas voxel mapping without re-fetching the atlas; `0.0` / `[0, 0, 0]` until populated. |
-| `interpolation_axis` | str | Brain axis the cutting series runs along: `"AP"` (coronal, default), `"ML"` (sagittal), or `"DV"` (horizontal). Set at project creation; drives the QuickNII voxel axis used by `quicknii_series_anchorings`. See "Interpolation axis" below. |
+| `atlas` | `AtlasRef` | `{name, source, resolution_um, shape}`. `source` defaults to `"brainglobe"`. `resolution_um` is the isotropic atlas voxel size (microns); `shape` is the atlas voxel grid `[AP, DV, LR]` in BrainGlobe order. Both are cached so the project file is self-contained for pixel ↔ atlas voxel mapping without re-fetching the atlas; `0.0` / `[0, 0, 0]` until populated. |
+| `interpolation_axis` | str | Brain axis the cutting series runs along: `"AP"` (coronal, default), `"ML"` (sagittal), or `"DV"` (horizontal). Set at project creation; drives the anchoring voxel axis used by `propagate_series_anchorings`. See "Interpolation axis" below. |
 | `channels` | `list[ChannelSpec]` | Project-wide channel display settings (shared across all sections). |
 | `cp_size` / `cp_shape` / `cp_color` | int / str / hex | Warp control-point drawing style, project-wide. |
 | `working_scale` | float | Ratio `working_long_side / original_long_side`, **uniform across all sections**. Derived once at import from the largest image so its longest side fits within `THUMBNAIL_MAX_SIDE` (2000 px); see `compute_working_scale` in `engine/io/image_io.py`. Full-resolution export scales back up by this factor. Default `0.2`. |
@@ -139,10 +139,10 @@ It is emitted only when a saved plane exists (i.e. `stored_anchoring` is set —
 | `current_anchoring` | no | The live working copy, mutated by the navigator during editing. Seeded from `stored_anchoring` on load; transient. |
 | `position_mm` | no | Section position in mm along the project's `interpolation_axis`. A derived display cache, recomputed from the plane via the atlas on load; never persisted. |
 | `status` | yes | `not_started`, `in_progress`, or `complete`. `complete` ⇔ user clicked Save in Align. |
-| `source` | yes (when set) | Origin of the current plane: `quicknii_default`, `deepslice`, `manual`, or `null`. |
+| `source` | yes (when set) | Origin of the current plane: `series_interpolation`, `deepslice`, `manual`, or `null`. |
 
 `in_progress` proposal planes are **not** persisted — they are regenerated on
-load by `interpolate_anchorings`/`_initialize_quicknii_anchorings` from the saved
+load by `interpolate_anchorings`/`_initialize_default_anchorings` from the saved
 keyframes (GUI), so a section without a saved plane carries no `"anchoring"` on
 disk.
 
@@ -268,7 +268,7 @@ order) breaking ties for duplicates.
   gap, then two more.
 - **Allowed to repeat** — a physical slice that broke into several images
   shares one index. Interpolation collapses equal indices to the same position
-  (the `denom == 0 → t = 0` guard in `quicknii_series_anchorings`); no separate
+  (the `denom == 0 → t = 0` guard in `propagate_series_anchorings`); no separate
   `replicate` field exists.
 - Guessed from filenames on import by `guess_slice_indices`
   (`engine/io/image_io.py`): every filename stem is tokenised into its numeric
@@ -284,7 +284,7 @@ order) breaking ties for duplicates.
 The project-level `interpolation_axis` field declares which atlas axis
 the cutting series runs along. It is one of:
 
-| Value | Slicing orientation (UI label) | QuickNII voxel axis |
+| Value | Slicing orientation (UI label) | Anchoring voxel axis |
 |---|---|---|
 | `"AP"` (default) | Coronal | 1 |
 | `"ML"` | Sagittal | 0 |
@@ -307,8 +307,9 @@ DeepSlice is coronal-only and is disabled in the UI when
 When some sections are aligned and others are not, VERSO fills the
 unaligned ones with linearly-interpolated proposals so the user starts
 each section near the right pose. Implementation:
-`engine/anchoring.py` (`quicknii_series_anchorings`,
-`interpolate_anchorings`); matches QuickNII's `MgmtPanel.dointerpolate`.
+`engine/anchoring.py` (`propagate_series_anchorings`,
+`interpolate_anchorings`); ported from QuickNII's `MgmtPanel.dointerpolate`
+algorithm (see [quint-compat.md](quint-compat.md)).
 
 The 9-float anchoring is unpacked into 11 components (midpoint xyz,
 unit u-vector xyz, unit v-vector xyz, u-stretch, v-stretch) for

@@ -64,7 +64,7 @@ class MainWindow(QMainWindow):
 
         self._state = AppState(self)
         self._current_mode = "overview"
-        # Proposal direction shared between QuickNII interpolation (here) and the
+        # Proposal direction shared between series interpolation (here) and the
         # DeepSlice/reverse batch operations (JobController).
         self._reverse_axis_proposal = False
         self._brightness_dialog: BrightnessDialog | None = None
@@ -687,7 +687,7 @@ class MainWindow(QMainWindow):
 
         # 3. Re-interpolate non-stored sections now that all saves are COMPLETE,
         #    and keep position_mm in sync for the AP plot.
-        self._initialize_quicknii_anchorings(project.sections)
+        self._initialize_default_anchorings(project.sections)
         self._sync_position_mm(project.sections)
 
         # 4. Single project.json write + dependent-UI refresh.
@@ -758,7 +758,7 @@ class MainWindow(QMainWindow):
         if section is None:
             return
         self._clear_alignment_view_state(section)
-        self._seed_alignment_to_quicknii_default(section)
+        self._seed_alignment_to_default_proposal(section)
 
     def _clear_alignment_view_state(self, section) -> None:
         """Drop registry dirty + stashed baselines for a section whose alignment
@@ -768,19 +768,19 @@ class MainWindow(QMainWindow):
         self._state.pop_baseline(section.id, "align")
         self._state.pop_baseline(section.id, "warp")
 
-    def _seed_alignment_to_quicknii_default(self, section) -> None:
-        """Re-seed a wiped section with the QuickNII interpolated proposal.
+    def _seed_alignment_to_default_proposal(self, section) -> None:
+        """Re-seed a wiped section with the default interpolated proposal.
 
         After a flip or prep reset the anchoring is all-zeros. This produces the
-        same result as clicking the Align "Reset" button: re-running the QuickNII
-        series interpolation so the section gets the best available positional
+        same result as clicking the Align "Reset" button: re-running the series
+        interpolation so the section gets the best available positional
         guess based on its neighbours. Without a non-zero anchoring every canvas
         drag handler bails out silently.
         """
         project = self._state.project
         if project is None or self._state.atlas is None:
             return
-        self._initialize_quicknii_anchorings(project.sections)
+        self._initialize_default_anchorings(project.sections)
         self._sync_position_mm([section])
 
     def _invalidate_alignment_for_flip(self, section) -> None:
@@ -802,7 +802,7 @@ class MainWindow(QMainWindow):
             return
         reset_alignment(section)
         self._clear_alignment_view_state(section)
-        self._seed_alignment_to_quicknii_default(section)
+        self._seed_alignment_to_default_proposal(section)
         self._overview.refresh_row(self._state.section_index)
         self._refresh_filmstrip_dots()
 
@@ -956,9 +956,9 @@ class MainWindow(QMainWindow):
         self._prep.canvas.set_orientation_labels(labels)
         self._panel.canvas.set_orientation_labels(labels)
 
-        # QuickNII interpolation needs atlas dimensions for the no-anchor and
+        # Series interpolation needs atlas dimensions for the no-anchor and
         # one-anchor endpoint controls. If the atlas is still loading,
-        # _on_atlas_loaded performs the exact QuickNII propagation.
+        # _on_atlas_loaded performs the exact series propagation.
         if self._state.atlas is not None and warn_if_missing_dimensions(self, project.sections):
             from verso.engine.anchoring import interpolate_anchorings
 
@@ -1025,7 +1025,7 @@ class MainWindow(QMainWindow):
         if atlas is not None:
             project = self._state.project
             if project is not None:
-                self._initialize_quicknii_anchorings(project.sections)
+                self._initialize_default_anchorings(project.sections)
                 self._sync_position_mm(project.sections)
                 self._panel.update_overlay()
                 self._update_slicing_position()
@@ -1468,7 +1468,7 @@ class MainWindow(QMainWindow):
         project = self._state.project
         if project is None:
             return
-        self._initialize_quicknii_anchorings(project.sections)
+        self._initialize_default_anchorings(project.sections)
         self._sync_position_mm(project.sections)
         self._panel.update_overlay()
         for i in range(len(project.sections)):
@@ -1521,7 +1521,7 @@ class MainWindow(QMainWindow):
         self._props.warp.cp.set_autogen_enabled(auto_cp_ok and not auto_cp_busy)
 
     def _interpolation_axis(self) -> int:
-        """Return the QuickNII voxel axis index for the current project."""
+        """Return the anchoring voxel axis index for the current project."""
         project = self._state.project
         if project is None:
             return 1
@@ -1545,17 +1545,17 @@ class MainWindow(QMainWindow):
         center = atlas.cut_center(anchoring)
         return atlas.voxel_to_mm(center[self._interpolation_axis()])
 
-    def _initialize_quicknii_anchorings(self, sections: list) -> None:
-        """Seed empty section planes with QuickNII defaults (engine does the math)."""
+    def _initialize_default_anchorings(self, sections: list) -> None:
+        """Seed empty section planes with default proposals (engine does the math)."""
         atlas = self._state.atlas
         if atlas is None:
             return
         if not warn_if_missing_dimensions(self, sections):
             return
 
-        from verso.engine.anchoring import initialize_quicknii_anchorings
+        from verso.engine.anchoring import initialize_default_anchorings
 
-        initialize_quicknii_anchorings(
+        initialize_default_anchorings(
             sections,
             atlas_shape=atlas.shape,
             interpolation_axis=self._interpolation_axis(),

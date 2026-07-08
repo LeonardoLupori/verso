@@ -87,11 +87,11 @@ port:
 - **Anchoring plane**: `atlas_voxel = o + s*u + t*v` for normalized section
   coordinates `(s, t) ∈ [0, 1]²`, where `anchoring = [ox,oy,oz,ux,uy,uz,vx,vy,vz]`
   (9-element vector, exactly as stored in `project-verso.json`).
-- **Voxel indexing convention** (`_quicknii_floor_indices` in
+- **Voxel indexing convention** (`_sample_voxel_indices` in
   `engine/atlas.py`): given a continuous atlas coordinate `(lr, ap, dv)`,
   the sampled voxel index is `lr_idx = floor(lr)`, `ap_idx = ceil(ap)`,
   `dv_idx = ceil(dv)` — AP/DV use `ceil` (not `floor`) because BrainGlobe's
-  raw array has AP/DV reversed relative to QuickNII's convention; this
+  raw array has AP/DV reversed relative to the anchoring axis order; this
   asymmetric floor/ceil reproduces VisuAlign/PyNutil's sampling exactly.
   **MATLAB reads the same raw BrainGlobe arrays** (not a QuickNII-reordered
   export), so this exact floor/ceil split must be reproduced as-is. Add `1`
@@ -148,7 +148,7 @@ The MATLAB port is kept in numerical lockstep with the Python engine by a
 JSON is the language-neutral boundary — MATLAB never runs Python. Transitively
 `python == fixture` and `matlab == fixture` give `python == matlab`.
 
-Coverage: both warp directions, `anchoringToVectors`, `quickniiVoxelIndices`
+Coverage: both warp directions, `anchoringToVectors`, `sampleVoxelIndices`
 (the floor/ceil convention), and the public `coord_image_to_atlas` /
 `coord_atlas_to_image` end-to-end. The private numeric primitives are reached
 from the test via `Hidden, Static` `*ForTesting` forwarders on
@@ -178,7 +178,7 @@ matlab/
 │       ├── prepareWarp.m                shared normalise + [aspect,1] scale
 │       ├── withCorners.m                prepend the four corner anchors
 │       ├── barycentricMap.m             shared triangulate + interpolate core
-│       ├── quickniiVoxelIndices.m
+│       ├── sampleVoxelIndices.m
 │       ├── boundaryMask.m
 │       ├── resolveAtlasDir.m
 │       ├── downloadBrainglobeAtlas.m

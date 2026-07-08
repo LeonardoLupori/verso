@@ -360,9 +360,9 @@ classdef VersoRegistration < handle
             ouv = [o; u; v];
         end
 
-        function idx = quickniiVoxelIndicesForTesting(coords)
+        function idx = sampleVoxelIndicesForTesting(coords)
             % coords: (M,3) continuous [lr ap dv] -> (M,3) [lr ap dv] indices.
-            [lr, ap, dv] = quickniiVoxelIndices(coords(:, 1), coords(:, 2), coords(:, 3));
+            [lr, ap, dv] = sampleVoxelIndices(coords(:, 1), coords(:, 2), coords(:, 3));
             idx = [lr, ap, dv];
         end
     end

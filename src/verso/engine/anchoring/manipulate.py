@@ -25,7 +25,7 @@ def set_position_along_axis(
     Args:
         anchoring: Current 9-element anchoring vector.
         voxel: New position along ``axis`` in atlas voxel units.
-        axis: Index of the slicing axis in QuickNII voxel space
+        axis: Index of the slicing axis in anchoring voxel space
             (0 = ML / LR, 1 = AP, 2 = DV).
 
     Returns:
@@ -44,8 +44,9 @@ def set_center_position_along_axis(
 ) -> list[float]:
     """Return a new anchoring whose plane center lies at ``voxel`` along ``axis``.
 
-    QuickNII's 11-value registration form stores the section midpoint, so axis
-    navigation should move the plane center rather than the anchoring origin.
+    The 11-value interpolation form (see :mod:`~verso.engine.anchoring.series_interpolation`)
+    stores the section midpoint, so axis navigation should move the plane
+    center rather than the anchoring origin.
     """
     o, u, v = anchoring_to_vectors(anchoring)
     center = o + (u + v) / 2.0
@@ -109,7 +110,7 @@ def plane_tilt_deg(anchoring: list[float], slicing_axis: int) -> float:
     """Acute angle in degrees between the plane normal and the slicing axis.
 
     The plane normal is ``cross(u, v)`` and the slicing axis is the unit vector
-    along ``slicing_axis`` (0=LR, 1=AP, 2=DV in QuickNII voxel space).  A plane
+    along ``slicing_axis`` (0=LR, 1=AP, 2=DV in anchoring voxel space).  A plane
     perpendicular to the slicing axis (no tilt) returns 0°.  In-plane rotation
     leaves the direction of ``cross(u, v)`` unchanged, so the result reflects
     tilt only — making this the reference for clamping tilt.

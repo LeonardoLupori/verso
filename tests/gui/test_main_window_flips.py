@@ -42,7 +42,7 @@ def _make_window_mock(state: _FakeState | None = None) -> SimpleNamespace:
         _refresh_filmstrip_dots=lambda: None,
     )
     mock._clear_alignment_view_state = lambda s: MainWindow._clear_alignment_view_state(mock, s)
-    mock._seed_alignment_to_quicknii_default = lambda s: None
+    mock._seed_alignment_to_default_proposal = lambda s: None
     mock._invalidate_alignment_for_flip = lambda s: MainWindow._invalidate_alignment_for_flip(
         mock, s
     )
@@ -112,7 +112,7 @@ def test_confirm_flip_skips_dialog_for_auto_interpolated_alignment(monkeypatch):
         alignment=Alignment(
             current_anchoring=[10.0, 20.0, 30.0, 100.0, 12.0, 0.0, 0.0, 0.0, 80.0],
             status=AlignmentStatus.IN_PROGRESS,
-            source="quicknii_default",
+            source="series_interpolation",
         ),
     )
     state = _FakeState(project=_project_with_dialog_enabled())

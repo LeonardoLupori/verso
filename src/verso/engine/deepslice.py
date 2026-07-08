@@ -177,15 +177,15 @@ def apply_deepslice_suggestions_with_atlas(
     DeepSlice ≥1.2.7 auto-detects the indexing direction from image content
     (``enforce_section_ordering``), so the staged-filename ``_s{nr}`` reflection
     no longer controls anything and DeepSlice may order the AP series opposite
-    to VERSO's own QuickNII proposals.  After conversion the series is therefore
+    to VERSO's own default proposals.  After conversion the series is therefore
     re-oriented to match VERSO's default-proposal direction for *reverse_axis*
     (see :func:`_orient_series_to_convention`) — the same convention that drives
-    ``quicknii_series_anchorings`` — so DeepSlice and the built-in proposals
+    ``propagate_series_anchorings`` — so DeepSlice and the built-in proposals
     always scroll the same way.
 
     Sections listed in ``result.bad_section_ids`` get their DeepSlice
     prediction discarded.  Once the good predictions are in place, VERSO's
-    standard QuickNII series-interpolation fills the bad sections from their
+    standard series-interpolation fills the bad sections from their
     neighbours — far more reliable than trusting a network output the user
     already marked as untrustworthy.
     """
@@ -247,8 +247,8 @@ def _orient_series_to_convention(
 ) -> None:
     """Align DeepSlice's AP series direction with VERSO's default proposals.
 
-    DeepSlice is coronal-only, so the slicing axis is AP (QuickNII voxel
-    index 1).  ``quicknii_series_anchorings`` places the first section
+    DeepSlice is coronal-only, so the slicing axis is AP (anchoring voxel
+    index 1).  ``propagate_series_anchorings`` places the first section
     (lowest ``slice_index``) at the *high* AP voxel and the last at AP 0 when
     ``reverse_axis`` is False, and the reverse when True.  DeepSlice's own
     ordering can come out either way, so if its AP trend across ``slice_index``
@@ -289,7 +289,7 @@ def _interpolate_bad_sections(
 
     Returns the ids of the sections that were filled.
     """
-    from verso.engine.anchoring import quicknii_series_anchorings
+    from verso.engine.anchoring import propagate_series_anchorings
 
     usable: list[tuple[Section, int, int]] = [
         (section, *section.resolution_thumbnail_wh) for section in project.sections
@@ -305,7 +305,7 @@ def _interpolate_bad_sections(
         return set()
 
     # DeepSlice is coronal-only, so this interpolation always runs along AP.
-    propagated = quicknii_series_anchorings(
+    propagated = propagate_series_anchorings(
         image_sizes=[(w, h) for _, w, h in usable],
         slice_indices=[s.slice_index for s, _, _ in usable],
         atlas_shape=atlas_shape,

@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 from PyQt6.QtWidgets import QApplication
 
-from verso.engine.anchoring import plane_tilt_deg, quicknii_default_anchoring
+from verso.engine.anchoring import plane_tilt_deg, series_default_anchoring
 from verso.gui.widgets.align_handle import _HANDLE_GRIP_PX, _HANDLE_RING_PX
 from verso.gui.widgets.canvas import ImageCanvas
 from verso.gui.widgets.navigator import NavigatorPanel, _SliceView
@@ -29,7 +29,7 @@ def _qapp():
 
 
 def _default_anchoring(axis: int) -> list[float]:
-    return quicknii_default_anchoring(
+    return series_default_anchoring(
         image_width=1000,
         image_height=800,
         max_width=1000,

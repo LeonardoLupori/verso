@@ -127,7 +127,7 @@ def test_roundtrip_with_control_points():
 
 def test_nearest_section_picks_closer_plane():
     reg = _reg([_section("s1", 8.0), _section("s2", 14.0)])
-    # Voxel order is QuickNII (LR, AP, DV); AP=9 is 1 from s1, 5 from s2.
+    # Voxel order is anchoring order (LR, AP, DV); AP=9 is 1 from s1, 5 from s2.
     res = reg.coord_atlas_to_image(np.array([[12.0, 9.0, 8.0]]))
     assert res.section_id[0] == "s1"
     np.testing.assert_allclose(res.distance[0], 1.0, atol=1e-6)
@@ -308,13 +308,13 @@ def test_image_to_atlas_annotation_matches_pointwise_lookup():
     # Spot-check a handful of full-res pixels (queried at their pixel *centers*,
     # matching image_to_atlas's own sampling convention) against the pointwise
     # coordinate mapping + the same nearest-voxel (floor/ceil) convention.
-    from verso.engine.atlas import _quicknii_floor_indices
+    from verso.engine.atlas import _sample_voxel_indices
 
     cols = np.array([5, 50, 90])
     rows = np.array([5, 10, 60])
     pts = np.column_stack([cols + 0.5, rows + 0.5])
     xyz = reg.coord_image_to_atlas("s1", pts)
-    lr_f, ap_f, dv_f = _quicknii_floor_indices(xyz[:, 0], xyz[:, 1], xyz[:, 2])
+    lr_f, ap_f, dv_f = _sample_voxel_indices(xyz[:, 0], xyz[:, 1], xyz[:, 2])
     ap_max, dv_max, lr_max = (_AP, _DV, _LR)
     inside = (
         (ap_f >= 0)

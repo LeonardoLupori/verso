@@ -163,7 +163,7 @@ class AlignView(BaseCanvasView):
         self._navigator.set_reverse_axis(reverse)
 
     def set_interpolation_axis(self, axis: int) -> None:
-        """Update the QuickNII voxel axis used to compute ``position_mm``."""
+        """Update the anchoring voxel axis used to compute ``position_mm``."""
         self._interpolation_axis = int(axis)
         self._navigator.set_interpolation_axis(axis)
 

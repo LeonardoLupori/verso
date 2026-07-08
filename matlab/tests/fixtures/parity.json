@@ -563,7 +563,7 @@
       ]
     }
   ],
-  "quicknii_voxel_indices": [
+  "sample_voxel_indices": [
     {
       "name": "boundaries",
       "coords_lr_ap_dv": [

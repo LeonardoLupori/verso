@@ -15,8 +15,8 @@ DEFAULT_PROJECT_FILENAME = "project-verso.json"
 # for pixel <-> atlas voxel mapping. Older files are migrated on load.
 SCHEMA_VERSION = "1.2"
 
-# Mapping between the stored axis-name field and the QuickNII voxel axis index.
-# QuickNII voxel space ordering is (LR=0, AP=1, DV=2); "ML" is the storage name
+# Mapping between the stored axis-name field and the anchoring voxel axis index.
+# Anchoring voxel space ordering is (LR=0, AP=1, DV=2); "ML" is the storage name
 # for the mediolateral / LR axis.
 AXIS_NAME_TO_INDEX: dict[str, int] = {"AP": 1, "ML": 0, "DV": 2}
 # Slicing orientation used in the New Project dialog. Each orientation declares
@@ -34,9 +34,10 @@ class AtlasRef:
     """Reference to a brainglobe atlas.
 
     ``resolution_um`` (isotropic, microns per voxel) and ``shape`` (voxel
-    dimensions in QuickNII/brainglobe order) are cached here so the project file
-    is self-contained for coordinate work without re-fetching the atlas. They
-    are ``0.0`` / ``(0, 0, 0)`` until populated (see ``backfill_metadata``).
+    dimensions in BrainGlobe's ``(AP, DV, LR)`` order) are cached here so the
+    project file is self-contained for coordinate work without re-fetching the
+    atlas. They are ``0.0`` / ``(0, 0, 0)`` until populated (see
+    ``backfill_metadata``).
     """
 
     name: str
@@ -218,7 +219,7 @@ class Project:
 
     @property
     def interpolation_axis_index(self) -> int:
-        """QuickNII voxel axis index (0=ML, 1=AP, 2=DV) for ``interpolation_axis``."""
+        """Anchoring voxel axis index (0=ML, 1=AP, 2=DV) for ``interpolation_axis``."""
         return AXIS_NAME_TO_INDEX[self.interpolation_axis]
 
     def to_dict(self) -> dict[str, Any]:

@@ -130,14 +130,14 @@ def anchor_source_points(
         if len(dense) < 2:
             continue
         dense = dense * scale
-        qn = dense[:, [2, 0, 1]]  # → QuickNII [ML, AP, DV]
-        signed = (qn - o).dot(normal)
+        ml_ap_dv = dense[:, [2, 0, 1]]  # → anchoring order [ML, AP, DV]
+        signed = (ml_ap_dv - o).dot(normal)
         for idx in np.where(np.diff(np.sign(signed)))[0]:
             span = signed[idx + 1] - signed[idx]
             if span == 0:
                 continue
             frac = -signed[idx] / span
-            cross = qn[idx] + frac * (qn[idx + 1] - qn[idx])
+            cross = ml_ap_dv[idx] + frac * (ml_ap_dv[idx + 1] - ml_ap_dv[idx])
             s, t = atlas_to_normalized(cross, anchoring)
             if not (0.0 <= s <= 1.0 and 0.0 <= t <= 1.0):
                 continue

@@ -51,11 +51,11 @@ classdef tParity < matlab.unittest.TestCase
             end
         end
 
-        function quickniiVoxelIndices(testCase)
-            cases = testCase.Cases.quicknii_voxel_indices;
+        function sampleVoxelIndices(testCase)
+            cases = testCase.Cases.sample_voxel_indices;
             for k = 1:numel(cases)
                 c = cases(k);
-                idx = verso.VersoRegistration.quickniiVoxelIndicesForTesting(c.coords_lr_ap_dv);
+                idx = verso.VersoRegistration.sampleVoxelIndicesForTesting(c.coords_lr_ap_dv);
                 testCase.verifyEqual(idx, c.expected_idx, "AbsTol", testCase.Tol, c.name);
             end
         end

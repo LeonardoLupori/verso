@@ -85,7 +85,7 @@ def build_canonical_remap(
     Args:
         section: Section whose registration (anchoring + control points) is inverted.
         atlas: Atlas volume, used for plane dimensions only.
-        axis: Slicing axis in QuickNII voxel order (0 = LR, 1 = AP, 2 = DV).
+        axis: Slicing axis in anchoring voxel order (0 = LR, 1 = AP, 2 = DV).
         scale: Output resolution multiplier relative to the atlas voxel grid.
         work_w: Working-image width in pixels (sample source).
         work_h: Working-image height in pixels.

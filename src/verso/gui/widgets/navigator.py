@@ -188,7 +188,7 @@ class _SliceView(QWidget):
         self._anchoring: list[float] | None = None
         self._view_h = _view_height(axis, dims)
         self._reverse_axis: bool = False
-        # The project's slicing axis (QuickNII voxel index 0/1/2).  Controls
+        # The project's slicing axis (anchoring voxel index 0/1/2).  Controls
         # which translate/rotate steps get sign-flipped when the series is
         # reversed.
         self._interpolation_axis: int = 1

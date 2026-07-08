@@ -1,9 +1,11 @@
-"""QuickNII 11-value packing and series propagation / interpolation.
+"""11-value packing and series propagation / interpolation.
 
-The heaviest, most stateful block of the anchoring package: QuickNII's
-midpoint/unit-vector/stretch packing, the ``dointerpolate`` series-propagation
-algorithm, and the model-aware wrappers that apply propagated anchorings to a
-list of sections. See :mod:`verso.engine.anchoring` for the vector-format spec.
+The heaviest, most stateful block of the anchoring package: the
+midpoint/unit-vector/stretch packing used for interpolation, the
+series-propagation algorithm that fills in not-yet-registered sections from
+their neighbours, and the model-aware wrappers that apply propagated
+anchorings to a list of sections. See :mod:`verso.engine.anchoring` for the
+vector-format spec.
 """
 
 from __future__ import annotations
@@ -36,18 +38,18 @@ def _in_plane_axes(interpolation_axis: int) -> tuple[int, int]:
     return others[0], others[1]
 
 
-def _quicknii_dims(atlas_shape: tuple[int, int, int]) -> tuple[int, int, int]:
-    """Return atlas dims indexed by QuickNII voxel axis (ML=0, AP=1, DV=2).
+def _dims_in_anchoring_order(atlas_shape: tuple[int, int, int]) -> tuple[int, int, int]:
+    """Return atlas dims indexed by anchoring voxel axis (ML=0, AP=1, DV=2).
 
     BrainGlobe stores annotation shape as ``(AP, DV, LR)`` while VERSO's
-    anchoring math addresses axes in QuickNII order ``(ML, AP, DV)``. This
-    helper converts so callers can index by axis number directly.
+    anchoring math addresses axes in ``(ML, AP, DV)`` order. This helper
+    converts so callers can index by axis number directly.
     """
     ap_dim, dv_dim, lr_dim = atlas_shape
     return (lr_dim, ap_dim, dv_dim)
 
 
-def quicknii_default_anchoring(
+def series_default_anchoring(
     image_width: int,
     image_height: int,
     max_width: int,
@@ -56,14 +58,14 @@ def quicknii_default_anchoring(
     interpolation_axis: int,
     voxel: float | None = None,
 ) -> list[float]:
-    """Create a centered anchoring using QuickNII stretch semantics.
+    """Create a centered anchoring sized to fit within the atlas by image stretch.
 
-    QuickNII initializes the atlas-plane scale from image dimensions, not from
-    display aspect ratio alone. For each series it uses a common horizontal
-    stretch ``atlas_u_dim / max_image_width`` and vertical stretch
-    ``atlas_v_dim / max_image_height`` across the series. Each section then
-    gets plane vectors proportional to its own registration image size. Here
-    ``u``/``v`` map to the two in-plane axes derived from
+    The atlas-plane scale is initialized from image dimensions, not from
+    display aspect ratio alone. For each series a common horizontal stretch
+    ``atlas_u_dim / max_image_width`` and vertical stretch
+    ``atlas_v_dim / max_image_height`` is used across the series. Each section
+    then gets plane vectors proportional to its own registration image size.
+    Here ``u``/``v`` map to the two in-plane axes derived from
     :func:`_in_plane_axes`.
     """
     if image_width <= 0 or image_height <= 0:
@@ -73,11 +75,11 @@ def quicknii_default_anchoring(
 
     k = interpolation_axis
     u_axis, v_axis = _in_plane_axes(k)
-    qn_dims = _quicknii_dims(atlas_shape)
-    u_dim = float(qn_dims[u_axis])
-    v_dim = float(qn_dims[v_axis])
+    dims = _dims_in_anchoring_order(atlas_shape)
+    u_dim = float(dims[u_axis])
+    v_dim = float(dims[v_axis])
 
-    axis_voxel = float(qn_dims[k]) / 2.0 if voxel is None else float(voxel)
+    axis_voxel = float(dims[k]) / 2.0 if voxel is None else float(voxel)
 
     h_stretch = u_dim / float(max_width)
     v_stretch = v_dim / float(max_height)
@@ -97,12 +99,12 @@ def quicknii_default_anchoring(
     return [*origin, *u_vec, *v_vec]
 
 
-def quicknii_unpack_anchoring(
+def unpack_series_anchoring(
     anchoring: list[float],
     image_width: int,
     image_height: int,
 ) -> list[float]:
-    """Unpack a QuickNII anchoring into midpoint, unit vectors, and stretches."""
+    """Unpack an anchoring into midpoint, unit vectors, and stretches for interpolation."""
     if image_width <= 0 or image_height <= 0:
         raise ValueError("image dimensions must be positive")
 
@@ -117,7 +119,7 @@ def quicknii_unpack_anchoring(
     u_unit = u / u_len
     v_unit = v / v_len
 
-    # Match QuickNII's orthonormalization step.
+    # Orthonormalize v against u so interpolation blends well-defined unit frames.
     u_unit = u_unit / np.linalg.norm(u_unit)
     v_unit = v_unit - u_unit * float(np.dot(u_unit, v_unit))
     v_unit = v_unit / np.linalg.norm(v_unit)
@@ -137,12 +139,12 @@ def quicknii_unpack_anchoring(
     ]
 
 
-def quicknii_pack_anchoring(
+def pack_series_anchoring(
     unpacked: list[float],
     image_width: int,
     image_height: int,
 ) -> list[float]:
-    """Pack QuickNII midpoint/unit-vector/stretch values into anchoring."""
+    """Pack midpoint/unit-vector/stretch values back into a 9-element anchoring."""
     if len(unpacked) != 11:
         raise ValueError(f"unpacked anchoring must have 11 elements, got {len(unpacked)}")
     if image_width <= 0 or image_height <= 0:
@@ -157,7 +159,7 @@ def quicknii_pack_anchoring(
     return vectors_to_anchoring(o, u, v)
 
 
-def quicknii_series_anchorings(
+def propagate_series_anchorings(
     image_sizes: list[tuple[int, int]],
     slice_indices: list[int],
     atlas_shape: tuple[int, int, int],
@@ -166,13 +168,17 @@ def quicknii_series_anchorings(
     reverse_axis: bool = False,
     center_proposals: bool = True,
 ) -> list[list[float]]:
-    """Propagate anchorings along ``interpolation_axis`` using QuickNII semantics.
+    """Propagate anchorings along ``interpolation_axis`` for a series of sections.
+
+    Sections with a stored anchoring act as fixed control points; every other
+    section's plane is linearly interpolated (or extrapolated, at the series
+    ends) between its nearest controls.
 
     Args:
         image_sizes: Per-section registration image ``(width, height)``.
         slice_indices: Per-section slice indices used for interpolation.
         atlas_shape: BrainGlobe annotation shape ``(AP, DV, LR)``.
-        interpolation_axis: QuickNII voxel axis along which the series runs
+        interpolation_axis: Anchoring voxel axis along which the series runs
             (0 = ML / LR, 1 = AP, 2 = DV).
         stored_anchorings: Optional stored/user anchorings. ``None`` entries
             receive propagated anchorings.
@@ -183,7 +189,7 @@ def quicknii_series_anchorings(
             remain unchanged.
 
     Returns:
-        One packed QuickNII anchoring per section.
+        One packed anchoring per section.
     """
     if len(image_sizes) != len(slice_indices):
         raise ValueError("image_sizes and slice_indices must have the same length")
@@ -197,14 +203,12 @@ def quicknii_series_anchorings(
 
     order = sorted(range(len(slice_indices)), key=lambda i: (slice_indices[i], i))
     if order != list(range(len(slice_indices))):
-        sorted_anchorings = quicknii_series_anchorings(
+        sorted_anchorings = propagate_series_anchorings(
             image_sizes=[image_sizes[i] for i in order],
             slice_indices=[slice_indices[i] for i in order],
             atlas_shape=atlas_shape,
             interpolation_axis=k,
-            stored_anchorings=(
-                [stored_anchorings[i] for i in order] if stored_anchorings is not None else None
-            ),
+            stored_anchorings=([stored_anchorings[i] for i in order] if stored_anchorings is not None else None),
             reverse_axis=reverse_axis,
             center_proposals=center_proposals,
         )
@@ -213,19 +217,17 @@ def quicknii_series_anchorings(
             restored[original_idx] = sorted_anchorings[sorted_idx]
         return [anchoring for anchoring in restored if anchoring is not None]
 
-    qn_dims = _quicknii_dims(atlas_shape)
-    axis_dim = qn_dims[k]
-    u_dim = qn_dims[u_axis]
-    v_dim = qn_dims[v_axis]
+    dims = _dims_in_anchoring_order(atlas_shape)
+    axis_dim = dims[k]
+    u_dim = dims[u_axis]
+    v_dim = dims[v_axis]
     max_w = max(w for w, _ in image_sizes)
     max_h = max(h for _, h in image_sizes)
     if max_w <= 0 or max_h <= 0:
         raise ValueError("image dimensions must be positive")
 
     stored_anchorings = stored_anchorings or [None] * len(image_sizes)
-    stored_indices = [
-        i for i, anchoring in enumerate(stored_anchorings) if is_anchored(anchoring)
-    ]
+    stored_indices = [i for i, anchoring in enumerate(stored_anchorings) if is_anchored(anchoring)]
 
     def default_unpacked(axis_voxel: float) -> list[float]:
         midpoint = [0.0, 0.0, 0.0]
@@ -249,7 +251,7 @@ def quicknii_series_anchorings(
         anchoring = stored_anchorings[i]
         assert anchoring is not None
         w, h = image_sizes[i]
-        unpacked_by_index[i] = quicknii_unpack_anchoring(anchoring, w, h)
+        unpacked_by_index[i] = unpack_series_anchoring(anchoring, w, h)
 
     stored_by_slice_index: dict[int, int] = {}
     for i in stored_indices:
@@ -295,13 +297,13 @@ def quicknii_series_anchorings(
     else:
         controls.extend(anchor_indices)
         if anchor_indices[0] != 0:
-            unpacked_by_index[0] = _quicknii_regressed_unpacked(
+            unpacked_by_index[0] = _regression_extrapolated_unpacked(
                 stored_indices, unpacked_by_index, slice_indices, slice_indices[0]
             )
             controls.insert(0, 0)
         if anchor_indices[-1] != len(image_sizes) - 1:
             last_idx = len(image_sizes) - 1
-            unpacked_by_index[last_idx] = _quicknii_regressed_unpacked(
+            unpacked_by_index[last_idx] = _regression_extrapolated_unpacked(
                 stored_indices, unpacked_by_index, slice_indices, slice_indices[last_idx]
             )
             controls.append(last_idx)
@@ -342,22 +344,22 @@ def quicknii_series_anchorings(
     packed: list[list[float]] = []
     for i, (unpacked, (w, h)) in enumerate(zip(propagated, image_sizes, strict=False)):
         if unpacked is None:
-            raise RuntimeError("QuickNII propagation left a section without anchoring")
+            raise RuntimeError("series propagation left a section without anchoring")
         if center_proposals and i not in stored_indices:
             unpacked = list(unpacked)
             unpacked[u_axis] = float(u_dim) / 2.0
             unpacked[v_axis] = float(v_dim) / 2.0
-        packed.append(quicknii_pack_anchoring(unpacked, w, h))
+        packed.append(pack_series_anchoring(unpacked, w, h))
     return packed
 
 
-def _quicknii_regressed_unpacked(
+def _regression_extrapolated_unpacked(
     stored_indices: list[int],
     unpacked_by_index: dict[int, list[float]],
     slice_indices: list[int],
     target_index: int,
 ) -> list[float]:
-    """Linear-regression endpoint estimate matching QuickNII's fallback path."""
+    """Linear-regression endpoint estimate for a series end with no nearby control."""
     xs = np.asarray([slice_indices[i] for i in stored_indices], dtype=np.float64)
     out: list[float] = []
     for component in range(11):
@@ -382,11 +384,11 @@ def interpolate_anchorings(
     reverse_axis: bool = False,
     center_proposals: bool = True,
 ) -> None:
-    """Propagate anchorings for non-stored sections using QuickNII semantics.
+    """Propagate anchorings for non-stored sections from their neighbours.
 
-    Follows QuickNII's ``MgmtPanel.dointerpolate`` path, including the
-    no-stored-anchoring and one-stored-anchoring cases where endpoint controls
-    are synthesized (from ``atlas_shape``) before linear interpolation.
+    Handles the no-stored-anchoring and one-stored-anchoring cases, where
+    endpoint controls are synthesized (from ``atlas_shape``) before linear
+    interpolation.
     """
     from verso.engine.model.alignment import AlignmentStatus
 
@@ -395,16 +397,14 @@ def interpolate_anchorings(
 
     stored_indices: list[int] = []
     for idx, section in enumerate(ordered):
-        if section.alignment.status == AlignmentStatus.COMPLETE and is_anchored(
-            section.alignment.stored_anchoring
-        ):
+        if section.alignment.status == AlignmentStatus.COMPLETE and is_anchored(section.alignment.stored_anchoring):
             stored_indices.append(idx)
 
     stored_anchorings_for_series = [
         list(section.alignment.stored_anchoring) if idx in stored_indices else None
         for idx, section in enumerate(ordered)
     ]
-    propagated_anchorings = quicknii_series_anchorings(
+    propagated_anchorings = propagate_series_anchorings(
         image_sizes=[section.resolution_thumbnail_wh for section in ordered],
         slice_indices=slice_indices,
         atlas_shape=atlas_shape,
@@ -420,30 +420,31 @@ def interpolate_anchorings(
         section.alignment.current_anchoring = anchoring
         section.alignment.status = AlignmentStatus.IN_PROGRESS
         # Mark these as auto-generated proposals (same tag
-        # initialize_quicknii_anchorings uses).  Without it, a later
+        # initialize_default_anchorings uses).  Without it, a later
         # re-interpolation treats these IN_PROGRESS sections as manual
         # edits and skips them, so a newly-saved keyframe's angle never
         # propagates here.
-        section.alignment.source = "quicknii_default"
+        section.alignment.source = "series_interpolation"
 
 
-def initialize_quicknii_anchorings(
+def initialize_default_anchorings(
     sections: list,
     atlas_shape: tuple[int, int, int],
     interpolation_axis: int = 1,
     reverse_axis: bool = False,
 ) -> None:
-    """Seed not-yet-aligned sections with QuickNII default proposals.
+    """Seed not-yet-aligned sections with default series proposals.
 
     Like :func:`interpolate_anchorings`, but *preserves* existing manual work:
-    a section keeps its current plane unless it is still a ``quicknii_default``
-    proposal, has no plane at all, or shares a ``slice_index`` with a stored
-    (COMPLETE) section — a physical duplicate that must show the same plane.
+    a section keeps its current plane unless it is still a
+    ``"series_interpolation"``, has no plane at all, or shares a ``slice_index``
+    with a stored (COMPLETE) section — a physical duplicate that must show the
+    same plane.
 
     Args:
         sections: The project's sections (in series order).
         atlas_shape: BrainGlobe annotation shape ``(AP, DV, LR)``.
-        interpolation_axis: QuickNII voxel axis the series runs along.
+        interpolation_axis: Anchoring voxel axis the series runs along.
         reverse_axis: Reverse the default proposal direction along that axis.
     """
     from verso.engine.model.alignment import AlignmentStatus
@@ -453,7 +454,7 @@ def initialize_quicknii_anchorings(
         is_complete = section.alignment.status == AlignmentStatus.COMPLETE
         stored = section.alignment.stored_anchoring
         stored_anchorings.append(list(stored) if is_complete and is_anchored(stored) else None)
-    propagated = quicknii_series_anchorings(
+    propagated = propagate_series_anchorings(
         image_sizes=[section.resolution_thumbnail_wh for section in sections],
         slice_indices=[section.slice_index for section in sections],
         atlas_shape=atlas_shape,
@@ -464,9 +465,7 @@ def initialize_quicknii_anchorings(
     )
 
     stored_indices = {
-        section.slice_index
-        for section, anch in zip(sections, stored_anchorings, strict=False)
-        if anch is not None
+        section.slice_index for section, anch in zip(sections, stored_anchorings, strict=False) if anch is not None
     }
 
     for section, anchoring, anch in zip(sections, propagated, stored_anchorings, strict=False):
@@ -480,13 +479,13 @@ def initialize_quicknii_anchorings(
             not is_index_duplicate
             and section.alignment.is_anchored
             and section.alignment.status != AlignmentStatus.NOT_STARTED
-            and section.alignment.source != "quicknii_default"
+            and section.alignment.source != "series_interpolation"
         ):
             continue
         section.alignment.current_anchoring = anchoring
         if section.alignment.status == AlignmentStatus.NOT_STARTED:
             section.alignment.status = AlignmentStatus.IN_PROGRESS
-        section.alignment.source = "quicknii_default"
+        section.alignment.source = "series_interpolation"
 
 
 def reset_in_progress_to_default_proposals(
@@ -496,7 +495,7 @@ def reset_in_progress_to_default_proposals(
     reverse_axis: bool = False,
     include_complete: bool = False,
 ) -> int:
-    """Clear editable suggestions and regenerate QuickNII-style default proposals."""
+    """Clear editable suggestions and regenerate default series proposals."""
     from verso.engine.model.alignment import AlignmentStatus
 
     stored_anchorings = []
@@ -507,7 +506,7 @@ def reset_in_progress_to_default_proposals(
             continue
         stored = section.alignment.stored_anchoring
         stored_anchorings.append(list(stored) if is_anchored(stored) else None)
-    propagated = quicknii_series_anchorings(
+    propagated = propagate_series_anchorings(
         image_sizes=[section.resolution_thumbnail_wh for section in sections],
         slice_indices=[section.slice_index for section in sections],
         atlas_shape=atlas_shape,
@@ -521,7 +520,7 @@ def reset_in_progress_to_default_proposals(
     for section, anchoring, stored in zip(sections, propagated, stored_anchorings, strict=False):
         if stored is not None:
             continue
-        section.alignment.set_auto_proposal(anchoring, source="quicknii_default")
+        section.alignment.set_auto_proposal(anchoring, source="series_interpolation")
         section.warp.reset()
         changed += 1
 

@@ -15,7 +15,7 @@ def quantify_points(
 
     Args:
         points_px: Float array of shape (N, 2) in section pixel space (row, col).
-        anchoring: 9-element QuickNII anchoring vector for this section.
+        anchoring: 9-element anchoring vector for this section.
         atlas_labels: 3-D integer label volume (AP × DV × LR).
         section_shape: (height, width) of the working-resolution section image.
 
@@ -34,7 +34,7 @@ def quantify_area(
 
     Args:
         mask: Boolean H×W array; True = foreground pixels.
-        anchoring: 9-element QuickNII anchoring vector for this section.
+        anchoring: 9-element anchoring vector for this section.
         atlas_labels: 3-D integer label volume (AP × DV × LR).
 
     Returns:

@@ -3,13 +3,13 @@ function [gray, inBounds] = sampleReferenceAt(atlas, grid)
 %   [GRAY, INBOUNDS] = SAMPLEREFERENCEAT(ATLAS, GRID) samples
 %   ATLAS.Reference (as returned by loadAtlasVolume) at the atlas voxel
 %   coordinates in GRID, an (H, W, 3) array with GRID(:,:,1)=LR,
-%   GRID(:,:,2)=AP, GRID(:,:,3)=DV (QuickNII voxel order).
+%   GRID(:,:,2)=AP, GRID(:,:,3)=DV (anchoring voxel order).
 %
 %   GRAY: (H, W) uint8, scaled by ATLAS.RefScale; 0 outside the atlas volume.
 %   INBOUNDS: (H, W) logical -- true where the voxel is inside the atlas volume.
 %
 %   Mirrors engine/atlas.py::AtlasVolume.sample_reference_at.
-    [lrIdx, apIdx, dvIdx] = quickniiVoxelIndices(grid(:, :, 1), grid(:, :, 2), grid(:, :, 3));
+    [lrIdx, apIdx, dvIdx] = sampleVoxelIndices(grid(:, :, 1), grid(:, :, 2), grid(:, :, 3));
 
     sz = size(atlas.Reference);
     apMax = sz(1); dvMax = sz(2); lrMax = sz(3);

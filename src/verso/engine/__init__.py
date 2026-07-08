@@ -8,12 +8,13 @@ access, project-format I/O, high-level export, and point/overlay warping.
     from verso.engine import Project, Section, Alignment, ControlPoint
     from verso.engine import load_quicknii, save_visualign, warp_points_section_to_atlas
 
-Low-level primitives (anchoring plane math, QuickNII packing, coordinate
-transforms, rendering, working-copy I/O, DeepSlice/elastix workflows, section
-bookkeeping) are intentionally **not** surfaced here so they can be refactored
-without breaking users. They remain importable from their own submodules, e.g.:
+Low-level primitives (anchoring plane math, series-interpolation packing,
+coordinate transforms, rendering, working-copy I/O, DeepSlice/elastix
+workflows, section bookkeeping) are intentionally **not** surfaced here so
+they can be refactored without breaking users. They remain importable from
+their own submodules, e.g.:
 
-    from verso.engine.anchoring import rotate_anchoring, quicknii_series_anchorings
+    from verso.engine.anchoring import rotate_anchoring, propagate_series_anchorings
     from verso.engine.deepslice import run_deepslice_suggestions
     from verso.engine.elastix import auto_control_points
 """

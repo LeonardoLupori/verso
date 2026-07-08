@@ -33,7 +33,7 @@ from pathlib import Path
 import numpy as np
 
 from verso.engine.anchoring import anchoring_to_vectors
-from verso.engine.atlas import _quicknii_floor_indices
+from verso.engine.atlas import _sample_voxel_indices
 from verso.engine.registration import VersoRegistration
 from verso.engine.warping import (
     warp_points_atlas_to_section,
@@ -197,7 +197,7 @@ def _voxel_cases() -> list[dict]:
     cases = []
     for name, coords in _VOXEL_INPUTS:
         arr = np.array(coords, dtype=np.float64)
-        lr, ap, dv = _quicknii_floor_indices(arr[:, 0], arr[:, 1], arr[:, 2])
+        lr, ap, dv = _sample_voxel_indices(arr[:, 0], arr[:, 1], arr[:, 2])
         cases.append(
             {
                 "name": name,
@@ -311,7 +311,7 @@ def build_cases() -> tuple[dict, dict[str, dict]]:
         "warp_section_to_atlas": _warp_cases(warp_points_section_to_atlas),
         "warp_atlas_to_section": _warp_cases(warp_points_atlas_to_section),
         "anchoring_to_vectors": _anchoring_cases(),
-        "quicknii_voxel_indices": _voxel_cases(),
+        "sample_voxel_indices": _voxel_cases(),
         "coord_image_to_atlas": _image_to_atlas_cases(projects),
         "coord_atlas_to_image": _atlas_to_image_cases(projects),
     }

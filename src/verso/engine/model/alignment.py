@@ -115,7 +115,7 @@ class Alignment:
         Args:
             anchoring: The propagated 9-value anchoring to adopt as the live plane.
             source: Provenance tag for the guess (e.g. ``"deepslice"``,
-                ``"quicknii_default"``).
+                ``"series_interpolation"``).
         """
         self.current_anchoring = anchoring
         self.position_mm = None

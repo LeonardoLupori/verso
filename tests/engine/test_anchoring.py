@@ -11,22 +11,22 @@ from verso.engine.anchoring import (
     clamp_inplane_rotation,
     clamp_rotation_to_max_tilt,
     flip_anchoring_horizontal,
-    initialize_quicknii_anchorings,
+    initialize_default_anchorings,
     interpolate_anchorings,
     make_atlas_sample_grid,
     normalized_to_atlas,
     normalized_to_pixel,
+    pack_series_anchoring,
     pixel_to_normalized,
     plane_tilt_deg,
-    quicknii_default_anchoring,
-    quicknii_pack_anchoring,
-    quicknii_series_anchorings,
-    quicknii_unpack_anchoring,
+    propagate_series_anchorings,
     rotate_anchoring,
     scale_anchoring,
+    series_default_anchoring,
     set_center_position_along_axis,
     set_position_along_axis,
     tilt_plane_about_atlas_axis,
+    unpack_series_anchoring,
     vectors_to_anchoring,
 )
 from verso.engine.model.alignment import Alignment, AlignmentStatus
@@ -209,12 +209,12 @@ def test_flip_anchoring_horizontal_is_involutive():
 
 
 # ---------------------------------------------------------------------------
-# quicknii_default_anchoring
+# series_default_anchoring
 # ---------------------------------------------------------------------------
 
 
-def test_quicknii_default_anchoring_uses_series_stretch():
-    anchoring = quicknii_default_anchoring(
+def test_series_default_anchoring_uses_series_stretch():
+    anchoring = series_default_anchoring(
         image_width=500,
         image_height=400,
         max_width=1000,
@@ -229,16 +229,16 @@ def test_quicknii_default_anchoring_uses_series_stretch():
     np.testing.assert_allclose(o, [114.0, 264.0, 80.0])
 
 
-def test_quicknii_pack_unpack_round_trip():
+def test_pack_unpack_round_trip():
     unpacked = [456, 527, 160, 1, 0, 0, 0, 0, -1, 0.456, 0.4]
-    anchoring = quicknii_pack_anchoring(unpacked, image_width=1000, image_height=800)
-    restored = quicknii_unpack_anchoring(anchoring, image_width=1000, image_height=800)
+    anchoring = pack_series_anchoring(unpacked, image_width=1000, image_height=800)
+    restored = unpack_series_anchoring(anchoring, image_width=1000, image_height=800)
 
     np.testing.assert_allclose(restored, unpacked)
 
 
-def test_quicknii_coronal_series_initializes_ap_endpoints():
-    anchorings = quicknii_series_anchorings(
+def test_coronal_series_initializes_ap_endpoints():
+    anchorings = propagate_series_anchorings(
         image_sizes=[(1000, 800), (1000, 800), (1000, 800)],
         slice_indices=[1, 2, 3],
         atlas_shape=(528, 320, 456),
@@ -258,8 +258,8 @@ def test_quicknii_coronal_series_initializes_ap_endpoints():
     np.testing.assert_allclose(vectors[0][1], [0.0, 0.0, 320.0])
 
 
-def test_quicknii_coronal_series_can_reverse_ap_proposal():
-    anchorings = quicknii_series_anchorings(
+def test_coronal_series_can_reverse_ap_proposal():
+    anchorings = propagate_series_anchorings(
         image_sizes=[(1000, 800), (1000, 800), (1000, 800)],
         slice_indices=[1, 2, 3],
         atlas_shape=(528, 320, 456),
@@ -274,8 +274,8 @@ def test_quicknii_coronal_series_can_reverse_ap_proposal():
     np.testing.assert_allclose([c[1] for c in centers], [0.0, 263.5, 527.0])
 
 
-def test_quicknii_coronal_series_uses_slice_indices_not_list_indices():
-    anchorings = quicknii_series_anchorings(
+def test_coronal_series_uses_slice_indices_not_list_indices():
+    anchorings = propagate_series_anchorings(
         image_sizes=[(1000, 800), (1000, 800), (1000, 800)],
         slice_indices=[30, 10, 20],
         atlas_shape=(528, 320, 456),
@@ -293,15 +293,15 @@ def test_quicknii_coronal_series_uses_slice_indices_not_list_indices():
     )
 
 
-def test_quicknii_coronal_series_duplicate_serial_gets_stored_ap_but_default_orientation():
-    stored = quicknii_series_anchorings(
+def test_coronal_series_duplicate_serial_gets_stored_ap_but_default_orientation():
+    stored = propagate_series_anchorings(
         image_sizes=[(1000, 800), (1000, 800), (1000, 800)],
         slice_indices=[9, 10, 11],
         atlas_shape=(528, 320, 456),
         interpolation_axis=1,
     )
 
-    anchorings = quicknii_series_anchorings(
+    anchorings = propagate_series_anchorings(
         image_sizes=[(800, 600), (1000, 800), (1000, 800), (1000, 800)],
         slice_indices=[10, 10, 11, 12],
         atlas_shape=(528, 320, 456),
@@ -309,8 +309,8 @@ def test_quicknii_coronal_series_duplicate_serial_gets_stored_ap_but_default_ori
         stored_anchorings=[None, stored[1], None, None],
     )
 
-    stored_u = quicknii_unpack_anchoring(anchorings[1], 1000, 800)
-    dup_u = quicknii_unpack_anchoring(anchorings[0], 800, 600)
+    stored_u = unpack_series_anchoring(anchorings[1], 1000, 800)
+    dup_u = unpack_series_anchoring(anchorings[0], 800, 600)
 
     # AP position matches the stored section.
     np.testing.assert_allclose(dup_u[1], stored_u[1])
@@ -321,9 +321,9 @@ def test_quicknii_coronal_series_duplicate_serial_gets_stored_ap_but_default_ori
     np.testing.assert_allclose(dup_u[2], 160.0)  # dv_dim/2 = 320/2
 
 
-def test_quicknii_coronal_series_same_serial_same_ap_with_different_sizes():
+def test_coronal_series_same_serial_same_ap_with_different_sizes():
     """Sections sharing a serial get the same AP position regardless of image size."""
-    anchorings = quicknii_series_anchorings(
+    anchorings = propagate_series_anchorings(
         image_sizes=[(800, 600), (1000, 800), (600, 400)],
         slice_indices=[10, 10, 10],
         atlas_shape=(528, 320, 456),
@@ -338,19 +338,19 @@ def test_quicknii_coronal_series_same_serial_same_ap_with_different_sizes():
     np.testing.assert_allclose(centers[0][1], centers[2][1])
 
 
-def test_quicknii_coronal_series_centers_generated_proposals_from_off_center_keyframes():
-    off_center_left = quicknii_pack_anchoring(
+def test_coronal_series_centers_generated_proposals_from_off_center_keyframes():
+    off_center_left = pack_series_anchoring(
         [120.0, 500.0, 90.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.456, 0.4],
         image_width=1000,
         image_height=800,
     )
-    off_center_right = quicknii_pack_anchoring(
+    off_center_right = pack_series_anchoring(
         [340.0, 100.0, 250.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.456, 0.4],
         image_width=1000,
         image_height=800,
     )
 
-    anchorings = quicknii_series_anchorings(
+    anchorings = propagate_series_anchorings(
         image_sizes=[(1000, 800), (1000, 800), (1000, 800)],
         slice_indices=[1, 2, 3],
         atlas_shape=(528, 320, 456),
@@ -358,16 +358,16 @@ def test_quicknii_coronal_series_centers_generated_proposals_from_off_center_key
         stored_anchorings=[off_center_left, None, off_center_right],
     )
 
-    proposal = quicknii_unpack_anchoring(anchorings[1], 1000, 800)
+    proposal = unpack_series_anchoring(anchorings[1], 1000, 800)
     np.testing.assert_allclose(proposal[0], 228.0)
     np.testing.assert_allclose(proposal[2], 160.0)
     np.testing.assert_allclose(anchorings[0], off_center_left)
     np.testing.assert_allclose(anchorings[2], off_center_right)
 
 
-def test_quicknii_coronal_series_proposals_are_upright_even_when_keyframe_is_rotated():
+def test_coronal_series_proposals_are_upright_even_when_keyframe_is_rotated():
     """Interpolated proposals must have default (upright) rotation regardless of keyframes."""
-    left_anchoring = quicknii_default_anchoring(
+    left_anchoring = series_default_anchoring(
         image_width=1000,
         image_height=800,
         max_width=1000,
@@ -376,7 +376,7 @@ def test_quicknii_coronal_series_proposals_are_upright_even_when_keyframe_is_rot
         interpolation_axis=1,
         voxel=400.0,
     )
-    right_base = quicknii_default_anchoring(
+    right_base = series_default_anchoring(
         image_width=1000,
         image_height=800,
         max_width=1000,
@@ -387,7 +387,7 @@ def test_quicknii_coronal_series_proposals_are_upright_even_when_keyframe_is_rot
     )
     right_anchoring = rotate_anchoring(right_base, math.radians(15))
 
-    anchorings = quicknii_series_anchorings(
+    anchorings = propagate_series_anchorings(
         image_sizes=[(1000, 800)] * 3,
         slice_indices=[1, 2, 3],
         atlas_shape=(528, 320, 456),
@@ -395,9 +395,9 @@ def test_quicknii_coronal_series_proposals_are_upright_even_when_keyframe_is_rot
         stored_anchorings=[left_anchoring, None, right_anchoring],
     )
 
-    mid_u = quicknii_unpack_anchoring(anchorings[1], 1000, 800)
-    default_u = quicknii_unpack_anchoring(
-        quicknii_default_anchoring(
+    mid_u = unpack_series_anchoring(anchorings[1], 1000, 800)
+    default_u = unpack_series_anchoring(
+        series_default_anchoring(
             image_width=1000,
             image_height=800,
             max_width=1000,
@@ -412,7 +412,7 @@ def test_quicknii_coronal_series_proposals_are_upright_even_when_keyframe_is_rot
     np.testing.assert_allclose(mid_u[3:9], default_u[3:9], atol=1e-9)
 
 
-def test_interpolate_anchorings_uses_quicknii_decomposed_space(tmp_path):
+def test_interpolate_anchorings_uses_decomposed_space(tmp_path):
     from PIL import Image
 
     paths = []
@@ -421,7 +421,7 @@ def test_interpolate_anchorings_uses_quicknii_decomposed_space(tmp_path):
         Image.new("RGB", (1000, 800)).save(path)
         paths.append(path)
 
-    stored = quicknii_series_anchorings(
+    stored = propagate_series_anchorings(
         image_sizes=[(1000, 800), (1000, 800), (1000, 800)],
         slice_indices=[1, 2, 3],
         atlas_shape=(528, 320, 456),
@@ -455,7 +455,7 @@ def test_interpolate_anchorings_uses_quicknii_decomposed_space(tmp_path):
 
     interpolate_anchorings(sections, atlas_shape=(528, 320, 456))
 
-    expected = quicknii_series_anchorings(
+    expected = propagate_series_anchorings(
         image_sizes=[(1000, 800), (1000, 800), (1000, 800)],
         slice_indices=[1, 2, 3],
         atlas_shape=(528, 320, 456),
@@ -466,7 +466,7 @@ def test_interpolate_anchorings_uses_quicknii_decomposed_space(tmp_path):
     assert sections[1].alignment.status == AlignmentStatus.IN_PROGRESS
 
 
-def test_interpolate_anchorings_with_one_keyframe_matches_quicknii(tmp_path):
+def test_interpolate_anchorings_with_one_keyframe_matches_series_interpolation(tmp_path):
     from PIL import Image
 
     paths = []
@@ -498,7 +498,7 @@ def test_interpolate_anchorings_with_one_keyframe_matches_quicknii(tmp_path):
 
     interpolate_anchorings(sections, atlas_shape=(528, 320, 456))
 
-    expected = quicknii_series_anchorings(
+    expected = propagate_series_anchorings(
         image_sizes=[(1000, 800), (1000, 800)],
         slice_indices=[1, 2],
         atlas_shape=(528, 320, 456),
@@ -509,7 +509,7 @@ def test_interpolate_anchorings_with_one_keyframe_matches_quicknii(tmp_path):
     assert sections[1].alignment.status == AlignmentStatus.IN_PROGRESS
 
 
-def test_initialize_quicknii_anchorings_preserves_manual_edits(tmp_path):
+def test_initialize_default_anchorings_preserves_manual_edits(tmp_path):
     from PIL import Image
 
     paths = []
@@ -541,20 +541,20 @@ def test_initialize_quicknii_anchorings_preserves_manual_edits(tmp_path):
             3,
             current_anchoring=list(SAMPLE_ANCHORING),
             status=AlignmentStatus.IN_PROGRESS,
-            source="quicknii_default",
+            source="series_interpolation",
         ),
     ]
 
-    initialize_quicknii_anchorings(sections, atlas_shape=(528, 320, 456))
+    initialize_default_anchorings(sections, atlas_shape=(528, 320, 456))
 
     assert sections[0].alignment.status == AlignmentStatus.IN_PROGRESS
-    assert sections[0].alignment.source == "quicknii_default"
+    assert sections[0].alignment.source == "series_interpolation"
     assert sections[0].alignment.is_anchored
 
     assert sections[1].alignment.current_anchoring == manual
     assert sections[1].alignment.source == "manual"
 
-    assert sections[2].alignment.source == "quicknii_default"
+    assert sections[2].alignment.source == "series_interpolation"
     assert sections[2].alignment.is_anchored
 
 
@@ -586,8 +586,8 @@ def test_interpolate_anchorings_handles_horizontally_flipped_stored_keyframe(
     ]
     unpacked_right = list(unpacked_left)
     unpacked_right[1] = 100.0
-    left = quicknii_pack_anchoring(unpacked_left, 1000, 800)
-    right = quicknii_pack_anchoring(unpacked_right, 1000, 800)
+    left = pack_series_anchoring(unpacked_left, 1000, 800)
+    right = pack_series_anchoring(unpacked_right, 1000, 800)
     sections = [
         Section(
             id="s001",
@@ -621,7 +621,7 @@ def test_interpolate_anchorings_handles_horizontally_flipped_stored_keyframe(
 
     interpolate_anchorings(sections, atlas_shape=atlas_shape)
 
-    middle = quicknii_unpack_anchoring(sections[1].alignment.current_anchoring, 1000, 800)
+    middle = unpack_series_anchoring(sections[1].alignment.current_anchoring, 1000, 800)
     np.testing.assert_allclose(middle[4], math.sin(angle), atol=1e-9)
     np.testing.assert_allclose(middle[1], 300.0, atol=1e-9)
     assert sections[1].alignment.status == AlignmentStatus.IN_PROGRESS
@@ -634,7 +634,7 @@ def test_interpolate_anchorings_duplicate_serial_strips_inplane_rotation_keeps_t
 
     atlas_shape = (528, 320, 456)
     # Stored section: upright coronal anchoring with an in-plane rotation applied.
-    stored_base = quicknii_default_anchoring(
+    stored_base = series_default_anchoring(
         image_width=1000,
         image_height=800,
         max_width=1000,
@@ -682,11 +682,11 @@ def test_interpolate_anchorings_duplicate_serial_strips_inplane_rotation_keeps_t
 
     interpolate_anchorings(sections, atlas_shape=atlas_shape)
 
-    duplicate_unpacked = quicknii_unpack_anchoring(
+    duplicate_unpacked = unpack_series_anchoring(
         sections[0].alignment.current_anchoring,
         *image_sizes[0],
     )
-    stored_unpacked = quicknii_unpack_anchoring(
+    stored_unpacked = unpack_series_anchoring(
         sections[1].alignment.current_anchoring,
         *image_sizes[1],
     )
@@ -730,9 +730,9 @@ def test_sample_grid_corners():
         (2, 1, 0, 1),  # horizontal (DV) — atlas_shape[1]=dv_dim along DV
     ],
 )
-def test_quicknii_default_anchoring_for_each_axis(axis, axis_dim_idx, u_axis, v_axis):
+def test_series_default_anchoring_for_each_axis(axis, axis_dim_idx, u_axis, v_axis):
     atlas_shape = (528, 320, 456)  # (AP, DV, LR)
-    anchoring = quicknii_default_anchoring(
+    anchoring = series_default_anchoring(
         image_width=1000,
         image_height=800,
         max_width=1000,
@@ -750,10 +750,10 @@ def test_quicknii_default_anchoring_for_each_axis(axis, axis_dim_idx, u_axis, v_
 
 
 @pytest.mark.parametrize("axis", [0, 1, 2])
-def test_quicknii_series_endpoint_voxels_match_axis_dim(axis):
+def test_series_endpoint_voxels_match_axis_dim(axis):
     atlas_shape = (528, 320, 456)
     qn_dims = (456, 528, 320)  # (ML, AP, DV)
-    anchorings = quicknii_series_anchorings(
+    anchorings = propagate_series_anchorings(
         image_sizes=[(1000, 800), (1000, 800)],
         slice_indices=[1, 2],
         atlas_shape=atlas_shape,
@@ -768,10 +768,10 @@ def test_quicknii_series_endpoint_voxels_match_axis_dim(axis):
     assert abs(center1[axis] - 0.0) < 1e-9
 
 
-def test_quicknii_sagittal_series_interpolates_along_ml():
+def test_sagittal_series_interpolates_along_ml():
     """For a sagittal series (axis=0), proposals should vary in ML, not AP."""
     atlas_shape = (528, 320, 456)
-    anchorings = quicknii_series_anchorings(
+    anchorings = propagate_series_anchorings(
         image_sizes=[(1000, 800), (1000, 800), (1000, 800)],
         slice_indices=[1, 2, 3],
         atlas_shape=atlas_shape,
@@ -802,7 +802,7 @@ def test_interpolate_anchorings_sagittal_axis_strips_in_plane_rotation(tmp_path)
         Image.new("RGB", (1000, 800)).save(path)
         paths.append(path)
 
-    left = quicknii_default_anchoring(
+    left = series_default_anchoring(
         image_width=1000,
         image_height=800,
         max_width=1000,
@@ -811,7 +811,7 @@ def test_interpolate_anchorings_sagittal_axis_strips_in_plane_rotation(tmp_path)
         interpolation_axis=axis,
         voxel=400.0,
     )
-    right_base = quicknii_default_anchoring(
+    right_base = series_default_anchoring(
         image_width=1000,
         image_height=800,
         max_width=1000,
@@ -850,7 +850,7 @@ def test_interpolate_anchorings_sagittal_axis_strips_in_plane_rotation(tmp_path)
 
     interpolate_anchorings(sections, atlas_shape=atlas_shape, interpolation_axis=axis)
 
-    mid_unpacked = quicknii_unpack_anchoring(sections[1].alignment.current_anchoring, 1000, 800)
+    mid_unpacked = unpack_series_anchoring(sections[1].alignment.current_anchoring, 1000, 800)
     # The in-plane components in u and v that aren't the slicing axis must be
     # zero (rotation around the slicing axis stripped); the slicing-axis
     # components (the tilt) can be non-zero. For axis=0, in-plane axes are AP=1
@@ -873,7 +873,7 @@ def test_interpolate_anchorings_sagittal_axis_strips_in_plane_rotation(tmp_path)
 @pytest.mark.parametrize("axis", [0, 1, 2])
 def test_plane_tilt_deg_zero_for_axis_aligned_plane(axis):
     atlas_shape = (528, 320, 456)
-    anchoring = quicknii_default_anchoring(
+    anchoring = series_default_anchoring(
         image_width=1000,
         image_height=800,
         max_width=1000,
