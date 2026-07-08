@@ -29,9 +29,11 @@ def colored_svg_pixmap(name: str, color: str, size: int) -> QPixmap:
 
     Injects an explicit ``width``/``height`` before rasterizing so the SVG
     renders crisply at ``size``x``size`` directly, rather than at its
-    intrinsic viewBox size and then being scaled up (blurry). Meant for
-    larger illustrations; toolbar-sized icons use ``colored_icon`` in
-    ``widgets/properties/_common.py``.
+    intrinsic viewBox size and then being scaled up (blurry). Toolbar-sized
+    icons wrap this in ``QIcon(colored_svg_pixmap(name, color, size))``
+    directly (e.g. ``_common.py::colored_icon``) — a ``QIcon`` only scales
+    its source pixmap down cleanly, never up, so a size around 64 stays
+    crisp even for 16-24px buttons.
     """
     svg = (_ICONS_DIR / name).read_text(encoding="utf-8").replace("currentColor", color)
     svg = svg.replace("<svg ", f'<svg width="{size}" height="{size}" ', 1)

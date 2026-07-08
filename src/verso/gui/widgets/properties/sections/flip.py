@@ -5,7 +5,7 @@ from __future__ import annotations
 from PyQt6.QtCore import QSize, pyqtSignal
 from PyQt6.QtWidgets import QGroupBox, QHBoxLayout, QPushButton
 
-from verso.gui.widgets.properties._common import white_icon
+from verso.gui.widgets.properties._common import colored_icon
 
 _FLIP_BTN_STYLE = (
     "QPushButton:checked { background-color: #2a6db5;"
@@ -22,7 +22,7 @@ class FlipBox(QGroupBox):
         layout = QHBoxLayout(self)
 
         self._flip_h = QPushButton()
-        self._flip_h.setIcon(white_icon("flip-horizontal-2.svg"))
+        self._flip_h.setIcon(colored_icon("flip-horizontal-2.svg", "#ffffff"))
         self._flip_h.setIconSize(QSize(18, 18))
         self._flip_h.setCheckable(True)
         self._flip_h.setToolTip("Flip image horizontally")
@@ -31,7 +31,7 @@ class FlipBox(QGroupBox):
         layout.addWidget(self._flip_h)
 
         self._flip_v = QPushButton()
-        self._flip_v.setIcon(white_icon("flip-vertical-2.svg"))
+        self._flip_v.setIcon(colored_icon("flip-vertical-2.svg", "#ffffff"))
         self._flip_v.setIconSize(QSize(18, 18))
         self._flip_v.setCheckable(True)
         self._flip_v.setToolTip("Flip image vertically")

@@ -18,7 +18,6 @@ taller for the mouse brain (~208 px vs ~120 px for coronal).
 from __future__ import annotations
 
 import math
-from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
 
 import numpy as np
@@ -26,7 +25,6 @@ from PyQt6.QtCore import QEvent, QPointF, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import (
     QColor,
     QFont,
-    QIcon,
     QImage,
     QPainter,
     QPen,
@@ -52,19 +50,11 @@ from verso.engine.anchoring import (
     tilt_plane_about_atlas_axis,
 )
 from verso.gui.utils import require
-
-_ICONS_DIR = Path(__file__).parent.parent / "icons"
+from verso.gui.widgets.properties._common import colored_icon
 
 # Scale step per stretch button click
 _SCALE_STEP = 1.02
 _SCALE_STEP_FAST = 1.10
-
-
-def _white_icon(name: str) -> QIcon:
-    svg = (_ICONS_DIR / name).read_text(encoding="utf-8").replace("currentColor", "#ffffff")
-    pixmap = QPixmap()
-    pixmap.loadFromData(svg.encode())
-    return QIcon(pixmap)
 
 
 if TYPE_CHECKING:
@@ -324,7 +314,7 @@ class _SliceView(QWidget):
 
     def _make_btn(self, icon_name: str, tooltip: str, w: int, h: int) -> QPushButton:
         btn = QPushButton()
-        btn.setIcon(_white_icon(icon_name))
+        btn.setIcon(colored_icon(icon_name, "#ffffff"))
         btn.setIconSize(QSize(w - 2, h - 2))
         btn.setFixedSize(w, h)
         btn.setToolTip(tooltip)
@@ -763,7 +753,7 @@ class NavigatorPanel(QWidget):
                 self._stretch_btns.append(btn)
 
             icon_lbl = QLabel()
-            icon_lbl.setPixmap(_white_icon(icon_name).pixmap(QSize(16, 16)))
+            icon_lbl.setPixmap(colored_icon(icon_name, "#ffffff").pixmap(QSize(16, 16)))
             icon_lbl.setFixedSize(18, 18)
             icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             inner.addWidget(icon_lbl)

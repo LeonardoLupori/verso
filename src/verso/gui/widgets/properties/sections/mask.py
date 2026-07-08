@@ -22,7 +22,6 @@ from verso.gui.widgets.properties._common import (
     eye_icon,
     make_eye_btn,
     make_segmented_buttons,
-    white_icon,
 )
 
 
@@ -87,8 +86,8 @@ class MaskBox(QGroupBox):
             initial_key="freehand",
         )
         self._draw_mode_group.buttonClicked.connect(self._on_draw_mode_btn_clicked)
-        self._draw_mode_btns["freehand"].setIcon(white_icon("lasso-select.svg"))
-        self._draw_mode_btns["brush"].setIcon(white_icon("brush.svg"))
+        self._draw_mode_btns["freehand"].setIcon(colored_icon("lasso-select.svg", "#ffffff"))
+        self._draw_mode_btns["brush"].setIcon(colored_icon("brush.svg", "#ffffff"))
         for _btn in self._draw_mode_btns.values():
             _btn.setIconSize(QSize(14, 14))
         layout.addLayout(mode_row)
