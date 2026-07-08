@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code when working on the VERSO codebase.
 
-**VERSO** — Easy Registration of Sections, Obviously. A desktop application for registering serial histological brain sections to 3D reference atlases, replacing the QuickNII → VisuAlign → PyNutil pipeline with a single tool.
+**VERSO** — Easy Registration of SectiOns. A desktop application for registering serial histological brain sections to 3D reference atlases, replacing the QuickNII → VisuAlign → PyNutil pipeline with a single tool.
 
 ## Quick reference
 
