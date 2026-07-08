@@ -289,7 +289,7 @@ class JobController:
             return
         if not warn_if_missing_dimensions(self._window, project.sections):
             return
-        from verso.engine.deepslice import reset_in_progress_to_default_proposals
+        from verso.engine.anchoring import reset_in_progress_to_default_proposals
 
         changed = reset_in_progress_to_default_proposals(
             project.sections,
@@ -328,7 +328,7 @@ class JobController:
         if not warn_if_missing_dimensions(self._window, project.sections):
             return
 
-        from verso.engine.deepslice import reset_in_progress_to_default_proposals
+        from verso.engine.anchoring import reset_in_progress_to_default_proposals
 
         changed = reset_in_progress_to_default_proposals(
             project.sections,

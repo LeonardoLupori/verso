@@ -10,13 +10,13 @@ from PIL import Image
 from verso.engine.anchoring import (
     quicknii_pack_anchoring,
     quicknii_unpack_anchoring,
+    reset_in_progress_to_default_proposals,
 )
 from verso.engine.deepslice import (
     DeepSliceRunResult,
     DeepSliceSectionSuggestion,
     apply_deepslice_suggestions,
     apply_deepslice_suggestions_with_atlas,
-    reset_in_progress_to_default_proposals,
     run_deepslice_suggestions,
 )
 from verso.engine.model.alignment import AlignmentStatus, ControlPoint

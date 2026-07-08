@@ -343,65 +343,6 @@ def _interpolate_bad_sections(
     return filled
 
 
-def reset_in_progress_to_default_proposals(
-    sections: list[Section],
-    atlas_shape: tuple[int, int, int],
-    interpolation_axis: int = 1,
-    reverse_axis: bool = False,
-    include_complete: bool = False,
-) -> int:
-    """Clear editable suggestions and regenerate QuickNII-style default proposals."""
-    from verso.engine.anchoring import (
-        _display_space_anchoring,
-        quicknii_series_anchorings,
-    )
-
-    usable: list[tuple[Section, int, int]] = [
-        (section, *section.resolution_thumbnail_wh) for section in sections
-    ]
-    if not usable:
-        return 0
-
-    stored_anchorings = []
-    for section, _, _ in usable:
-        is_stored = not include_complete and section.alignment.status == AlignmentStatus.COMPLETE
-        if not is_stored:
-            stored_anchorings.append(None)
-            continue
-        display = _display_space_anchoring(section)
-        stored_anchorings.append(display if any(v != 0.0 for v in display) else None)
-    propagated = quicknii_series_anchorings(
-        image_sizes=[(w, h) for _, w, h in usable],
-        slice_indices=[section.slice_index for section, _, _ in usable],
-        atlas_shape=atlas_shape,
-        interpolation_axis=interpolation_axis,
-        stored_anchorings=stored_anchorings,
-        reverse_axis=reverse_axis,
-        center_proposals=True,
-    )
-
-    changed = 0
-    for (section, _, _), anchoring, stored in zip(
-        usable, propagated, stored_anchorings, strict=False
-    ):
-        if stored is not None:
-            continue
-        section.alignment.anchoring = anchoring
-        section.alignment.position_mm = None
-        section.alignment.status = AlignmentStatus.IN_PROGRESS
-        section.alignment.source = "quicknii_default"
-        if include_complete:
-            section.alignment.stored_anchoring = None
-        section.alignment.proposal_anchoring = None
-        section.alignment.proposal_confidence = None
-        section.alignment.proposal_run_id = None
-        section.warp.control_points.clear()
-        section.warp.status = AlignmentStatus.NOT_STARTED
-        changed += 1
-
-    return changed
-
-
 def _copy_registration_images(
     sections: list[Section],
     input_dir: Path,
