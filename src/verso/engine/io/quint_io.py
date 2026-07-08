@@ -35,6 +35,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from verso.engine.anchoring import is_anchored
 from verso.engine.model.alignment import Alignment, AlignmentStatus, ControlPoint, WarpState
 from verso.engine.model.project import AtlasRef, Project, Section
 
@@ -168,9 +169,10 @@ def _control_points_to_markers(
 
 # NOTE — coordinate space of exports
 # Exports are written entirely in display space — the same space VERSO stores
-# its anchoring and control points in. Anchoring uses _display_space_anchoring;
-# markers are the stored control points as-is. No flip is applied to either, so
-# save → load is an identity round-trip regardless of a section's flip flag.
+# its anchoring and control points in. Anchoring uses the saved
+# ``stored_anchoring``; markers are the stored control points as-is. No flip is
+# applied to either, so save → load is an identity round-trip regardless of a
+# section's flip flag.
 # Horizontal/vertical flips are represented outside the alignment (e.g. baked
 # into the exported images), never by mirroring the saved coordinates.
 
@@ -448,8 +450,6 @@ def save_quicknii_xml(
     atlas_name = project.atlas.name if project.atlas else ""
     lines.append(f"<series name='{project.name}' target='{atlas_name}'{res_attr}>")
 
-    from verso.engine.anchoring import _display_space_anchoring
-
     prefixes = [
         "' anchoring='ox=",
         "&amp;oy=",
@@ -467,12 +467,11 @@ def save_quicknii_xml(
         line = (
             f"    <slice filename='{filename}' nr='{section.slice_index}' width='{w}' height='{h}"
         )
-        if section.alignment.status == AlignmentStatus.COMPLETE:
-            original = _display_space_anchoring(section)
-            if any(original):
-                a = _export_anchoring(original, atlas_shape)
-                for prefix, val in zip(prefixes, [round(v, 4) for v in a], strict=False):
-                    line += f"{prefix}{val}"
+        stored = section.alignment.stored_anchoring
+        if section.alignment.status == AlignmentStatus.COMPLETE and is_anchored(stored):
+            a = _export_anchoring(stored, atlas_shape)
+            for prefix, val in zip(prefixes, [round(v, 4) for v in a], strict=False):
+                line += f"{prefix}{val}"
         line += "'/>"
         lines.append(line)
 
@@ -498,7 +497,6 @@ def save_quicknii(
     """
     if atlas_shape is None and project.atlas:
         atlas_shape = _BG_ATLAS_SHAPE.get(project.atlas.name)
-    from verso.engine.anchoring import _display_space_anchoring
 
     slices_out: list[dict[str, Any]] = []
     for section in project.sections:
@@ -509,10 +507,9 @@ def save_quicknii(
             "width": w,
             "height": h,
         }
-        if section.alignment.status == AlignmentStatus.COMPLETE:
-            original = _display_space_anchoring(section)
-            if any(original):
-                entry["anchoring"] = [round(v, 4) for v in _export_anchoring(original, atlas_shape)]
+        stored = section.alignment.stored_anchoring
+        if section.alignment.status == AlignmentStatus.COMPLETE and is_anchored(stored):
+            entry["anchoring"] = [round(v, 4) for v in _export_anchoring(stored, atlas_shape)]
         slices_out.append(entry)
 
     data: dict[str, Any] = {
@@ -543,7 +540,6 @@ def save_visualign(
     """
     if atlas_shape is None and project.atlas:
         atlas_shape = _BG_ATLAS_SHAPE.get(project.atlas.name)
-    from verso.engine.anchoring import _display_space_anchoring
 
     slices_out: list[dict[str, Any]] = []
     for section in project.sections:
@@ -554,10 +550,9 @@ def save_visualign(
             "width": w,
             "height": h,
         }
-        if section.alignment.status == AlignmentStatus.COMPLETE:
-            original = _display_space_anchoring(section)
-            if any(original):
-                entry["anchoring"] = [round(v, 4) for v in _export_anchoring(original, atlas_shape)]
+        stored = section.alignment.stored_anchoring
+        if section.alignment.status == AlignmentStatus.COMPLETE and is_anchored(stored):
+            entry["anchoring"] = [round(v, 4) for v in _export_anchoring(stored, atlas_shape)]
         if section.warp.control_points:
             # Markers are written in display space — the same space VERSO stores
             # control points in — with no flip applied. Flips are represented

@@ -7,11 +7,26 @@ vector-format spec.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import numpy as np
 
 # ---------------------------------------------------------------------------
 # Anchoring vector decomposition
 # ---------------------------------------------------------------------------
+
+
+def is_anchored(anchoring: Sequence[float] | None) -> bool:
+    """Return True when an anchoring vector is present and not all zeros.
+
+    A missing or all-zero anchoring means the section has no usable plane yet.
+    This is the single definition of "anchored" for the whole codebase, applied
+    to live and stored anchorings alike. Code holding an
+    :class:`~verso.engine.model.alignment.Alignment` should prefer its
+    ``is_anchored`` property, which delegates here; call this directly only when
+    all you have is a raw vector (the pure series algorithm, JSON parsing).
+    """
+    return bool(anchoring) and any(v != 0.0 for v in anchoring)
 
 
 def anchoring_to_vectors(

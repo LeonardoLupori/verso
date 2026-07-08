@@ -796,7 +796,7 @@ class MainWindow(QMainWindow):
         has_alignment = (
             section.alignment.status != AlignmentStatus.NOT_STARTED
             or bool(section.warp.control_points)
-            or (section.alignment.anchoring and any(v != 0.0 for v in section.alignment.anchoring))
+            or section.alignment.is_anchored
         )
         if not has_alignment:
             return
@@ -1386,9 +1386,10 @@ class MainWindow(QMainWindow):
         (``stored_anchoring``, only ever set by an explicit commit) plus the
         per-step dirty flag for an in-progress unsaved edit.
         """
-        stored = section.alignment.stored_anchoring
+        from verso.engine.anchoring import is_anchored
+
         has_alignment = (
-            (bool(stored) and any(v != 0.0 for v in stored))
+            is_anchored(section.alignment.stored_anchoring)
             or bool(section.warp.control_points)
             or self._state.is_dirty(section.id, "align")
             or self._state.is_dirty(section.id, "warp")
@@ -1532,7 +1533,7 @@ class MainWindow(QMainWindow):
         if atlas is None:
             return
         for section in sections:
-            if section.alignment.anchoring and any(v != 0.0 for v in section.alignment.anchoring):
+            if section.alignment.is_anchored:
                 section.alignment.position_mm = self._anchoring_position_mm(
                     section.alignment.anchoring
                 )
@@ -1552,37 +1553,36 @@ class MainWindow(QMainWindow):
         if not warn_if_missing_dimensions(self, sections):
             return
 
-        from verso.engine.anchoring import quicknii_series_anchorings
+        from verso.engine.anchoring import is_anchored, quicknii_series_anchorings
         from verso.engine.model.alignment import AlignmentStatus
 
         usable = [(section, *section.resolution_thumbnail_wh) for section in sections]
         if not usable:
             return
 
-        from verso.engine.anchoring import _display_space_anchoring
-
-        display_anchorings = []
+        stored_anchorings = []
         for section, _, _ in usable:
             is_complete = section.alignment.status == AlignmentStatus.COMPLETE
-            display_anchorings.append(_display_space_anchoring(section) if is_complete else None)
+            stored = section.alignment.stored_anchoring
+            stored_anchorings.append(list(stored) if is_complete and is_anchored(stored) else None)
         propagated = quicknii_series_anchorings(
             image_sizes=[(w, h) for _, w, h in usable],
             slice_indices=[section.slice_index for section, _, _ in usable],
             atlas_shape=atlas.shape,
             interpolation_axis=self._interpolation_axis(),
-            stored_anchorings=display_anchorings,
+            stored_anchorings=stored_anchorings,
             reverse_axis=self._reverse_axis_proposal,
             center_proposals=True,
         )
 
         stored_indices = {
             section.slice_index
-            for (section, _, _), anch in zip(usable, display_anchorings, strict=False)
+            for (section, _, _), anch in zip(usable, stored_anchorings, strict=False)
             if anch is not None
         }
 
         for (section, _, _), anchoring, anch in zip(
-            usable, propagated, display_anchorings, strict=False
+            usable, propagated, stored_anchorings, strict=False
         ):
             if anch is not None:
                 continue
@@ -1590,9 +1590,7 @@ class MainWindow(QMainWindow):
             # section — they are the same physical slice and must show the same
             # image.
             is_index_duplicate = section.slice_index in stored_indices
-            has_existing = section.alignment.anchoring and any(
-                v != 0.0 for v in section.alignment.anchoring
-            )
+            has_existing = section.alignment.is_anchored
             if (
                 not is_index_duplicate
                 and has_existing

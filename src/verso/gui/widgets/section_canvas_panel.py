@@ -322,7 +322,7 @@ class SectionCanvasPanel(QWidget):
             return
 
         anchoring = self._section.alignment.anchoring
-        if not anchoring or all(v == 0.0 for v in anchoring):
+        if not self._section.alignment.is_anchored:
             # Render-only fallback for a section with no interpolated/edited
             # plane yet.  Do NOT write this centered plane back to the section —
             # leaving the anchoring unset lets project-wide interpolation fill in
@@ -395,7 +395,7 @@ class SectionCanvasPanel(QWidget):
         if self._atlas is None or self._section is None or self._raw_image is None:
             return
         anchoring = self._section.alignment.anchoring
-        if not anchoring or all(v == 0.0 for v in anchoring):
+        if not self._section.alignment.is_anchored:
             return
         h_bg, w_bg = self._raw_image.shape[:2]
         if x < 0 or y < 0 or x >= w_bg or y >= h_bg:

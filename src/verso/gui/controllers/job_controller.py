@@ -456,8 +456,7 @@ class JobController:
                 "Automatic control points are only available for Allen mouse atlases.",
             )
             return
-        anchoring = section.alignment.anchoring
-        if not anchoring or all(v == 0.0 for v in anchoring):
+        if not section.alignment.is_anchored:
             QMessageBox.information(
                 self._window,
                 "No alignment",
@@ -480,11 +479,7 @@ class JobController:
                 "Automatic control points are only available for Allen mouse atlases.",
             )
             return
-        aligned = [
-            s
-            for s in project.sections
-            if s.alignment.anchoring and any(v != 0.0 for v in s.alignment.anchoring)
-        ]
+        aligned = [s for s in project.sections if s.alignment.is_anchored]
         if not aligned:
             QMessageBox.information(
                 self._window,

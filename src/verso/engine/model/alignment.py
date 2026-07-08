@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from verso.engine.anchoring.core import is_anchored
+
 
 class AlignmentStatus(StrEnum):
     NOT_STARTED = "not_started"
@@ -81,10 +83,20 @@ class Alignment:
         if (
             self.status == AlignmentStatus.COMPLETE
             and self.stored_anchoring is None
-            and self.anchoring
-            and any(v != 0.0 for v in self.anchoring)
+            and is_anchored(self.anchoring)
         ):
             self.stored_anchoring = list(self.anchoring)
+
+    @property
+    def is_anchored(self) -> bool:
+        """True when the live anchoring is a real (non-zero) plane.
+
+        Checks the *live* ``anchoring`` on purpose — this answers "does the
+        section have any plane at all, saved or in-progress" (used for UI
+        enablement and ``has_alignment`` checks). Export/interpolation read
+        ``stored_anchoring`` instead, so only saved planes reach them.
+        """
+        return is_anchored(self.anchoring)
 
     def set_auto_proposal(
         self,

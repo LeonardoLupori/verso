@@ -348,7 +348,7 @@ def prepare_registration_inputs(
         name = Path(section.original_path).name
         try:
             anchoring = section.alignment.anchoring
-            if not anchoring or all(v == 0.0 for v in anchoring):
+            if not section.alignment.is_anchored:
                 errors.append(f"{name}: no alignment yet")
                 continue
             image = ensure_working_copy(section, working_scale)

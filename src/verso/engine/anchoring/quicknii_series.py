@@ -13,23 +13,10 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from verso.engine.anchoring.core import anchoring_to_vectors, vectors_to_anchoring
+from verso.engine.anchoring.core import anchoring_to_vectors, is_anchored, vectors_to_anchoring
 
 if TYPE_CHECKING:
     from verso.engine.model.project import Section
-
-
-def _display_space_anchoring(section) -> list[float]:
-    """Return anchoring in display space (exactly as the user positioned it).
-
-    ``stored_anchoring`` and ``anchoring`` are both in display space (the new
-    invariant). This is the value written to QuickNII/VisuAlign exports so that
-    the saved coordinates match what the user saw.
-    """
-    stored = section.alignment.stored_anchoring
-    if stored and any(v != 0.0 for v in stored):
-        return list(stored)
-    return list(section.alignment.anchoring)
 
 
 def _in_plane_axes(interpolation_axis: int) -> tuple[int, int]:
@@ -237,9 +224,7 @@ def quicknii_series_anchorings(
 
     stored_anchorings = stored_anchorings or [None] * len(image_sizes)
     stored_indices = [
-        i
-        for i, anchoring in enumerate(stored_anchorings)
-        if anchoring is not None and any(val != 0.0 for val in anchoring)
+        i for i, anchoring in enumerate(stored_anchorings) if is_anchored(anchoring)
     ]
 
     def default_unpacked(axis_voxel: float) -> list[float]:
@@ -415,13 +400,13 @@ def interpolate_anchorings(
 
     stored_indices: list[int] = []
     for idx, (section, _, _) in enumerate(sorted_usable):
-        if section.alignment.status == AlignmentStatus.COMPLETE:
-            display = _display_space_anchoring(section)
-            if any(v != 0.0 for v in display):
-                stored_indices.append(idx)
+        if section.alignment.status == AlignmentStatus.COMPLETE and is_anchored(
+            section.alignment.stored_anchoring
+        ):
+            stored_indices.append(idx)
 
     stored_anchorings_for_series = [
-        _display_space_anchoring(section) if idx in stored_indices else None
+        list(section.alignment.stored_anchoring) if idx in stored_indices else None
         for idx, (section, _, _) in enumerate(sorted_usable)
     ]
     propagated_anchorings = quicknii_series_anchorings(
@@ -469,8 +454,8 @@ def reset_in_progress_to_default_proposals(
         if not is_stored:
             stored_anchorings.append(None)
             continue
-        display = _display_space_anchoring(section)
-        stored_anchorings.append(display if any(v != 0.0 for v in display) else None)
+        stored = section.alignment.stored_anchoring
+        stored_anchorings.append(list(stored) if is_anchored(stored) else None)
     propagated = quicknii_series_anchorings(
         image_sizes=[(w, h) for _, w, h in usable],
         slice_indices=[section.slice_index for section, _, _ in usable],

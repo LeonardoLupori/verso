@@ -70,10 +70,9 @@ def commit_alignment(section: Section) -> bool:
 
     No-op (returns False) when the section has no usable anchoring yet.
     """
-    anchoring = section.alignment.anchoring
-    if not anchoring or all(v == 0.0 for v in anchoring):
+    if not section.alignment.is_anchored:
         return False
-    section.alignment.stored_anchoring = list(anchoring)
+    section.alignment.stored_anchoring = list(section.alignment.anchoring)
     section.alignment.status = AlignmentStatus.COMPLETE
     return True
 

@@ -28,6 +28,7 @@ from verso.engine.anchoring.core import (
     anchoring_center,
     anchoring_to_vectors,
     atlas_to_normalized,
+    is_anchored,
     make_atlas_sample_grid,
     normalized_to_atlas,
     normalized_to_pixel,
@@ -47,10 +48,8 @@ from verso.engine.anchoring.manipulate import (
     tilt_plane_about_atlas_axis,
 )
 from verso.engine.anchoring.quicknii_series import (
-    # Two leading-underscore helpers are re-exported (noqa) for existing
-    # cross-module importers: ``_in_plane_axes`` (atlas.py) and
-    # ``_display_space_anchoring`` (quint_io / deepslice / main_window).
-    _display_space_anchoring,  # noqa: F401
+    # ``_in_plane_axes`` is re-exported (noqa) for its cross-module importer,
+    # atlas.py; see F12 for folding the axis-convention helpers into one home.
     _in_plane_axes,  # noqa: F401
     interpolate_anchorings,
     quicknii_default_anchoring,
@@ -69,6 +68,7 @@ __all__ = [
     "flip_anchoring_horizontal",
     "flip_anchoring_vertical",
     "interpolate_anchorings",
+    "is_anchored",
     "make_atlas_sample_grid",
     "normalized_to_atlas",
     "normalized_to_pixel",

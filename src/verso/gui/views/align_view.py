@@ -227,7 +227,7 @@ class AlignView(BaseCanvasView):
         if section is None or raw is None:
             return
         anchoring = section.alignment.anchoring
-        if not anchoring or all(v == 0.0 for v in anchoring):
+        if not section.alignment.is_anchored:
             return
         # Coalesce the whole drag gesture into a single undo step: snapshot
         # once when the run starts, then keep the idle timer alive so the run
@@ -263,7 +263,7 @@ class AlignView(BaseCanvasView):
         if section is None or self._panel.raw_image is None:
             return
         anchoring = section.alignment.anchoring
-        if not anchoring or all(v == 0.0 for v in anchoring):
+        if not section.alignment.is_anchored:
             return
 
         from verso.engine.anchoring import clamp_inplane_rotation, rotate_anchoring
@@ -305,7 +305,7 @@ class AlignView(BaseCanvasView):
         if section is None or self._panel.raw_image is None:
             return
         anchoring = section.alignment.anchoring
-        if not anchoring or all(v == 0.0 for v in anchoring):
+        if not section.alignment.is_anchored:
             return
         # Coalesce the whole grip drag into a single undo step, mirroring pan/rotate.
         if not self._pan_run_active:
@@ -334,7 +334,7 @@ class AlignView(BaseCanvasView):
         if section is None or self._panel.raw_image is None:
             return
         anchoring = section.alignment.anchoring
-        if not anchoring or all(v == 0.0 for v in anchoring):
+        if not section.alignment.is_anchored:
             return
         self._end_pan_run()
         self._push_undo()
@@ -360,8 +360,9 @@ class AlignView(BaseCanvasView):
             return False
         # ``stored_anchoring`` only changes on save/clear, so it reflects the
         # last-saved plane even mid-edit — no baseline lookup needed.
-        stored = section.alignment.stored_anchoring
-        return bool(stored) and any(v != 0.0 for v in stored)
+        from verso.engine.anchoring import is_anchored
+
+        return is_anchored(section.alignment.stored_anchoring)
 
     def _capture_edit(self) -> list[float]:
         return list(self._panel.section.alignment.anchoring)
@@ -389,7 +390,7 @@ class AlignView(BaseCanvasView):
             return False
         # If the user never touched the navigator but hits Save, seed a default
         # plane so there's something to store.
-        if not section.alignment.anchoring or all(v == 0.0 for v in section.alignment.anchoring):
+        if not section.alignment.is_anchored:
             if raw is None:
                 return False
             h, w = raw.shape[:2]

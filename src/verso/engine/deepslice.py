@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from verso.engine.anchoring import is_anchored
 from verso.engine.model.project import Project, Section
 
 
@@ -526,7 +527,7 @@ def _load_suggestions(path: Path) -> list[DeepSliceSectionSuggestion]:
 
     for i, raw_section in enumerate(raw_sections):
         anchoring = [float(x) for x in raw_section.get("anchoring", [])]
-        if len(anchoring) < 9 or not any(v != 0.0 for v in anchoring):
+        if len(anchoring) < 9 or not is_anchored(anchoring):
             continue
         confidence = raw_section.get("confidence")
         suggestions.append(

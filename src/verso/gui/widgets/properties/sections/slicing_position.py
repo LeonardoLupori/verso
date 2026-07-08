@@ -64,7 +64,7 @@ class SlicingPositionBox(QGroupBox):
         buckets = {status: ([], []) for status in STATUS_COLOR}
         for section in sections:
             pos = section.alignment.position_mm
-            if pos is None or all(v == 0.0 for v in (section.alignment.anchoring or [])):
+            if pos is None or not section.alignment.is_anchored:
                 continue
             # X is the physical slice index so spacing matches how interpolation
             # is parameterized (uneven gaps stay uneven), not the list rank.
@@ -94,7 +94,7 @@ class SlicingPositionBox(QGroupBox):
         if 0 <= current_index < len(sections):
             section = sections[current_index]
             pos = section.alignment.position_mm
-            if pos is not None and any(v != 0.0 for v in (section.alignment.anchoring or [])):
+            if pos is not None and section.alignment.is_anchored:
                 status = section_step_status(section, "align", dirty=section.id in dirty_ids)
                 color = pg.mkColor(STATUS_COLOR[status])
                 color.setAlpha(self._DOT_ALPHA)
