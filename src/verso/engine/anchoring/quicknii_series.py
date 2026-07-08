@@ -392,19 +392,16 @@ def _quicknii_regressed_unpacked(
 
 def interpolate_anchorings(
     sections: list,
-    atlas_shape: tuple[int, int, int] | None = None,
+    atlas_shape: tuple[int, int, int],
     interpolation_axis: int = 1,
     reverse_axis: bool = False,
     center_proposals: bool = True,
 ) -> None:
     """Propagate anchorings for non-stored sections using QuickNII semantics.
 
-    When ``atlas_shape`` is available this follows QuickNII's
-    ``MgmtPanel.dointerpolate`` path, including the no-stored-anchoring and
-    one-stored-anchoring cases where endpoint controls are synthesized before
-    linear interpolation. Without an atlas shape, only the multi-anchor path can
-    be resolved because QuickNII's synthesized endpoint controls depend on atlas
-    dimensions.
+    Follows QuickNII's ``MgmtPanel.dointerpolate`` path, including the
+    no-stored-anchoring and one-stored-anchoring cases where endpoint controls
+    are synthesized (from ``atlas_shape``) before linear interpolation.
     """
     from verso.engine.model.alignment import AlignmentStatus
 
@@ -412,103 +409,41 @@ def interpolate_anchorings(
     if not usable:
         return
 
-    k = interpolation_axis
-    u_axis, v_axis = _in_plane_axes(k)
-
     order = sorted(range(len(usable)), key=lambda i: (usable[i][0].slice_index, i))
     sorted_usable = [usable[i] for i in order]
     slice_indices = [section.slice_index for section, _, _ in sorted_usable]
 
-    unpacked_by_index: dict[int, list[float]] = {}
     stored_indices: list[int] = []
-    for idx, (section, w, h) in enumerate(sorted_usable):
+    for idx, (section, _, _) in enumerate(sorted_usable):
         if section.alignment.status == AlignmentStatus.COMPLETE:
             display = _display_space_anchoring(section)
             if any(v != 0.0 for v in display):
-                unpacked_by_index[idx] = quicknii_unpack_anchoring(display, w, h)
                 stored_indices.append(idx)
 
-    if atlas_shape is not None:
-        stored_anchorings_for_series = [
-            _display_space_anchoring(section) if idx in stored_indices else None
-            for idx, (section, _, _) in enumerate(sorted_usable)
-        ]
-        propagated_anchorings = quicknii_series_anchorings(
-            image_sizes=[(w, h) for _, w, h in sorted_usable],
-            slice_indices=slice_indices,
-            atlas_shape=atlas_shape,
-            interpolation_axis=k,
-            stored_anchorings=stored_anchorings_for_series,
-            reverse_axis=reverse_axis,
-            center_proposals=center_proposals,
-        )
+    stored_anchorings_for_series = [
+        _display_space_anchoring(section) if idx in stored_indices else None
+        for idx, (section, _, _) in enumerate(sorted_usable)
+    ]
+    propagated_anchorings = quicknii_series_anchorings(
+        image_sizes=[(w, h) for _, w, h in sorted_usable],
+        slice_indices=slice_indices,
+        atlas_shape=atlas_shape,
+        interpolation_axis=interpolation_axis,
+        stored_anchorings=stored_anchorings_for_series,
+        reverse_axis=reverse_axis,
+        center_proposals=center_proposals,
+    )
 
-        for (section, _, _), anchoring in zip(sorted_usable, propagated_anchorings, strict=False):
-            if section.alignment.status == AlignmentStatus.COMPLETE:
-                continue
-            section.alignment.anchoring = anchoring
-            section.alignment.status = AlignmentStatus.IN_PROGRESS
-            # Mark these as auto-generated proposals (same tag the GUI's
-            # _initialize_quicknii_anchorings uses).  Without it, a later
-            # re-interpolation treats these IN_PROGRESS sections as manual
-            # edits and skips them, so a newly-saved keyframe's angle never
-            # propagates here.
-            section.alignment.source = "quicknii_default"
-        return
-
-    if len(stored_indices) < 2:
-        return
-
-    controls = list(stored_indices)
-    if stored_indices[0] != 0:
-        unpacked_by_index[0] = _quicknii_regressed_unpacked(
-            stored_indices,
-            unpacked_by_index,
-            slice_indices,
-            slice_indices[0],
-        )
-        controls.insert(0, 0)
-    if stored_indices[-1] != len(sorted_usable) - 1:
-        last_idx = len(sorted_usable) - 1
-        unpacked_by_index[last_idx] = _quicknii_regressed_unpacked(
-            stored_indices,
-            unpacked_by_index,
-            slice_indices,
-            slice_indices[last_idx],
-        )
-        controls.append(last_idx)
-
-    controls = sorted(set(controls))
-    propagated: dict[int, list[float]] = {}
-    for left, right in itertools.pairwise(controls):
-        left_index = slice_indices[left]
-        right_index = slice_indices[right]
-        left_unpacked = unpacked_by_index[left]
-        right_unpacked = unpacked_by_index[right]
-        for idx in range(left, right + 1):
-            denom = right_index - left_index
-            t = 0.0 if denom == 0 else (slice_indices[idx] - left_index) / denom
-            propagated[idx] = [
-                a + t * (b - a) for a, b in zip(left_unpacked, right_unpacked, strict=False)
-            ]
-
-    _stored_set_legacy = set(stored_indices)
-    for idx, row in propagated.items():
-        if idx in _stored_set_legacy:
-            continue
-        u_tilt = row[3 + k]
-        v_tilt = row[6 + k]
-        row[3 + v_axis] = 0.0
-        row[6 + u_axis] = 0.0
-        row[3 + u_axis] = float(np.sqrt(max(0.0, 1.0 - u_tilt * u_tilt)))
-        row[6 + v_axis] = float(np.sqrt(max(0.0, 1.0 - v_tilt * v_tilt)))
-
-    for idx, unpacked in propagated.items():
-        section, w, h = sorted_usable[idx]
+    for (section, _, _), anchoring in zip(sorted_usable, propagated_anchorings, strict=False):
         if section.alignment.status == AlignmentStatus.COMPLETE:
             continue
-        section.alignment.anchoring = quicknii_pack_anchoring(unpacked, w, h)
+        section.alignment.anchoring = anchoring
         section.alignment.status = AlignmentStatus.IN_PROGRESS
+        # Mark these as auto-generated proposals (same tag the GUI's
+        # _initialize_quicknii_anchorings uses).  Without it, a later
+        # re-interpolation treats these IN_PROGRESS sections as manual
+        # edits and skips them, so a newly-saved keyframe's angle never
+        # propagates here.
         section.alignment.source = "quicknii_default"
 
 

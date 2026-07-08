@@ -452,7 +452,7 @@ def test_interpolate_anchorings_uses_quicknii_decomposed_space(tmp_path):
         ),
     ]
 
-    interpolate_anchorings(sections)
+    interpolate_anchorings(sections, atlas_shape=(528, 320, 456))
 
     expected = quicknii_series_anchorings(
         image_sizes=[(1000, 800), (1000, 800), (1000, 800)],
@@ -645,44 +645,6 @@ def test_interpolate_anchorings_duplicate_serial_strips_inplane_rotation_keeps_t
     # In-plane rotation removed; rotate_anchoring leaves u_y=v_y=0, so result is upright.
     np.testing.assert_allclose(duplicate_unpacked[3:9], [1.0, 0.0, 0.0, 0.0, 0.0, 1.0], atol=1e-9)
     assert sections[0].alignment.status == AlignmentStatus.IN_PROGRESS
-
-
-def test_interpolate_anchorings_without_atlas_shape_keeps_legacy_one_keyframe_noop(
-    tmp_path,
-):
-    from PIL import Image
-
-    paths = []
-    for i in range(2):
-        path = tmp_path / f"s{i + 1}.png"
-        Image.new("RGB", (1000, 800)).save(path)
-        paths.append(path)
-
-    sections = [
-        Section(
-            id="s001",
-            slice_index=1,
-            original_path=str(paths[0]),
-            thumbnail_path=str(paths[0]),
-            resolution_thumbnail_wh=(1000, 800),
-            alignment=Alignment(
-                anchoring=SAMPLE_ANCHORING,
-                status=AlignmentStatus.COMPLETE,
-            ),
-        ),
-        Section(
-            id="s002",
-            slice_index=2,
-            original_path=str(paths[1]),
-            thumbnail_path=str(paths[1]),
-            resolution_thumbnail_wh=(1000, 800),
-        ),
-    ]
-
-    interpolate_anchorings(sections)
-
-    assert sections[1].alignment.anchoring == [0.0] * 9
-    assert sections[1].alignment.status == AlignmentStatus.NOT_STARTED
 
 
 # ---------------------------------------------------------------------------
