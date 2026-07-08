@@ -51,6 +51,7 @@ from verso.engine.anchoring.quicknii_series import (
     # ``_in_plane_axes`` is re-exported (noqa) for its cross-module importer,
     # atlas.py; see F12 for folding the axis-convention helpers into one home.
     _in_plane_axes,  # noqa: F401
+    initialize_quicknii_anchorings,
     interpolate_anchorings,
     quicknii_default_anchoring,
     quicknii_pack_anchoring,
@@ -67,6 +68,7 @@ __all__ = [
     "clamp_rotation_to_max_tilt",
     "flip_anchoring_horizontal",
     "flip_anchoring_vertical",
+    "initialize_quicknii_anchorings",
     "interpolate_anchorings",
     "is_anchored",
     "make_atlas_sample_grid",

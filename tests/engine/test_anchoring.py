@@ -11,6 +11,7 @@ from verso.engine.anchoring import (
     clamp_inplane_rotation,
     clamp_rotation_to_max_tilt,
     flip_anchoring_horizontal,
+    initialize_quicknii_anchorings,
     interpolate_anchorings,
     make_atlas_sample_grid,
     normalized_to_atlas,
@@ -506,6 +507,55 @@ def test_interpolate_anchorings_with_one_keyframe_matches_quicknii(tmp_path):
     )
     np.testing.assert_allclose(sections[1].alignment.current_anchoring, expected[1])
     assert sections[1].alignment.status == AlignmentStatus.IN_PROGRESS
+
+
+def test_initialize_quicknii_anchorings_preserves_manual_edits(tmp_path):
+    from PIL import Image
+
+    paths = []
+    for i in range(3):
+        path = tmp_path / f"s{i + 1}.png"
+        Image.new("RGB", (1000, 800)).save(path)
+        paths.append(path)
+
+    def _section(idx: int, **align_kwargs) -> Section:
+        return Section(
+            id=f"s{idx:03d}",
+            slice_index=idx,
+            original_path=str(paths[idx - 1]),
+            thumbnail_path=str(paths[idx - 1]),
+            resolution_thumbnail_wh=(1000, 800),
+            alignment=Alignment(**align_kwargs),
+        )
+
+    manual = list(SAMPLE_ANCHORING)
+    sections = [
+        _section(1),  # NOT_STARTED → gets a default proposal
+        _section(  # manual in-progress edit → preserved
+            2,
+            current_anchoring=manual,
+            status=AlignmentStatus.IN_PROGRESS,
+            source="manual",
+        ),
+        _section(  # prior default proposal → regenerated
+            3,
+            current_anchoring=list(SAMPLE_ANCHORING),
+            status=AlignmentStatus.IN_PROGRESS,
+            source="quicknii_default",
+        ),
+    ]
+
+    initialize_quicknii_anchorings(sections, atlas_shape=(528, 320, 456))
+
+    assert sections[0].alignment.status == AlignmentStatus.IN_PROGRESS
+    assert sections[0].alignment.source == "quicknii_default"
+    assert sections[0].alignment.is_anchored
+
+    assert sections[1].alignment.current_anchoring == manual
+    assert sections[1].alignment.source == "manual"
+
+    assert sections[2].alignment.source == "quicknii_default"
+    assert sections[2].alignment.is_anchored
 
 
 def test_interpolate_anchorings_handles_horizontally_flipped_stored_keyframe(

@@ -24,7 +24,7 @@ from PyQt6.QtWidgets import (
 )
 
 from verso.engine.drafts import commit_alignment
-from verso.engine.model.alignment import Alignment, AlignmentStatus
+from verso.engine.model.alignment import Alignment
 from verso.gui.utils import require
 from verso.gui.views.base_canvas_view import BaseCanvasView
 from verso.gui.widgets.navigator import NavigatorPanel
@@ -410,14 +410,9 @@ class AlignView(BaseCanvasView):
 
     def _wipe(self) -> None:
         """Wipe the alignment (and the slice's warp, which depended on it)."""
-        section = self._panel.section
-        section.alignment.current_anchoring = [0.0] * 9
-        section.alignment.position_mm = None
-        section.alignment.status = AlignmentStatus.NOT_STARTED
-        section.alignment.source = None
-        section.alignment.stored_anchoring = None
-        section.warp.control_points.clear()
-        section.warp.status = AlignmentStatus.NOT_STARTED
+        from verso.engine.drafts import reset_alignment
+
+        reset_alignment(self._panel.section)
 
     def _end_edit_gesture(self) -> None:
         self._end_pan_run()

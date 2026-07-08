@@ -421,10 +421,11 @@ class SectionCanvasPanel(QWidget):
         Style is applied by ``view_chrome.make_view_status_bar`` so the bar
         looks identical across Prep / Align / Warp.
         """
-        if self._section is None:
-            text = "No section loaded"
-        else:
-            text = os.path.basename(self._section.original_path)
+        text = (
+            "No section loaded"
+            if self._section is None
+            else os.path.basename(self._section.original_path)
+        )
         lbl = QLabel(text)
         self._status_labels.append(lbl)
         return lbl

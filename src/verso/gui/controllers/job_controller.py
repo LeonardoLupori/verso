@@ -170,16 +170,12 @@ class JobController:
             )
             return
 
+        from verso.engine.drafts import reset_alignment
+
         self._window._reverse_axis_proposal = not self._window._reverse_axis_proposal
         self._window._align.set_reverse_axis(self._window._reverse_axis_proposal)
         for section in project.sections:
-            section.alignment.current_anchoring = [0.0] * 9
-            section.alignment.position_mm = None
-            section.alignment.status = AlignmentStatus.NOT_STARTED
-            section.alignment.source = None
-            section.alignment.stored_anchoring = None
-            section.warp.control_points.clear()
-            section.warp.status = AlignmentStatus.NOT_STARTED
+            reset_alignment(section)
 
         self._window._initialize_quicknii_anchorings(project.sections)
         self._window._sync_position_mm(project.sections)

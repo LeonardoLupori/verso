@@ -8,8 +8,8 @@ from verso.engine.drafts import (
     commit_alignment,
     commit_prep_draft,
     commit_warp,
+    reset_alignment,
     slice_mask_path_for,
-    wipe_alignment_for_flip,
 )
 from verso.engine.model.alignment import Alignment, AlignmentStatus, ControlPoint, WarpState
 from verso.engine.model.project import Preprocessing, Section
@@ -165,7 +165,7 @@ def test_commit_warp_promotes_proposal_plane():
     assert section.alignment.stored_anchoring == section.alignment.current_anchoring
 
 
-def test_wipe_alignment_for_flip_resets_everything():
+def test_reset_alignment_resets_everything():
     section = _section(
         alignment=Alignment(
             current_anchoring=[1.0] * 9,
@@ -175,7 +175,7 @@ def test_wipe_alignment_for_flip_resets_everything():
         ),
         warp=WarpState(control_points=[ControlPoint(0, 0, 0, 0)], status=AlignmentStatus.COMPLETE),
     )
-    wipe_alignment_for_flip(section)
+    reset_alignment(section)
     assert section.alignment.current_anchoring == [0.0] * 9
     assert section.alignment.stored_anchoring is None
     assert section.alignment.status == AlignmentStatus.NOT_STARTED

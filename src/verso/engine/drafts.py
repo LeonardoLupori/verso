@@ -5,7 +5,7 @@ This module holds the pure-engine side of the persistent unsaved-edits model:
 - :func:`commit_prep_draft` — write an unsaved slice mask to disk.
 - :func:`commit_alignment` / :func:`commit_warp` — promote in-memory align/warp
   edits to their saved state.
-- :func:`wipe_alignment_for_flip` — invalidate alignment + warp after a flip.
+- :func:`reset_alignment` — reset a section's alignment + warp to default.
 - mask path helpers shared by the GUI and the save path.
 
 None of this imports Qt, so it stays usable from scripts and tests.
@@ -28,11 +28,13 @@ def slice_mask_path_for(section: Section) -> Path:
     return masks_dir / f"{Path(section.original_path).stem}-slice-mask.png"
 
 
-def wipe_alignment_for_flip(section: Section) -> None:
-    """Reset a section's alignment + warp because its flip changed.
+def reset_alignment(section: Section) -> None:
+    """Reset a section's alignment + warp back to the un-registered default.
 
-    A horizontal/vertical flip changes the image coordinate frame, so any
-    existing registration no longer applies.
+    Clears both the live and saved planes and the dependent warp. Used wherever
+    a registration must be discarded: a flip changing the image coordinate frame
+    (so the old plane no longer applies), the Align view's Reset, and reversing
+    the proposal series before any alignment is stored.
     """
     section.alignment.current_anchoring = [0.0] * 9
     section.alignment.position_mm = None
@@ -101,6 +103,6 @@ __all__ = [
     "commit_alignment",
     "commit_prep_draft",
     "commit_warp",
+    "reset_alignment",
     "slice_mask_path_for",
-    "wipe_alignment_for_flip",
 ]

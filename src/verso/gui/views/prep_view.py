@@ -444,9 +444,9 @@ class PrepView(BaseCanvasView):
     def _wipe_alignment_for_flip(self) -> None:
         if self._section is None:
             return
-        from verso.engine.drafts import wipe_alignment_for_flip
+        from verso.engine.drafts import reset_alignment
 
-        wipe_alignment_for_flip(self._section)
+        reset_alignment(self._section)
 
     # ------------------------------------------------------------------
     # Display / mask state

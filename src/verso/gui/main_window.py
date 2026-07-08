@@ -791,7 +791,7 @@ class MainWindow(QMainWindow):
         at save time) means a re-alignment performed in the new orientation is
         preserved through the next save instead of being wiped by it.
         """
-        from verso.engine.drafts import wipe_alignment_for_flip
+        from verso.engine.drafts import reset_alignment
 
         has_alignment = (
             section.alignment.status != AlignmentStatus.NOT_STARTED
@@ -800,7 +800,7 @@ class MainWindow(QMainWindow):
         )
         if not has_alignment:
             return
-        wipe_alignment_for_flip(section)
+        reset_alignment(section)
         self._clear_alignment_view_state(section)
         self._seed_alignment_to_quicknii_default(section)
         self._overview.refresh_row(self._state.section_index)
@@ -1546,62 +1546,21 @@ class MainWindow(QMainWindow):
         return atlas.voxel_to_mm(center[self._interpolation_axis()])
 
     def _initialize_quicknii_anchorings(self, sections: list) -> None:
-        """Initialize empty section planes with QuickNII-compatible stretch."""
+        """Seed empty section planes with QuickNII defaults (engine does the math)."""
         atlas = self._state.atlas
         if atlas is None:
             return
         if not warn_if_missing_dimensions(self, sections):
             return
 
-        from verso.engine.anchoring import is_anchored, quicknii_series_anchorings
-        from verso.engine.model.alignment import AlignmentStatus
+        from verso.engine.anchoring import initialize_quicknii_anchorings
 
-        usable = [(section, *section.resolution_thumbnail_wh) for section in sections]
-        if not usable:
-            return
-
-        stored_anchorings = []
-        for section, _, _ in usable:
-            is_complete = section.alignment.status == AlignmentStatus.COMPLETE
-            stored = section.alignment.stored_anchoring
-            stored_anchorings.append(list(stored) if is_complete and is_anchored(stored) else None)
-        propagated = quicknii_series_anchorings(
-            image_sizes=[(w, h) for _, w, h in usable],
-            slice_indices=[section.slice_index for section, _, _ in usable],
+        initialize_quicknii_anchorings(
+            sections,
             atlas_shape=atlas.shape,
             interpolation_axis=self._interpolation_axis(),
-            stored_anchorings=stored_anchorings,
             reverse_axis=self._reverse_axis_proposal,
-            center_proposals=True,
         )
-
-        stored_indices = {
-            section.slice_index
-            for (section, _, _), anch in zip(usable, stored_anchorings, strict=False)
-            if anch is not None
-        }
-
-        for (section, _, _), anchoring, anch in zip(
-            usable, propagated, stored_anchorings, strict=False
-        ):
-            if anch is not None:
-                continue
-            # Always sync sections that share a slice index with a stored
-            # section — they are the same physical slice and must show the same
-            # image.
-            is_index_duplicate = section.slice_index in stored_indices
-            has_existing = section.alignment.is_anchored
-            if (
-                not is_index_duplicate
-                and has_existing
-                and section.alignment.status != AlignmentStatus.NOT_STARTED
-                and section.alignment.source != "quicknii_default"
-            ):
-                continue
-            section.alignment.current_anchoring = anchoring
-            if section.alignment.status == AlignmentStatus.NOT_STARTED:
-                section.alignment.status = AlignmentStatus.IN_PROGRESS
-            section.alignment.source = "quicknii_default"
 
     def _after_batch_clear(self) -> None:
         """Refresh dependent UI + write project after a batch wipe."""

@@ -390,16 +390,11 @@ def interpolate_anchorings(
     """
     from verso.engine.model.alignment import AlignmentStatus
 
-    usable = [(section, *section.resolution_thumbnail_wh) for section in sections]
-    if not usable:
-        return
-
-    order = sorted(range(len(usable)), key=lambda i: (usable[i][0].slice_index, i))
-    sorted_usable = [usable[i] for i in order]
-    slice_indices = [section.slice_index for section, _, _ in sorted_usable]
+    ordered = sorted(sections, key=lambda s: s.slice_index)
+    slice_indices = [section.slice_index for section in ordered]
 
     stored_indices: list[int] = []
-    for idx, (section, _, _) in enumerate(sorted_usable):
+    for idx, section in enumerate(ordered):
         if section.alignment.status == AlignmentStatus.COMPLETE and is_anchored(
             section.alignment.stored_anchoring
         ):
@@ -407,10 +402,10 @@ def interpolate_anchorings(
 
     stored_anchorings_for_series = [
         list(section.alignment.stored_anchoring) if idx in stored_indices else None
-        for idx, (section, _, _) in enumerate(sorted_usable)
+        for idx, section in enumerate(ordered)
     ]
     propagated_anchorings = quicknii_series_anchorings(
-        image_sizes=[(w, h) for _, w, h in sorted_usable],
+        image_sizes=[section.resolution_thumbnail_wh for section in ordered],
         slice_indices=slice_indices,
         atlas_shape=atlas_shape,
         interpolation_axis=interpolation_axis,
@@ -419,16 +414,78 @@ def interpolate_anchorings(
         center_proposals=center_proposals,
     )
 
-    for (section, _, _), anchoring in zip(sorted_usable, propagated_anchorings, strict=False):
+    for section, anchoring in zip(ordered, propagated_anchorings, strict=False):
         if section.alignment.status == AlignmentStatus.COMPLETE:
             continue
         section.alignment.current_anchoring = anchoring
         section.alignment.status = AlignmentStatus.IN_PROGRESS
-        # Mark these as auto-generated proposals (same tag the GUI's
-        # _initialize_quicknii_anchorings uses).  Without it, a later
+        # Mark these as auto-generated proposals (same tag
+        # initialize_quicknii_anchorings uses).  Without it, a later
         # re-interpolation treats these IN_PROGRESS sections as manual
         # edits and skips them, so a newly-saved keyframe's angle never
         # propagates here.
+        section.alignment.source = "quicknii_default"
+
+
+def initialize_quicknii_anchorings(
+    sections: list,
+    atlas_shape: tuple[int, int, int],
+    interpolation_axis: int = 1,
+    reverse_axis: bool = False,
+) -> None:
+    """Seed not-yet-aligned sections with QuickNII default proposals.
+
+    Like :func:`interpolate_anchorings`, but *preserves* existing manual work:
+    a section keeps its current plane unless it is still a ``quicknii_default``
+    proposal, has no plane at all, or shares a ``slice_index`` with a stored
+    (COMPLETE) section — a physical duplicate that must show the same plane.
+
+    Args:
+        sections: The project's sections (in series order).
+        atlas_shape: BrainGlobe annotation shape ``(AP, DV, LR)``.
+        interpolation_axis: QuickNII voxel axis the series runs along.
+        reverse_axis: Reverse the default proposal direction along that axis.
+    """
+    from verso.engine.model.alignment import AlignmentStatus
+
+    stored_anchorings = []
+    for section in sections:
+        is_complete = section.alignment.status == AlignmentStatus.COMPLETE
+        stored = section.alignment.stored_anchoring
+        stored_anchorings.append(list(stored) if is_complete and is_anchored(stored) else None)
+    propagated = quicknii_series_anchorings(
+        image_sizes=[section.resolution_thumbnail_wh for section in sections],
+        slice_indices=[section.slice_index for section in sections],
+        atlas_shape=atlas_shape,
+        interpolation_axis=interpolation_axis,
+        stored_anchorings=stored_anchorings,
+        reverse_axis=reverse_axis,
+        center_proposals=True,
+    )
+
+    stored_indices = {
+        section.slice_index
+        for section, anch in zip(sections, stored_anchorings, strict=False)
+        if anch is not None
+    }
+
+    for section, anchoring, anch in zip(sections, propagated, stored_anchorings, strict=False):
+        if anch is not None:
+            continue
+        # Keep a section's own manual edit; only (re)seed sections that are
+        # still a default proposal, have no plane, or must mirror a stored
+        # section that shares their slice index.
+        is_index_duplicate = section.slice_index in stored_indices
+        if (
+            not is_index_duplicate
+            and section.alignment.is_anchored
+            and section.alignment.status != AlignmentStatus.NOT_STARTED
+            and section.alignment.source != "quicknii_default"
+        ):
+            continue
+        section.alignment.current_anchoring = anchoring
+        if section.alignment.status == AlignmentStatus.NOT_STARTED:
+            section.alignment.status = AlignmentStatus.IN_PROGRESS
         section.alignment.source = "quicknii_default"
 
 
@@ -442,14 +499,8 @@ def reset_in_progress_to_default_proposals(
     """Clear editable suggestions and regenerate QuickNII-style default proposals."""
     from verso.engine.model.alignment import AlignmentStatus
 
-    usable: list[tuple[Section, int, int]] = [
-        (section, *section.resolution_thumbnail_wh) for section in sections
-    ]
-    if not usable:
-        return 0
-
     stored_anchorings = []
-    for section, _, _ in usable:
+    for section in sections:
         is_stored = not include_complete and section.alignment.status == AlignmentStatus.COMPLETE
         if not is_stored:
             stored_anchorings.append(None)
@@ -457,8 +508,8 @@ def reset_in_progress_to_default_proposals(
         stored = section.alignment.stored_anchoring
         stored_anchorings.append(list(stored) if is_anchored(stored) else None)
     propagated = quicknii_series_anchorings(
-        image_sizes=[(w, h) for _, w, h in usable],
-        slice_indices=[section.slice_index for section, _, _ in usable],
+        image_sizes=[section.resolution_thumbnail_wh for section in sections],
+        slice_indices=[section.slice_index for section in sections],
         atlas_shape=atlas_shape,
         interpolation_axis=interpolation_axis,
         stored_anchorings=stored_anchorings,
@@ -467,9 +518,7 @@ def reset_in_progress_to_default_proposals(
     )
 
     changed = 0
-    for (section, _, _), anchoring, stored in zip(
-        usable, propagated, stored_anchorings, strict=False
-    ):
+    for section, anchoring, stored in zip(sections, propagated, stored_anchorings, strict=False):
         if stored is not None:
             continue
         section.alignment.set_auto_proposal(anchoring, source="quicknii_default")
