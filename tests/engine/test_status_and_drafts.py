@@ -60,11 +60,15 @@ def test_prep_status_from_saved_state():
 
 
 def test_align_status_green_only_when_complete():
-    interp = _section(alignment=Alignment(anchoring=[1.0] * 9, status=AlignmentStatus.IN_PROGRESS))
+    interp = _section(
+        alignment=Alignment(current_anchoring=[1.0] * 9, status=AlignmentStatus.IN_PROGRESS)
+    )
     # An interpolated/proposed plane is not a user save → gray, not green.
     assert section_step_status(interp, "align", dirty=False) == AlignmentStatus.NOT_STARTED
 
-    saved = _section(alignment=Alignment(anchoring=[1.0] * 9, status=AlignmentStatus.COMPLETE))
+    saved = _section(
+        alignment=Alignment(current_anchoring=[1.0] * 9, status=AlignmentStatus.COMPLETE)
+    )
     assert section_step_status(saved, "align", dirty=False) == AlignmentStatus.COMPLETE
 
 
@@ -113,10 +117,10 @@ def test_status_color_covers_all_states():
 
 
 def test_commit_alignment_promotes_to_stored_complete():
-    section = _section(alignment=Alignment(anchoring=[1.0, 2.0] + [0.0] * 7))
+    section = _section(alignment=Alignment(current_anchoring=[1.0, 2.0] + [0.0] * 7))
     assert commit_alignment(section) is True
     assert section.alignment.status == AlignmentStatus.COMPLETE
-    assert section.alignment.stored_anchoring == section.alignment.anchoring
+    assert section.alignment.stored_anchoring == section.alignment.current_anchoring
 
 
 def test_commit_alignment_noop_on_zero_plane():
@@ -128,7 +132,9 @@ def test_commit_alignment_noop_on_zero_plane():
 def test_commit_warp_empty_resets_to_not_started():
     # A warp with no control points is not a finished warp: it resets to
     # NOT_STARTED even when a usable plane exists, matching the per-view save.
-    section = _section(alignment=Alignment(anchoring=[1.0] * 9, status=AlignmentStatus.COMPLETE))
+    section = _section(
+        alignment=Alignment(current_anchoring=[1.0] * 9, status=AlignmentStatus.COMPLETE)
+    )
     section.warp.status = AlignmentStatus.COMPLETE
     assert commit_warp(section) is False
     assert section.warp.status == AlignmentStatus.NOT_STARTED
@@ -147,7 +153,7 @@ def test_commit_warp_promotes_proposal_plane():
     # that plane to COMPLETE so the next save's interpolation can't overwrite it.
     section = _section(
         alignment=Alignment(
-            anchoring=[1.0, 2.0] + [0.0] * 7,
+            current_anchoring=[1.0, 2.0] + [0.0] * 7,
             status=AlignmentStatus.IN_PROGRESS,
             source="quicknii_default",
         ),
@@ -156,13 +162,13 @@ def test_commit_warp_promotes_proposal_plane():
     assert commit_warp(section) is True
     assert section.warp.status == AlignmentStatus.COMPLETE
     assert section.alignment.status == AlignmentStatus.COMPLETE
-    assert section.alignment.stored_anchoring == section.alignment.anchoring
+    assert section.alignment.stored_anchoring == section.alignment.current_anchoring
 
 
 def test_wipe_alignment_for_flip_resets_everything():
     section = _section(
         alignment=Alignment(
-            anchoring=[1.0] * 9,
+            current_anchoring=[1.0] * 9,
             stored_anchoring=[1.0] * 9,
             status=AlignmentStatus.COMPLETE,
             source="manual",
@@ -170,7 +176,7 @@ def test_wipe_alignment_for_flip_resets_everything():
         warp=WarpState(control_points=[ControlPoint(0, 0, 0, 0)], status=AlignmentStatus.COMPLETE),
     )
     wipe_alignment_for_flip(section)
-    assert section.alignment.anchoring == [0.0] * 9
+    assert section.alignment.current_anchoring == [0.0] * 9
     assert section.alignment.stored_anchoring is None
     assert section.alignment.status == AlignmentStatus.NOT_STARTED
     assert section.warp.control_points == []
@@ -214,7 +220,7 @@ def test_commit_prep_draft_preserves_alignment_through_flip(tmp_path):
         original_path=str(tmp_path / "img.png"),
         thumbnail_path=str(tmp_path / "thumbnails" / "img.tif"),
         alignment=Alignment(
-            anchoring=[1.0] * 9, stored_anchoring=[1.0] * 9, status=AlignmentStatus.COMPLETE
+            current_anchoring=[1.0] * 9, stored_anchoring=[1.0] * 9, status=AlignmentStatus.COMPLETE
         ),
     )
     section.preprocessing.flip_horizontal = True  # current differs from base (False)

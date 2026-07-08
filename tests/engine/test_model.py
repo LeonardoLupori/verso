@@ -23,14 +23,16 @@ def test_control_point_round_trip():
 
 def test_alignment_defaults():
     a = Alignment()
-    assert a.anchoring == [0.0] * 9
+    assert a.current_anchoring == [0.0] * 9
     assert a.status == AlignmentStatus.NOT_STARTED
 
 
 def test_alignment_round_trip():
+    # Only the saved plane persists (as "anchoring"); the live copy is seeded
+    # from it on load and position_mm is derived, so a round-trip is faithful
+    # only when current_anchoring == stored_anchoring (i.e. a committed plane).
     a = Alignment(
-        anchoring=[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0],
-        position_mm=-1.5,
+        current_anchoring=[9.0, 8.0, 7.0, 6.0, 5.0, 4.0, 3.0, 2.0, 1.0],
         status=AlignmentStatus.COMPLETE,
         source="deepslice",
         stored_anchoring=[9.0, 8.0, 7.0, 6.0, 5.0, 4.0, 3.0, 2.0, 1.0],
@@ -38,27 +40,21 @@ def test_alignment_round_trip():
     assert Alignment.from_dict(a.to_dict()) == a
 
 
-def test_alignment_loads_legacy_dict_without_metadata():
-    a = Alignment.from_dict(
-        {
-            "anchoring": [1.0] * 9,
-            "ap_position_mm": 2.0,
-            "status": "in_progress",
-        }
-    )
-    assert a.position_mm == 2.0
-    assert a.source is None
+def test_from_dict_without_anchoring_key_has_no_plane():
+    a = Alignment.from_dict({"status": "in_progress"})
+    assert a.current_anchoring == [0.0] * 9
     assert a.stored_anchoring is None
+    assert a.position_mm is None
+    assert a.source is None
 
 
-def test_alignment_writes_position_mm_not_ap_position_mm():
+def test_position_mm_is_not_persisted():
     a = Alignment(position_mm=-1.5, status=AlignmentStatus.IN_PROGRESS)
-    data = a.to_dict()
-    assert "position_mm" in data
-    assert "ap_position_mm" not in data
+    assert "position_mm" not in a.to_dict()
+    assert Alignment.from_dict(a.to_dict()).position_mm is None
 
 
-def test_alignment_loads_legacy_complete_as_stored():
+def test_from_dict_anchoring_key_seeds_stored_and_live():
     a = Alignment.from_dict(
         {
             "anchoring": [1.0] * 9,
@@ -66,6 +62,7 @@ def test_alignment_loads_legacy_complete_as_stored():
         }
     )
     assert a.stored_anchoring == [1.0] * 9
+    assert a.current_anchoring == [1.0] * 9
 
 
 # ---------------------------------------------------------------------------
@@ -132,7 +129,7 @@ def _make_section() -> Section:
         thumbnail_path="thumbnails/s001.ome.tif",
         preprocessing=Preprocessing(flip_horizontal=True),
         alignment=Alignment(
-            anchoring=[0.0, 160.0, 228.0, 456.0, 0.0, 0.0, 0.0, 320.0, 0.0],
+            current_anchoring=[0.0, 160.0, 228.0, 456.0, 0.0, 0.0, 0.0, 320.0, 0.0],
             status=AlignmentStatus.COMPLETE,
         ),
         warp=WarpState(

@@ -142,7 +142,7 @@ def test_load_quicknii_anchoring(tmp_path: Path):
     p.write_text(json.dumps(QUICKNII_JSON))
 
     project = load_quicknii(p)
-    assert project.sections[0].alignment.anchoring == _LOADED_ANCHORING_0
+    assert project.sections[0].alignment.current_anchoring == _LOADED_ANCHORING_0
 
 
 def test_load_quicknii_atlas_name(tmp_path: Path):
@@ -230,7 +230,9 @@ def test_quicknii_save_load_round_trip(tmp_path: Path):
     assert len(reloaded.sections) == len(project.sections)
     for orig, rel in zip(project.sections, reloaded.sections, strict=True):
         # Both loaded in BrainGlobe convention — must be identical
-        for a, b in zip(orig.alignment.anchoring, rel.alignment.anchoring, strict=True):
+        for a, b in zip(
+            orig.alignment.current_anchoring, rel.alignment.current_anchoring, strict=True
+        ):
             assert abs(a - b) < 1e-3
         assert rel.slice_index == orig.slice_index
 
@@ -319,7 +321,7 @@ def test_save_quicknii_xml_infers_atlas_shape(tmp_path: Path):
                 original_path="a.tif",
                 thumbnail_path="",
                 alignment=Alignment(
-                    anchoring=[10.0, 100.0, 40.0, 20.0, 3.0, 4.0, 5.0, 6.0, 7.0],
+                    current_anchoring=[10.0, 100.0, 40.0, 20.0, 3.0, 4.0, 5.0, 6.0, 7.0],
                     status=AlignmentStatus.COMPLETE,
                 ),
             )
@@ -390,7 +392,7 @@ def test_sagittal_export_independent_of_slicing_direction(tmp_path: Path):
                     original_path="a.tif",
                     thumbnail_path="",
                     alignment=Alignment(
-                        anchoring=list(stored),
+                        current_anchoring=list(stored),
                         status=AlignmentStatus.COMPLETE,
                     ),
                 )

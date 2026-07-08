@@ -269,14 +269,14 @@ def _orient_series_to_convention(
     )
     if len(good) < 2:
         return
-    ap_centers = [float(anchoring_center(s.alignment.anchoring)[ap_axis]) for s in good]
+    ap_centers = [float(anchoring_center(s.alignment.current_anchoring)[ap_axis]) for s in good]
     # VERSO convention: AP decreases with slice_index unless reverse_axis.
     ascending = ap_centers[-1] > ap_centers[0]
     if ascending == bool(reverse_axis):
         return  # already matches the built-in proposal direction
     for section, ap in zip(good, reversed(ap_centers), strict=False):
-        flipped = set_center_position_along_axis(section.alignment.anchoring, ap, ap_axis)
-        section.alignment.anchoring = flipped
+        flipped = set_center_position_along_axis(section.alignment.current_anchoring, ap, ap_axis)
+        section.alignment.current_anchoring = flipped
 
 
 def _interpolate_bad_sections(
@@ -298,7 +298,7 @@ def _interpolate_bad_sections(
         return set()
 
     stored = [
-        section.alignment.anchoring if section.id in applied_section_ids else None
+        section.alignment.current_anchoring if section.id in applied_section_ids else None
         for section, _, _ in usable
     ]
     if not any(a is not None for a in stored):

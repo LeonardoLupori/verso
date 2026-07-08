@@ -63,7 +63,12 @@ function snap = iBuildSnapshot(s)
             "file is not self-contained for coordinate math.", string(s.id));
     end
 
-    [o, u, v] = anchoringToVectors(s.alignment.anchoring);
+    if isfield(s.alignment, "anchoring")
+        anchoring = s.alignment.anchoring;
+    else
+        anchoring = zeros(1, 9);
+    end
+    [o, u, v] = anchoringToVectors(anchoring);
 
     cps = asCellOfStructs(s.warp.control_points);
     n = numel(cps);

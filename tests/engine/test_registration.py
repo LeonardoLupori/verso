@@ -50,7 +50,7 @@ def _section(
         resolution_original_wh=full,
         resolution_thumbnail_wh=work,
         preprocessing=Preprocessing(flip_horizontal=flip_h, flip_vertical=flip_v),
-        alignment=Alignment(anchoring=_anchoring(position, axis)),
+        alignment=Alignment(current_anchoring=_anchoring(position, axis)),
         warp=WarpState(control_points=cps or []),
     )
 
@@ -181,7 +181,7 @@ def test_export_parity_with_build_canonical_remap():
     map_x, map_y, out_w, out_h = build_canonical_remap(
         sec, atlas, axis=1, scale=1.0, work_w=48, work_h=32
     )
-    position = float(anchoring_center(sec.alignment.anchoring)[1])
+    position = float(anchoring_center(sec.alignment.current_anchoring)[1])
     canonical = atlas.canonical_plane_anchoring(position, 1)
     grid = make_atlas_sample_grid(canonical, out_w, out_h)  # (H, W, 3)
 

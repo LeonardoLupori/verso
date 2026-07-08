@@ -169,7 +169,7 @@ class VersoRegistration:
                 f"Section {section.id!r} has unpopulated pixel dimensions; the "
                 f"project file is not self-contained for coordinate math."
             )
-        o, u, v = anchoring_to_vectors(section.alignment.anchoring)
+        o, u, v = anchoring_to_vectors(section.alignment.current_anchoring)
         cps = section.warp.control_points
         if cps:
             src_px = np.array([[cp.src_x, cp.src_y] for cp in cps], dtype=np.float64)

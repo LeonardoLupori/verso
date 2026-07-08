@@ -34,7 +34,7 @@ def wipe_alignment_for_flip(section: Section) -> None:
     A horizontal/vertical flip changes the image coordinate frame, so any
     existing registration no longer applies.
     """
-    section.alignment.anchoring = [0.0] * 9
+    section.alignment.current_anchoring = [0.0] * 9
     section.alignment.position_mm = None
     section.alignment.status = AlignmentStatus.NOT_STARTED
     section.alignment.source = None
@@ -69,7 +69,7 @@ def commit_alignment(section: Section) -> bool:
     """
     if not section.alignment.is_anchored:
         return False
-    section.alignment.stored_anchoring = list(section.alignment.anchoring)
+    section.alignment.stored_anchoring = list(section.alignment.current_anchoring)
     section.alignment.status = AlignmentStatus.COMPLETE
     return True
 

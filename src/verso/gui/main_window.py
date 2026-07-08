@@ -1535,7 +1535,7 @@ class MainWindow(QMainWindow):
         for section in sections:
             if section.alignment.is_anchored:
                 section.alignment.position_mm = self._anchoring_position_mm(
-                    section.alignment.anchoring
+                    section.alignment.current_anchoring
                 )
 
     def _anchoring_position_mm(self, anchoring: list[float]) -> float:
@@ -1598,7 +1598,7 @@ class MainWindow(QMainWindow):
                 and section.alignment.source != "quicknii_default"
             ):
                 continue
-            section.alignment.anchoring = anchoring
+            section.alignment.current_anchoring = anchoring
             if section.alignment.status == AlignmentStatus.NOT_STARTED:
                 section.alignment.status = AlignmentStatus.IN_PROGRESS
             section.alignment.source = "quicknii_default"

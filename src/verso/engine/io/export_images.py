@@ -226,7 +226,7 @@ def render_overlay_rgba(
     Returns:
         uint8 ``(out_h, out_w, 4)`` RGBA. Background pixels have alpha 0.
     """
-    anchoring = section.alignment.anchoring
+    anchoring = section.alignment.current_anchoring
     if not section.alignment.is_anchored:
         return np.zeros((out_h, out_w, 4), dtype=np.uint8)
 
@@ -315,7 +315,7 @@ def _output_long_side(section: Section, scale: float) -> int:
     magnitudes give the voxel count spanned along the plane. Falls back to a
     fixed default when the section has no usable anchoring.
     """
-    anchoring = section.alignment.anchoring
+    anchoring = section.alignment.current_anchoring
     if not section.alignment.is_anchored:
         return _NO_ANCHOR_LONG_SIDE
     u = np.asarray(anchoring[3:6], dtype=np.float64)

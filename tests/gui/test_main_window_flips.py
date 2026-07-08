@@ -58,7 +58,7 @@ def _stored_anchoring_section() -> Section:
         original_path="s001.png",
         thumbnail_path="s001.png",
         alignment=Alignment(
-            anchoring=list(anchoring),
+            current_anchoring=list(anchoring),
             stored_anchoring=list(anchoring),
             status=AlignmentStatus.COMPLETE,
             source="manual",
@@ -73,7 +73,7 @@ def test_flip_toggle_invalidates_alignment_and_warp():
 
     window._invalidate_alignment_for_flip(section)
 
-    assert section.alignment.anchoring == [0.0] * 9
+    assert section.alignment.current_anchoring == [0.0] * 9
     assert section.alignment.status == AlignmentStatus.NOT_STARTED
     assert section.alignment.stored_anchoring is None
     assert section.alignment.source is None
@@ -89,7 +89,7 @@ def test_flip_toggle_noop_when_nothing_aligned():
     window._invalidate_alignment_for_flip(section)
 
     assert section.alignment.status == AlignmentStatus.NOT_STARTED
-    assert section.alignment.anchoring == [0.0] * 9
+    assert section.alignment.current_anchoring == [0.0] * 9
 
 
 def _project_with_dialog_enabled():
@@ -110,7 +110,7 @@ def test_confirm_flip_skips_dialog_for_auto_interpolated_alignment(monkeypatch):
         original_path="s.png",
         thumbnail_path="s.png",
         alignment=Alignment(
-            anchoring=[10.0, 20.0, 30.0, 100.0, 12.0, 0.0, 0.0, 0.0, 80.0],
+            current_anchoring=[10.0, 20.0, 30.0, 100.0, 12.0, 0.0, 0.0, 0.0, 80.0],
             status=AlignmentStatus.IN_PROGRESS,
             source="quicknii_default",
         ),

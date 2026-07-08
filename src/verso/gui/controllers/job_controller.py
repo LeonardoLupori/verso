@@ -173,7 +173,7 @@ class JobController:
         self._window._reverse_axis_proposal = not self._window._reverse_axis_proposal
         self._window._align.set_reverse_axis(self._window._reverse_axis_proposal)
         for section in project.sections:
-            section.alignment.anchoring = [0.0] * 9
+            section.alignment.current_anchoring = [0.0] * 9
             section.alignment.position_mm = None
             section.alignment.status = AlignmentStatus.NOT_STARTED
             section.alignment.source = None

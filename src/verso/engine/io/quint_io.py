@@ -209,8 +209,10 @@ def load_quicknii(path: Path, atlas_name: str = "allen_mouse_25um") -> Project:
         if bg_shape is not None and any(anchoring):
             anchoring = _to_quicknii_convention(anchoring, bg_shape)
         status = AlignmentStatus.COMPLETE if any(anchoring) else AlignmentStatus.NOT_STARTED
+        # A COMPLETE import is a saved plane; __post_init__ mirrors it into
+        # stored_anchoring (the persisted source of truth).
         alignment = Alignment(
-            anchoring=anchoring,
+            current_anchoring=anchoring,
             status=status,
         )
         section = Section(

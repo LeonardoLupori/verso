@@ -433,7 +433,7 @@ def test_interpolate_anchorings_uses_quicknii_decomposed_space(tmp_path):
             original_path=str(paths[0]),
             thumbnail_path=str(paths[0]),
             resolution_thumbnail_wh=(1000, 800),
-            alignment=Alignment(anchoring=stored[0], status=AlignmentStatus.COMPLETE),
+            alignment=Alignment(current_anchoring=stored[0], status=AlignmentStatus.COMPLETE),
         ),
         Section(
             id="s002",
@@ -448,7 +448,7 @@ def test_interpolate_anchorings_uses_quicknii_decomposed_space(tmp_path):
             original_path=str(paths[2]),
             thumbnail_path=str(paths[2]),
             resolution_thumbnail_wh=(1000, 800),
-            alignment=Alignment(anchoring=stored[2], status=AlignmentStatus.COMPLETE),
+            alignment=Alignment(current_anchoring=stored[2], status=AlignmentStatus.COMPLETE),
         ),
     ]
 
@@ -461,7 +461,7 @@ def test_interpolate_anchorings_uses_quicknii_decomposed_space(tmp_path):
         interpolation_axis=1,
         stored_anchorings=[stored[0], None, stored[2]],
     )
-    np.testing.assert_allclose(sections[1].alignment.anchoring, expected[1])
+    np.testing.assert_allclose(sections[1].alignment.current_anchoring, expected[1])
     assert sections[1].alignment.status == AlignmentStatus.IN_PROGRESS
 
 
@@ -482,7 +482,7 @@ def test_interpolate_anchorings_with_one_keyframe_matches_quicknii(tmp_path):
             thumbnail_path=str(paths[0]),
             resolution_thumbnail_wh=(1000, 800),
             alignment=Alignment(
-                anchoring=SAMPLE_ANCHORING,
+                current_anchoring=SAMPLE_ANCHORING,
                 status=AlignmentStatus.COMPLETE,
             ),
         ),
@@ -504,7 +504,7 @@ def test_interpolate_anchorings_with_one_keyframe_matches_quicknii(tmp_path):
         interpolation_axis=1,
         stored_anchorings=[SAMPLE_ANCHORING, None],
     )
-    np.testing.assert_allclose(sections[1].alignment.anchoring, expected[1])
+    np.testing.assert_allclose(sections[1].alignment.current_anchoring, expected[1])
     assert sections[1].alignment.status == AlignmentStatus.IN_PROGRESS
 
 
@@ -545,7 +545,7 @@ def test_interpolate_anchorings_handles_horizontally_flipped_stored_keyframe(
             original_path=str(paths[0]),
             thumbnail_path=str(paths[0]),
             resolution_thumbnail_wh=(1000, 800),
-            alignment=Alignment(anchoring=left, status=AlignmentStatus.COMPLETE),
+            alignment=Alignment(current_anchoring=left, status=AlignmentStatus.COMPLETE),
         ),
         Section(
             id="s002",
@@ -562,7 +562,7 @@ def test_interpolate_anchorings_handles_horizontally_flipped_stored_keyframe(
             resolution_thumbnail_wh=(1000, 800),
             preprocessing=Preprocessing(flip_horizontal=True),
             alignment=Alignment(
-                anchoring=right,
+                current_anchoring=right,
                 stored_anchoring=right,
                 status=AlignmentStatus.COMPLETE,
             ),
@@ -571,7 +571,7 @@ def test_interpolate_anchorings_handles_horizontally_flipped_stored_keyframe(
 
     interpolate_anchorings(sections, atlas_shape=atlas_shape)
 
-    middle = quicknii_unpack_anchoring(sections[1].alignment.anchoring, 1000, 800)
+    middle = quicknii_unpack_anchoring(sections[1].alignment.current_anchoring, 1000, 800)
     np.testing.assert_allclose(middle[4], math.sin(angle), atol=1e-9)
     np.testing.assert_allclose(middle[1], 300.0, atol=1e-9)
     assert sections[1].alignment.status == AlignmentStatus.IN_PROGRESS
@@ -617,7 +617,7 @@ def test_interpolate_anchorings_duplicate_serial_strips_inplane_rotation_keeps_t
             thumbnail_path=str(paths[1]),
             resolution_thumbnail_wh=(1000, 800),
             alignment=Alignment(
-                anchoring=stored_anchoring,
+                current_anchoring=stored_anchoring,
                 status=AlignmentStatus.COMPLETE,
             ),
         ),
@@ -633,11 +633,11 @@ def test_interpolate_anchorings_duplicate_serial_strips_inplane_rotation_keeps_t
     interpolate_anchorings(sections, atlas_shape=atlas_shape)
 
     duplicate_unpacked = quicknii_unpack_anchoring(
-        sections[0].alignment.anchoring,
+        sections[0].alignment.current_anchoring,
         *image_sizes[0],
     )
     stored_unpacked = quicknii_unpack_anchoring(
-        sections[1].alignment.anchoring,
+        sections[1].alignment.current_anchoring,
         *image_sizes[1],
     )
     # AP position must match the stored section.
@@ -779,7 +779,7 @@ def test_interpolate_anchorings_sagittal_axis_strips_in_plane_rotation(tmp_path)
             original_path=str(paths[0]),
             thumbnail_path=str(paths[0]),
             resolution_thumbnail_wh=(1000, 800),
-            alignment=Alignment(anchoring=left, status=AlignmentStatus.COMPLETE),
+            alignment=Alignment(current_anchoring=left, status=AlignmentStatus.COMPLETE),
         ),
         Section(
             id="s002",
@@ -794,13 +794,13 @@ def test_interpolate_anchorings_sagittal_axis_strips_in_plane_rotation(tmp_path)
             original_path=str(paths[2]),
             thumbnail_path=str(paths[2]),
             resolution_thumbnail_wh=(1000, 800),
-            alignment=Alignment(anchoring=right, status=AlignmentStatus.COMPLETE),
+            alignment=Alignment(current_anchoring=right, status=AlignmentStatus.COMPLETE),
         ),
     ]
 
     interpolate_anchorings(sections, atlas_shape=atlas_shape, interpolation_axis=axis)
 
-    mid_unpacked = quicknii_unpack_anchoring(sections[1].alignment.anchoring, 1000, 800)
+    mid_unpacked = quicknii_unpack_anchoring(sections[1].alignment.current_anchoring, 1000, 800)
     # The in-plane components in u and v that aren't the slicing axis must be
     # zero (rotation around the slicing axis stripped); the slicing-axis
     # components (the tilt) can be non-zero. For axis=0, in-plane axes are AP=1

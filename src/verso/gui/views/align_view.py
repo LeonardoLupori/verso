@@ -203,7 +203,7 @@ class AlignView(BaseCanvasView):
             return
         self._end_pan_run()
         self._push_undo()
-        section.alignment.anchoring = new_anchoring
+        section.alignment.current_anchoring = new_anchoring
         self._sync_position_from_anchoring(new_anchoring)
         self._panel.update_overlay()
         self._set_dirty(True)
@@ -226,7 +226,7 @@ class AlignView(BaseCanvasView):
         raw = self._panel.raw_image
         if section is None or raw is None:
             return
-        anchoring = section.alignment.anchoring
+        anchoring = section.alignment.current_anchoring
         if not section.alignment.is_anchored:
             return
         # Coalesce the whole drag gesture into a single undo step: snapshot
@@ -248,7 +248,7 @@ class AlignView(BaseCanvasView):
         v = np.array(anchoring[6:9])
         new_o = o - (dx / w_bg) * u - (dy / h_bg) * v
         new_anchoring = new_o.tolist() + anchoring[3:]
-        section.alignment.anchoring = new_anchoring
+        section.alignment.current_anchoring = new_anchoring
         self._sync_position_from_anchoring(new_anchoring)
         self._panel.update_overlay()
         self._set_dirty(True)
@@ -262,7 +262,7 @@ class AlignView(BaseCanvasView):
         section = self._panel.section
         if section is None or self._panel.raw_image is None:
             return
-        anchoring = section.alignment.anchoring
+        anchoring = section.alignment.current_anchoring
         if not section.alignment.is_anchored:
             return
 
@@ -290,7 +290,7 @@ class AlignView(BaseCanvasView):
         self._pan_coalesce_timer.start()
 
         new_anchoring = rotate_anchoring(anchoring, angle_rad)
-        section.alignment.anchoring = new_anchoring
+        section.alignment.current_anchoring = new_anchoring
         self._sync_position_from_anchoring(new_anchoring)
         self._panel.update_overlay()
         self._set_dirty(True)
@@ -304,7 +304,7 @@ class AlignView(BaseCanvasView):
         section = self._panel.section
         if section is None or self._panel.raw_image is None:
             return
-        anchoring = section.alignment.anchoring
+        anchoring = section.alignment.current_anchoring
         if not section.alignment.is_anchored:
             return
         # Coalesce the whole grip drag into a single undo step, mirroring pan/rotate.
@@ -319,7 +319,7 @@ class AlignView(BaseCanvasView):
         from verso.engine.anchoring import scale_anchoring
 
         new_anchoring = scale_anchoring(anchoring, scale_s, scale_t)
-        section.alignment.anchoring = new_anchoring
+        section.alignment.current_anchoring = new_anchoring
         self._sync_position_from_anchoring(new_anchoring)
         self._panel.update_overlay()
         self._set_dirty(True)
@@ -333,7 +333,7 @@ class AlignView(BaseCanvasView):
         section = self._panel.section
         if section is None or self._panel.raw_image is None:
             return
-        anchoring = section.alignment.anchoring
+        anchoring = section.alignment.current_anchoring
         if not section.alignment.is_anchored:
             return
         self._end_pan_run()
@@ -341,7 +341,7 @@ class AlignView(BaseCanvasView):
         from verso.engine.anchoring import scale_anchoring
 
         new_anchoring = scale_anchoring(anchoring, scale_u, scale_v)
-        section.alignment.anchoring = new_anchoring
+        section.alignment.current_anchoring = new_anchoring
         self._sync_position_from_anchoring(new_anchoring)
         self._panel.update_overlay()
         self._set_dirty(True)
@@ -365,17 +365,17 @@ class AlignView(BaseCanvasView):
         return is_anchored(section.alignment.stored_anchoring)
 
     def _capture_edit(self) -> list[float]:
-        return list(self._panel.section.alignment.anchoring)
+        return list(self._panel.section.alignment.current_anchoring)
 
     def _restore(self, snapshot: list[float]) -> None:
         section = self._panel.section
-        section.alignment.anchoring = snapshot
+        section.alignment.current_anchoring = snapshot
         self._sync_position_from_anchoring(snapshot)
         self._panel.update_overlay()
 
     def _matches_saved(self, snapshot: list[float]) -> bool:
         baseline = self._saved_state()
-        base_anchoring = baseline.anchoring if baseline is not None else None
+        base_anchoring = baseline.current_anchoring if baseline is not None else None
         return snapshot == base_anchoring
 
     def _saved_copy(self) -> Alignment:
@@ -394,24 +394,24 @@ class AlignView(BaseCanvasView):
             if raw is None:
                 return False
             h, w = raw.shape[:2]
-            section.alignment.anchoring = atlas.default_anchoring(
+            section.alignment.current_anchoring = atlas.default_anchoring(
                 axis=self._interpolation_axis,
                 aspect_ratio=w / h,
             )
-            self._sync_position_from_anchoring(section.alignment.anchoring)
+            self._sync_position_from_anchoring(section.alignment.current_anchoring)
         commit_alignment(section)
         return True
 
     def _apply_saved(self, baseline: Alignment) -> None:
         section = self._panel.section
         section.alignment = copy.deepcopy(baseline)
-        self._sync_position_from_anchoring(section.alignment.anchoring)
+        self._sync_position_from_anchoring(section.alignment.current_anchoring)
         self._panel.update_overlay()
 
     def _wipe(self) -> None:
         """Wipe the alignment (and the slice's warp, which depended on it)."""
         section = self._panel.section
-        section.alignment.anchoring = [0.0] * 9
+        section.alignment.current_anchoring = [0.0] * 9
         section.alignment.position_mm = None
         section.alignment.status = AlignmentStatus.NOT_STARTED
         section.alignment.source = None
@@ -423,13 +423,13 @@ class AlignView(BaseCanvasView):
         self._end_pan_run()
 
     def _after_undo_restore(self) -> None:
-        self.anchoring_changed.emit(list(self._panel.section.alignment.anchoring))
+        self.anchoring_changed.emit(list(self._panel.section.alignment.current_anchoring))
 
     def _after_save(self) -> None:
         self.alignments_updated.emit()
 
     def _after_revert(self) -> None:
-        self.anchoring_changed.emit(list(self._panel.section.alignment.anchoring))
+        self.anchoring_changed.emit(list(self._panel.section.alignment.current_anchoring))
         self.alignments_updated.emit()
 
     def _after_clear(self) -> None:

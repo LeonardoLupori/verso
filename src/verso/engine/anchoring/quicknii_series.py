@@ -422,7 +422,7 @@ def interpolate_anchorings(
     for (section, _, _), anchoring in zip(sorted_usable, propagated_anchorings, strict=False):
         if section.alignment.status == AlignmentStatus.COMPLETE:
             continue
-        section.alignment.anchoring = anchoring
+        section.alignment.current_anchoring = anchoring
         section.alignment.status = AlignmentStatus.IN_PROGRESS
         # Mark these as auto-generated proposals (same tag the GUI's
         # _initialize_quicknii_anchorings uses).  Without it, a later

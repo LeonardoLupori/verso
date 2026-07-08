@@ -124,24 +124,27 @@ and the `AtlasVolume`. This is best-effort population of unset fields, not versi
 ```json
 {
   "anchoring": [ox, oy, oz, ux, uy, uz, vx, vy, vz],
-  "position_mm": -1.2,
   "status": "complete",
-  "source": "manual",
-  "stored_anchoring": [...],
-  "proposal_anchoring": [...],
-  "proposal_confidence": 0.92,
-  "proposal_run_id": "20260214-deepslice"
+  "source": "manual"
 }
 ```
 
-| Field | Notes |
-|---|---|
-| `anchoring` | Current 9-float plane (see "Anchoring format" below). Mutated live by the navigator; only `stored_anchoring` is the canonical "saved" plane. |
-| `position_mm` | Section position in mm along the project's `interpolation_axis`. Derived from `anchoring` via the atlas; refreshed on every navigator move. Legacy `ap_position_mm` keys are read on load and rewritten as `position_mm` on next save. |
-| `status` | `not_started`, `in_progress`, or `complete`. `complete` ⇔ user clicked Save in Align. |
-| `source` | Origin of the current plane: `quicknii_default`, `deepslice`, `manual`, or `null`. |
-| `stored_anchoring` | The plane the user explicitly saved. Set by `AlignView.save()`. |
-| `proposal_anchoring` / `proposal_confidence` / `proposal_run_id` | Last automated proposal (e.g. from DeepSlice) shown alongside the user's edits. |
+The **saved plane is the only plane persisted**, under the key `"anchoring"`.
+It is emitted only when a saved plane exists (i.e. `stored_anchoring` is set —
+`complete` sections). In memory the `Alignment` dataclass holds two planes:
+
+| Field (in memory) | Persisted? | Notes |
+|---|---|---|
+| `stored_anchoring` | **yes**, as JSON `"anchoring"` | The plane the user explicitly saved (set on commit by `AlignView.save()`). The single source of truth; the only value written to disk, and what export/interpolation read. |
+| `current_anchoring` | no | The live working copy, mutated by the navigator during editing. Seeded from `stored_anchoring` on load; transient. |
+| `position_mm` | no | Section position in mm along the project's `interpolation_axis`. A derived display cache, recomputed from the plane via the atlas on load; never persisted. |
+| `status` | yes | `not_started`, `in_progress`, or `complete`. `complete` ⇔ user clicked Save in Align. |
+| `source` | yes (when set) | Origin of the current plane: `quicknii_default`, `deepslice`, `manual`, or `null`. |
+
+`in_progress` proposal planes are **not** persisted — they are regenerated on
+load by `interpolate_anchorings`/`_initialize_quicknii_anchorings` from the saved
+keyframes (GUI), so a section without a saved plane carries no `"anchoring"` on
+disk.
 
 ### `WarpState`
 
@@ -219,7 +222,7 @@ All model types are `@dataclass`es in `engine/model/`:
 | `ChannelSpec` | `model/project.py` | Per-project channel display config. |
 | `Section` | `model/project.py` | One histological section. |
 | `Preprocessing` | `model/project.py` | Flips + slice-mask path. |
-| `Alignment` | `model/alignment.py` | 9-float anchoring + status + proposal/stored variants. |
+| `Alignment` | `model/alignment.py` | Saved + live 9-float planes (`stored_anchoring` / `current_anchoring`) + status. Only the saved plane persists. |
 | `WarpState` | `model/alignment.py` | List of `ControlPoint`s + status. |
 | `ControlPoint` | `model/alignment.py` | `(src_x, src_y, dst_x, dst_y)` in working-resolution pixels. |
 

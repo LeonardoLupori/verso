@@ -59,7 +59,7 @@ class ControlPoint:
 class Alignment:
     """Affine registration of a section to the atlas.
 
-    anchoring: 9-element list [ox, oy, oz, ux, uy, uz, vx, vy, vz]
+    A plane is a 9-element anchoring vector [ox, oy, oz, ux, uy, uz, vx, vy, vz]:
         o = origin corner of the section plane in atlas voxel space
         u = right direction vector (along section width, unnormalized)
         v = down direction vector (along section height, unnormalized)
@@ -68,9 +68,18 @@ class Alignment:
         atlas_voxel = o + s·u + t·v
 
     This matches the QuickNII anchoring format exactly.
+
+    Two planes are held:
+
+    - ``stored_anchoring`` — the **saved** plane; the single source of truth and
+      the only one persisted (as ``"anchoring"`` in JSON). Set on commit.
+    - ``current_anchoring`` — the **live** working copy, mutated during editing
+      and seeded from ``stored_anchoring`` on load. Transient; never persisted.
+
+    ``position_mm`` is a derived display cache (not persisted).
     """
 
-    anchoring: list[float] = field(default_factory=lambda: [0.0] * 9)
+    current_anchoring: list[float] = field(default_factory=lambda: [0.0] * 9)
     position_mm: float | None = None
     status: AlignmentStatus = AlignmentStatus.NOT_STARTED
     source: str | None = None
@@ -80,20 +89,20 @@ class Alignment:
         if (
             self.status == AlignmentStatus.COMPLETE
             and self.stored_anchoring is None
-            and is_anchored(self.anchoring)
+            and is_anchored(self.current_anchoring)
         ):
-            self.stored_anchoring = list(self.anchoring)
+            self.stored_anchoring = list(self.current_anchoring)
 
     @property
     def is_anchored(self) -> bool:
-        """True when the live anchoring is a real (non-zero) plane.
+        """True when the live working plane is a real (non-zero) plane.
 
-        Checks the *live* ``anchoring`` on purpose — this answers "does the
-        section have any plane at all, saved or in-progress" (used for UI
-        enablement and ``has_alignment`` checks). Export/interpolation read
-        ``stored_anchoring`` instead, so only saved planes reach them.
+        Checks ``current_anchoring`` on purpose — this answers "does the section
+        have any plane at all, saved or in-progress" (used for UI enablement and
+        ``has_alignment`` checks). Export/interpolation read ``stored_anchoring``
+        instead, so only saved planes reach them.
         """
-        return is_anchored(self.anchoring)
+        return is_anchored(self.current_anchoring)
 
     def set_auto_proposal(self, anchoring: list[float], *, source: str) -> None:
         """Reset this alignment to an automatically-generated IN_PROGRESS proposal.
@@ -104,36 +113,37 @@ class Alignment:
         moved.
 
         Args:
-            anchoring: The propagated 9-value anchoring to adopt as live.
+            anchoring: The propagated 9-value anchoring to adopt as the live plane.
             source: Provenance tag for the guess (e.g. ``"deepslice"``,
                 ``"quicknii_default"``).
         """
-        self.anchoring = anchoring
+        self.current_anchoring = anchoring
         self.position_mm = None
         self.status = AlignmentStatus.IN_PROGRESS
         self.source = source
         self.stored_anchoring = None
 
     def to_dict(self) -> dict[str, Any]:
-        data = {
-            "anchoring": self.anchoring,
-            "position_mm": self.position_mm,
-            "status": self.status.value,
-        }
+        # Only the saved plane is persisted, under the canonical key "anchoring".
+        # The live working copy and position_mm are derived, so they are dropped.
+        data: dict[str, Any] = {"status": self.status.value}
         if self.source is not None:
             data["source"] = self.source
         if self.stored_anchoring is not None:
-            data["stored_anchoring"] = self.stored_anchoring
+            data["anchoring"] = self.stored_anchoring
         return data
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Alignment:
+        # "anchoring" is the single persisted (saved) plane; the live working
+        # copy is seeded from it and position_mm is recomputed, so neither is
+        # read from disk.
+        stored = d.get("anchoring")
         return cls(
-            anchoring=d.get("anchoring", [0.0] * 9),
-            position_mm=d.get("position_mm", d.get("ap_position_mm")),
+            current_anchoring=list(stored) if stored is not None else [0.0] * 9,
             status=AlignmentStatus(d.get("status", "not_started")),
             source=d.get("source"),
-            stored_anchoring=d.get("stored_anchoring"),
+            stored_anchoring=stored,
         )
 
 

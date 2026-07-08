@@ -65,7 +65,7 @@ class ExportStackOptions:
 
 def _has_usable_anchoring(section: Section) -> bool:
     """True if the section's anchoring defines a non-degenerate plane."""
-    anchoring = section.alignment.anchoring
+    anchoring = section.alignment.current_anchoring
     if not anchoring or len(anchoring) != 9:
         return False
     _, u, v = anchoring_to_vectors(anchoring)
@@ -101,14 +101,14 @@ def build_canonical_remap(
     out_h = max(1, round(height_vox * scale))
 
     # Canonical (straight) atlas plane at this section's registered position.
-    position = float(anchoring_center(section.alignment.anchoring)[axis])
+    position = float(anchoring_center(section.alignment.current_anchoring)[axis])
     canonical = atlas.canonical_plane_anchoring(position, axis)
     grid = make_atlas_sample_grid(canonical, out_w, out_h)  # (H, W, 3) atlas voxels
 
     # Inverse affine: atlas voxel -> section atlas-overlay (s, t). Solve the
     # least-squares system grid - o = s·u + t·v for every pixel at once via the
     # anchoring's pseudo-inverse (vectorised atlas_to_normalized).
-    o, u, v = anchoring_to_vectors(section.alignment.anchoring)
+    o, u, v = anchoring_to_vectors(section.alignment.current_anchoring)
     pinv = np.linalg.pinv(np.column_stack([u, v]))  # (2, 3)
     st = (grid - o) @ pinv.T  # (H, W, 2)
 

@@ -347,7 +347,7 @@ def prepare_registration_inputs(
     for section in sections:
         name = Path(section.original_path).name
         try:
-            anchoring = section.alignment.anchoring
+            anchoring = section.alignment.current_anchoring
             if not section.alignment.is_anchored:
                 errors.append(f"{name}: no alignment yet")
                 continue
