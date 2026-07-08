@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
     QStyleOptionViewItem,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -105,6 +106,24 @@ _EMPTY_DROP_ZONE_STYLE = (
 _EMPTY_DROP_ZONE_STYLE_ACTIVE = (
     "QWidget#emptyDropZone { border: 2px dashed #1e5a8a; border-radius: 12px;"
     " background: rgba(30, 90, 138, 40); }"
+)
+
+# Disclosure toggle for the empty state's "More info" text — a plain,
+# link-styled QToolButton with a text arrow glyph that flips on toggle.
+_DISCLOSURE_BTN_STYLE = (
+    "QToolButton { color: #6a9fd0; background: transparent; border: none;"
+    " font-size: 12px; padding: 2px; }"
+    "QToolButton:hover { color: #9fd0f2; }"
+)
+_DISCLOSURE_COLLAPSED = "▸  More info"
+_DISCLOSURE_EXPANDED = "▾  More info"
+
+_MORE_INFO_TEXT = (
+    "Verso needs a project folder. Create or open an existing one.\n"
+    "- Supported image formats: TIFF, PNG, JPEG.\n"
+    "- Use the File menu to:\n"
+    "\t- open an existing project,\n"
+    "\t- import an alignment from QuickNII / VisuAlign."
 )
 
 
@@ -202,6 +221,28 @@ class OverviewView(QWidget):
         sub.setStyleSheet("color: #666; font-size: 14px;")
         sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
         empty_layout.addWidget(sub)
+
+        more_btn = QToolButton()
+        more_btn.setCheckable(True)
+        more_btn.setText(_DISCLOSURE_COLLAPSED)
+        more_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        more_btn.setStyleSheet(_DISCLOSURE_BTN_STYLE)
+        empty_layout.addWidget(more_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
+
+        more_info = QLabel(_MORE_INFO_TEXT)
+        more_info.setWordWrap(True)
+        more_info.setMaximumWidth(500)
+        more_info.setStyleSheet("color: #666; font-size: 12px;")
+        more_info.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        more_info.setVisible(False)
+        empty_layout.addWidget(more_info)
+
+        def _toggle_more_info(checked: bool) -> None:
+            more_info.setVisible(checked)
+            more_btn.setText(_DISCLOSURE_EXPANDED if checked else _DISCLOSURE_COLLAPSED)
+
+        more_btn.toggled.connect(_toggle_more_info)
+
         layout.addWidget(self._empty, stretch=1)
 
         # Table (hidden until a project is loaded)
