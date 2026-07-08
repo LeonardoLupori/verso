@@ -406,6 +406,7 @@ class MainWindow(QMainWindow):
         self._overview.section_selected.connect(self._state.set_section)
         self._overview.sections_reordered.connect(self._on_sections_reordered)
         self._overview.remove_requested.connect(self._remove_sections)
+        self._overview.images_dropped.connect(self._on_images_dropped)
 
         # Filmstrip
         self._filmstrip.section_selected.connect(self._state.set_section)
@@ -561,9 +562,16 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Cannot open project", str(exc))
 
     def _new_project(self) -> None:
+        self._open_new_project_dialog()
+
+    def _on_images_dropped(self, paths: list[str]) -> None:
+        """Drag-and-drop onto the empty overview → New Project, pre-filled."""
+        self._open_new_project_dialog(paths)
+
+    def _open_new_project_dialog(self, initial_paths: list[str] | None = None) -> None:
         if not self.confirm_discard_active_draft():
             return
-        dlg = NewProjectDialog(self)
+        dlg = NewProjectDialog(self, initial_paths=initial_paths)
         if dlg.exec() == NewProjectDialog.DialogCode.Accepted:
             project = dlg.result_project()
             if project is not None:

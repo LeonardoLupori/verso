@@ -6,7 +6,16 @@ import os
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QPoint, QRectF, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QPainter, QPen, QShowEvent
+from PyQt6.QtGui import (
+    QColor,
+    QDragEnterEvent,
+    QDragLeaveEvent,
+    QDragMoveEvent,
+    QDropEvent,
+    QPainter,
+    QPen,
+    QShowEvent,
+)
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QHeaderView,
@@ -21,11 +30,12 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from verso.engine.io.image_io import SUPPORTED_IMAGE_EXTENSIONS
 from verso.engine.model.alignment import AlignmentStatus
 from verso.engine.model.project import Project, Section
 from verso.engine.model.status import STATUS_COLOR as _STATUS_COLOR
 from verso.engine.model.status import section_step_status
-from verso.gui.utils import require
+from verso.gui.utils import colored_svg_pixmap, require
 
 if TYPE_CHECKING:
     from verso.gui.state import AppState
@@ -84,6 +94,19 @@ _SUMMARY_STYLE = (
     "color: #888; padding: 10px 6px 2px 6px; font-size: 11px; border-top: 1px solid #333;"
 )
 
+# Dashed border + accent tint on the empty-state drop zone while a drag with
+# valid images hovers over it; transparent border at rest so the zone doesn't
+# otherwise look boxed-in. The two variants are swapped wholesale via
+# setStyleSheet() rather than a dynamic property, since setStyleSheet always
+# forces a re-style on its own.
+_EMPTY_DROP_ZONE_STYLE = (
+    "QWidget#emptyDropZone { border: 2px dashed transparent; border-radius: 12px; }"
+)
+_EMPTY_DROP_ZONE_STYLE_ACTIVE = (
+    "QWidget#emptyDropZone { border: 2px dashed #1e5a8a; border-radius: 12px;"
+    " background: rgba(30, 90, 138, 40); }"
+)
+
 
 class _SliceIndexDelegate(QStyledItemDelegate):
     """Renders the slice-index cells as a subtle, editable input field.
@@ -140,6 +163,7 @@ class OverviewView(QWidget):
     section_selected = pyqtSignal(int)  # single click → update properties
     sections_reordered = pyqtSignal()  # slice_index edited → re-sort + persist
     remove_requested = pyqtSignal(list)  # context menu → remove section ids
+    images_dropped = pyqtSignal(list)  # drag-and-drop onto the empty state → new project
 
     def __init__(self, state: AppState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -148,6 +172,7 @@ class OverviewView(QWidget):
         self._suppress_edits = False  # ignore cellChanged during programmatic fills
         self._pending_refresh = False  # a refresh was requested while hidden
         self._build_ui()
+        self.setAcceptDrops(True)
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -156,26 +181,37 @@ class OverviewView(QWidget):
 
         # Empty state (shown when no project is loaded)
         self._empty = QWidget()
+        self._empty.setObjectName("emptyDropZone")
+        self._empty.setStyleSheet(_EMPTY_DROP_ZONE_STYLE)
         empty_layout = QVBoxLayout(self._empty)
         empty_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        empty_layout.setSpacing(14)
+
+        icon_lbl = QLabel()
+        icon_lbl.setPixmap(colored_svg_pixmap("add_images.svg", "#555", 220))
+        icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        empty_layout.addWidget(icon_lbl)
+
         lbl = QLabel("No project loaded")
-        lbl.setStyleSheet("font-size: 18px; color: #888;")
+        lbl.setStyleSheet("font-size: 20px; color: #888;")
         lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         empty_layout.addWidget(lbl)
-        sub = QLabel("Use  File → Open QuickNII…  or  File → New Project  to get started.")
-        sub.setStyleSheet("color: #666; font-size: 12px;")
+        sub = QLabel(
+            "Drag and drop images here to start a new project,\nor use  File → New Project…"
+        )
+        sub.setStyleSheet("color: #666; font-size: 14px;")
         sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
         empty_layout.addWidget(sub)
-        layout.addWidget(self._empty)
+        layout.addWidget(self._empty, stretch=1)
 
         # Table (hidden until a project is loaded)
         self._table = QTableWidget()
         self._table.setVisible(False)
         self._setup_table()
-        layout.addWidget(self._table)
+        layout.addWidget(self._table, stretch=1)
 
         # Summary bar
-        self._summary = QLabel("  —")
+        self._summary = QLabel(" - ")
         self._summary.setStyleSheet(_SUMMARY_STYLE)
         layout.addWidget(self._summary)
 
@@ -305,12 +341,53 @@ class OverviewView(QWidget):
         if self._pending_refresh:
             self.refresh()
 
+    # -- drag-and-drop (empty state only) ------------------------------------
+
+    def _dropped_image_paths(
+        self, event: QDragEnterEvent | QDragMoveEvent | QDropEvent
+    ) -> list[str]:
+        """Local file paths from ``event`` whose extension looks like an image."""
+        mime = event.mimeData()
+        if not mime.hasUrls():
+            return []
+        return [
+            path
+            for url in mime.urls()
+            if url.isLocalFile()
+            and (path := url.toLocalFile()).lower().endswith(SUPPORTED_IMAGE_EXTENSIONS)
+        ]
+
+    def _is_empty(self) -> bool:
+        return self._project is None or not self._project.sections
+
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+        # Drag-and-drop only starts a new project, so it's only offered while
+        # none is loaded — once a project exists this is a no-op passthrough.
+        if self._is_empty() and self._dropped_image_paths(event):
+            event.acceptProposedAction()
+            self._empty.setStyleSheet(_EMPTY_DROP_ZONE_STYLE_ACTIVE)
+
+    def dragMoveEvent(self, event: QDragMoveEvent) -> None:
+        # Qt requires this to be accepted too, or the drop is silently refused
+        # even after a successful dragEnterEvent.
+        if self._is_empty() and self._dropped_image_paths(event):
+            event.acceptProposedAction()
+
+    def dragLeaveEvent(self, event: QDragLeaveEvent) -> None:
+        self._empty.setStyleSheet(_EMPTY_DROP_ZONE_STYLE)
+
+    def dropEvent(self, event: QDropEvent) -> None:
+        paths = self._dropped_image_paths(event)
+        self._empty.setStyleSheet(_EMPTY_DROP_ZONE_STYLE)
+        if self._is_empty() and paths:
+            event.acceptProposedAction()
+            self.images_dropped.emit(paths)
+
     # -- table building -----------------------------------------------------
 
     def _show_empty(self) -> None:
         self._empty.setVisible(True)
         self._table.setVisible(False)
-        self._summary.setText("  —")
 
     def _structure_matches(self) -> bool:
         """True when the table's rows still mirror the project's sections.

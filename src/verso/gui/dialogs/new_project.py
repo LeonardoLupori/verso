@@ -41,6 +41,7 @@ from PyQt6.QtWidgets import (
 )
 
 from verso.engine.io.image_io import (
+    SUPPORTED_IMAGE_EXTENSIONS,
     compute_working_scale,
     guess_slice_indices,
     probe_channels,
@@ -107,7 +108,9 @@ _KNOWN_ATLASES = [
     "kim_mouse_25um",
 ]
 
-_IMAGE_FILTER = "Images (*.tif *.tiff *.png *.jpg *.jpeg);;All files (*)"
+_IMAGE_FILTER = (
+    "Images (" + " ".join(f"*{ext}" for ext in SUPPORTED_IMAGE_EXTENSIONS) + ");;All files (*)"
+)
 
 # Columns of the section-image preview table.
 _FILE_COL = 0
@@ -234,13 +237,17 @@ def generate_thumbnails(
 
 
 class NewProjectDialog(QDialog):
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, parent: QWidget | None = None, initial_paths: list[str] | None = None
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("New Project")
         self.setMinimumWidth(560)
         self._project: Project | None = None
         self._project_path: Path | None = None
         self._build_ui()
+        if initial_paths:
+            self._add_paths(initial_paths)
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -388,8 +395,11 @@ class NewProjectDialog(QDialog):
 
     def _add_images(self) -> None:
         paths, _ = QFileDialog.getOpenFileNames(self, "Add Section Images", "", _IMAGE_FILTER)
-        if not paths:
-            return
+        if paths:
+            self._add_paths(paths)
+
+    def _add_paths(self, paths: list[str]) -> None:
+        """Merge ``paths`` into the table, skipping ones already present."""
         existing = {p for p, _ in self._current_entries()}
         merged = [p for p, _ in self._current_entries()]
         for path in paths:

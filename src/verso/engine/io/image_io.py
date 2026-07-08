@@ -38,6 +38,10 @@ WORKING_SCALE: float = 0.2
 THUMBNAIL_MAX_SIDE = 2000
 FILMSTRIP_MAX_SIDE = 150
 
+# File extensions accepted as section images (New Project dialog file picker,
+# drag-and-drop onto the overview).
+SUPPORTED_IMAGE_EXTENSIONS = (".tif", ".tiff", ".png", ".jpg", ".jpeg")
+
 # Heuristic upper bound on plausible channel count. Used to disambiguate
 # (C, H, W) vs (H, W, C) layouts: channel axes are always small.
 _MAX_PLAUSIBLE_CHANNELS = 8

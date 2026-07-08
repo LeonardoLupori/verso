@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 from PyQt6.QtGui import QImage, QPixmap
 from PyQt6.QtWidgets import QMessageBox, QWidget
+
+_ICONS_DIR = Path(__file__).parent / "icons"
 
 
 def require[T](value: T | None) -> T:
@@ -18,6 +22,22 @@ def require[T](value: T | None) -> T:
     if value is None:  # pragma: no cover - defensive
         raise RuntimeError("expected a non-None value")
     return value
+
+
+def colored_svg_pixmap(name: str, color: str, size: int) -> QPixmap:
+    """Rasterize ``icons/<name>`` (with ``currentColor`` strokes) tinted ``color``.
+
+    Injects an explicit ``width``/``height`` before rasterizing so the SVG
+    renders crisply at ``size``x``size`` directly, rather than at its
+    intrinsic viewBox size and then being scaled up (blurry). Meant for
+    larger illustrations; toolbar-sized icons use ``colored_icon`` in
+    ``widgets/properties/_common.py``.
+    """
+    svg = (_ICONS_DIR / name).read_text(encoding="utf-8").replace("currentColor", color)
+    svg = svg.replace("<svg ", f'<svg width="{size}" height="{size}" ', 1)
+    pixmap = QPixmap()
+    pixmap.loadFromData(svg.encode())
+    return pixmap
 
 
 def ndarray_to_pixmap(image: np.ndarray) -> QPixmap:
