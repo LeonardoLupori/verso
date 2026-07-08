@@ -5,7 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
-from PyQt6.QtGui import QImage, QPixmap
+from PyQt6.QtCore import QByteArray, Qt
+from PyQt6.QtGui import QImage, QPainter, QPixmap
+from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtWidgets import QMessageBox, QWidget
 
 _ICONS_DIR = Path(__file__).parent / "icons"
@@ -27,19 +29,22 @@ def require[T](value: T | None) -> T:
 def colored_svg_pixmap(name: str, color: str, size: int) -> QPixmap:
     """Rasterize ``icons/<name>`` (with ``currentColor`` strokes) tinted ``color``.
 
-    Injects an explicit ``width``/``height`` before rasterizing so the SVG
-    renders crisply at ``size``x``size`` directly, rather than at its
-    intrinsic viewBox size and then being scaled up (blurry). Toolbar-sized
-    icons wrap this in ``QIcon(colored_svg_pixmap(name, color, size))``
-    directly (e.g. ``_common.py::colored_icon``) — a ``QIcon`` only scales
-    its source pixmap down cleanly, never up, so a size around 64 stays
-    crisp even for 16-24px buttons.
+    Rendered via ``QSvgRenderer`` into a ``size``x``size`` image, which scales
+    the SVG's ``viewBox`` to the target crisply regardless of the file's
+    intrinsic ``width``/``height`` (lucide icons ship a 24px box). Toolbar-sized
+    icons wrap this in ``QIcon(colored_svg_pixmap(name, color, size))`` directly
+    (e.g. ``_common.py::colored_icon``) — a ``QIcon`` only scales its source
+    pixmap down cleanly, never up, so a size around 64 stays crisp even for
+    16-24px buttons.
     """
     svg = (_ICONS_DIR / name).read_text(encoding="utf-8").replace("currentColor", color)
-    svg = svg.replace("<svg ", f'<svg width="{size}" height="{size}" ', 1)
-    pixmap = QPixmap()
-    pixmap.loadFromData(svg.encode())
-    return pixmap
+    renderer = QSvgRenderer(QByteArray(svg.encode()))
+    image = QImage(size, size, QImage.Format.Format_ARGB32)
+    image.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(image)
+    renderer.render(painter)
+    painter.end()
+    return QPixmap.fromImage(image)
 
 
 def ndarray_to_pixmap(image: np.ndarray) -> QPixmap:
