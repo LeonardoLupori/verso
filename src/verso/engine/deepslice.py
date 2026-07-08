@@ -16,7 +16,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from verso.engine.model.alignment import AlignmentStatus
 from verso.engine.model.project import Project, Section
 
 
@@ -224,15 +223,14 @@ def apply_deepslice_suggestions_with_atlas(
             continue
         raw = list(suggestion.anchoring)
         anchoring = _to_quicknii_convention(raw, atlas_shape) if atlas_shape is not None else raw
-        section.alignment.anchoring = anchoring
-        section.alignment.status = AlignmentStatus.IN_PROGRESS
-        section.alignment.source = "deepslice"
-        section.alignment.stored_anchoring = None
-        section.alignment.proposal_anchoring = list(anchoring)
-        section.alignment.proposal_confidence = suggestion.confidence
-        section.alignment.proposal_run_id = result.run_id
-        section.warp.control_points.clear()
-        section.warp.status = AlignmentStatus.NOT_STARTED
+        section.alignment.set_auto_proposal(
+            anchoring,
+            source="deepslice",
+            proposal_anchoring=list(anchoring),
+            confidence=suggestion.confidence,
+            run_id=result.run_id,
+        )
+        section.warp.reset()
         applied += 1
         applied_section_ids.add(section.id)
 
@@ -330,15 +328,13 @@ def _interpolate_bad_sections(
     for (section, _, _), anchoring, st in zip(usable, propagated, stored, strict=False):
         if st is not None or section.id not in bad_ids:
             continue
-        section.alignment.anchoring = anchoring
-        section.alignment.status = AlignmentStatus.IN_PROGRESS
-        section.alignment.source = "deepslice_bad_interpolated"
-        section.alignment.stored_anchoring = None
-        section.alignment.proposal_anchoring = list(anchoring)
-        section.alignment.proposal_confidence = None
-        section.alignment.proposal_run_id = run_id
-        section.warp.control_points.clear()
-        section.warp.status = AlignmentStatus.NOT_STARTED
+        section.alignment.set_auto_proposal(
+            anchoring,
+            source="deepslice_bad_interpolated",
+            proposal_anchoring=list(anchoring),
+            run_id=run_id,
+        )
+        section.warp.reset()
         filled += 1
     return filled
 

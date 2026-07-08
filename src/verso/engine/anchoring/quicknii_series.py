@@ -487,17 +487,8 @@ def reset_in_progress_to_default_proposals(
     ):
         if stored is not None:
             continue
-        section.alignment.anchoring = anchoring
-        section.alignment.position_mm = None
-        section.alignment.status = AlignmentStatus.IN_PROGRESS
-        section.alignment.source = "quicknii_default"
-        if include_complete:
-            section.alignment.stored_anchoring = None
-        section.alignment.proposal_anchoring = None
-        section.alignment.proposal_confidence = None
-        section.alignment.proposal_run_id = None
-        section.warp.control_points.clear()
-        section.warp.status = AlignmentStatus.NOT_STARTED
+        section.alignment.set_auto_proposal(anchoring, source="quicknii_default")
+        section.warp.reset()
         changed += 1
 
     return changed

@@ -86,6 +86,40 @@ class Alignment:
         ):
             self.stored_anchoring = list(self.anchoring)
 
+    def set_auto_proposal(
+        self,
+        anchoring: list[float],
+        *,
+        source: str,
+        proposal_anchoring: list[float] | None = None,
+        confidence: float | None = None,
+        run_id: str | None = None,
+    ) -> None:
+        """Reset this alignment to an automatically-generated IN_PROGRESS proposal.
+
+        Drops all saved/derived plane state (the stored anchoring and the
+        derived ``position_mm``) so the alignment is entirely the fresh guess,
+        and records the proposal provenance. Callers typically follow with
+        :meth:`WarpState.reset` since the plane moved.
+
+        Args:
+            anchoring: The propagated 9-value anchoring to adopt as live.
+            source: Provenance tag for the guess (e.g. ``"deepslice"``,
+                ``"quicknii_default"``).
+            proposal_anchoring: Optional automated-proposal anchoring to record;
+                ``None`` clears any previous proposal.
+            confidence: Optional proposal confidence.
+            run_id: Optional id of the run that produced the proposal.
+        """
+        self.anchoring = anchoring
+        self.position_mm = None
+        self.status = AlignmentStatus.IN_PROGRESS
+        self.source = source
+        self.stored_anchoring = None
+        self.proposal_anchoring = proposal_anchoring
+        self.proposal_confidence = confidence
+        self.proposal_run_id = run_id
+
     def to_dict(self) -> dict[str, Any]:
         data = {
             "anchoring": self.anchoring,
@@ -124,6 +158,11 @@ class WarpState:
 
     control_points: list[ControlPoint] = field(default_factory=list)
     status: AlignmentStatus = AlignmentStatus.NOT_STARTED
+
+    def reset(self) -> None:
+        """Discard all warp refinement, returning to the un-warped affine state."""
+        self.control_points.clear()
+        self.status = AlignmentStatus.NOT_STARTED
 
     def to_dict(self) -> dict[str, Any]:
         return {
