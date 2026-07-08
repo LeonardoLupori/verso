@@ -49,6 +49,7 @@ def _make_warp_mock(section: Section, state: AppState) -> SimpleNamespace:
         cursor_to_atlas_mapper=None,
     )
     mock = SimpleNamespace(
+        STEP="warp",
         _panel=panel,
         _panel_slot=SimpleNamespace(layout=lambda: SimpleNamespace(addWidget=lambda _w: None)),
         _state=state,
@@ -57,15 +58,20 @@ def _make_warp_mock(section: Section, state: AppState) -> SimpleNamespace:
         _cp_dragging=-1,
         _cp_drag_start_px=None,
         _cp_drag_start_dst=None,
-        _cp_drag_start_norm=None,
         _warp_overlay=lambda rgba: rgba,
         _cursor_to_src=lambda s, t: (s, t),
         _reset_undo=lambda: None,
     )
     # Dirty flag + baseline are the single source of truth in AppState; the mock
-    # drives them through the real WarpView methods.
+    # drives them through the real DraftCanvasView / WarpView methods (which
+    # resolve via WarpView's MRO), so the base save/revert flow runs for real.
+    mock._current_section = lambda: WarpView._current_section(mock)
+    mock._saved_state = lambda: WarpView._saved_state(mock)
+    mock._saved_copy = lambda: WarpView._saved_copy(mock)
+    mock._apply_saved = lambda baseline: WarpView._apply_saved(mock, baseline)
+    mock._reset_cp_interaction = lambda: WarpView._reset_cp_interaction(mock)
     mock._set_dirty = lambda v: WarpView._set_dirty(mock, v)
-    mock._saved_warp = lambda: WarpView._saved_warp(mock)
+    mock._after_revert = lambda: None
     return mock
 
 

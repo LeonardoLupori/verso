@@ -26,15 +26,19 @@ from PyQt6.QtWidgets import (
 from verso.engine.drafts import commit_warp
 from verso.engine.model.alignment import AlignmentStatus, ControlPoint, WarpState
 from verso.gui.utils import require
+from verso.gui.views.draft_canvas_view import DraftCanvasView
 from verso.gui.widgets.section_canvas_panel import SectionCanvasPanel
 from verso.gui.widgets.view_chrome import make_view_status_bar
 
 if TYPE_CHECKING:
+    from verso.engine.model.project import Section
     from verso.gui.state import AppState
 
 
-class WarpView(QWidget):
+class WarpView(DraftCanvasView):
     """Canvas view for nonlinear warp via per-section control points."""
+
+    STEP = "warp"
 
     # Emitted whenever the control-point set changes (add / delete) so the
     # filmstrip status dot can refresh even when the dirty flag doesn't flip.
@@ -43,18 +47,14 @@ class WarpView(QWidget):
     # Pixel distance threshold for picking an existing control point.
     _CP_PICK_RADIUS = 16  # px
 
-    # Maximum number of control-point snapshots kept in the undo history.
-    _UNDO_LIMIT = 100
-
     def __init__(
         self,
         panel: SectionCanvasPanel,
         state: AppState,
         parent: QWidget | None = None,
     ) -> None:
-        super().__init__(parent)
+        super().__init__(state, parent)
         self._panel = panel
-        self._state = state
 
         self._active = False
 
@@ -72,16 +72,8 @@ class WarpView(QWidget):
         self._warp_timer.setInterval(33)
         self._warp_timer.timeout.connect(self._panel.update_overlay)
 
-        # Dirty flag and last-saved baseline are the single source of truth in
-        # AppState, keyed by (section.id, "warp").  This view reads them via
-        # ``_state.is_dirty`` / ``_saved_warp`` and mutates them through
-        # ``_set_dirty`` — it keeps no local copy of either.
-
-        # In-memory undo history of control-point snapshots for the active
-        # slice.  Reset whenever the baseline is re-snapshotted (section / view
-        # change, save, revert, clear).
-        self._undo_stack: list[list[ControlPoint]] = []
-
+        # Dirty flag, last-saved baseline, and the undo stack live in the base
+        # (DraftCanvasView) keyed by (section.id, "warp").
         self._build_ui()
         self._wire_panel()
 
@@ -135,9 +127,7 @@ class WarpView(QWidget):
         self._panel.canvas.set_interaction_mode("warp")
         self._panel.overlay_post_processor = self._warp_overlay
         self._panel.cursor_to_atlas_mapper = self._cursor_to_src
-        self._cp_hovered = -1
-        self._cp_dragging = -1
-        self._reset_undo()
+        self._reset_undo()  # also clears the CP interaction state + warp timer
         self._panel.update_overlay()
         # Re-sync the baseline in case the section was loaded before activate.
         # A no-op while dirty, so the stashed last-saved warp survives.  The
@@ -152,9 +142,7 @@ class WarpView(QWidget):
         self._panel.overlay_post_processor = None
         self._panel.cursor_to_atlas_mapper = None
         self._warp_timer.stop()
-        self._cp_dragging = -1
-        self._cp_drag_start_px = None
-        self._cp_drag_start_dst = None
+        self._reset_cp_interaction()
         self._panel.canvas.clear_control_points()
 
     # ------------------------------------------------------------------
@@ -238,11 +226,7 @@ class WarpView(QWidget):
         # from the registry on entry.
         if not self._active:
             return
-        self._cp_hovered = -1
-        self._cp_dragging = -1
-        self._cp_drag_start_px = None
-        self._cp_drag_start_dst = None
-        self._reset_undo()
+        self._reset_undo()  # also clears the CP interaction state + warp timer
         if section is None:
             return
         # Persisted CP edits survive navigation; the section's dirty state and
@@ -423,128 +407,66 @@ class WarpView(QWidget):
             self.cp_changed.emit()
 
     # ------------------------------------------------------------------
-    # Draft / save / clear / discard
+    # Draft-view hooks (see DraftCanvasView)
     # ------------------------------------------------------------------
 
-    def is_dirty(self) -> bool:
-        section = self._panel.section
-        return section is not None and self._state.is_dirty(section.id, "warp")
-
-    def _saved_warp(self) -> WarpState | None:
-        """The last-saved warp baseline for the current section, if any."""
-        section = self._panel.section
-        if section is None:
-            return None
-        return self._state.get_baseline(section.id, "warp")  # type: ignore[return-value]
+    def _current_section(self) -> Section | None:
+        return self._panel.section
 
     def has_persisted_state(self) -> bool:
-        baseline = self._saved_warp()
-        if baseline is None:
-            return False
-        return bool(baseline.control_points)
+        baseline = self._saved_state()
+        return baseline is not None and bool(baseline.control_points)
 
-    def save(self) -> bool:
+    def _capture_edit(self) -> list[ControlPoint]:
+        return copy.deepcopy(self._panel.section.warp.control_points)
+
+    def _restore(self, snapshot: list[ControlPoint]) -> None:
+        self._panel.section.warp.control_points = snapshot
+        self._panel.update_overlay()
+
+    def _matches_saved(self, snapshot: list[ControlPoint]) -> bool:
+        baseline = self._saved_state()
+        base_cps = baseline.control_points if baseline is not None else []
+        return snapshot == base_cps
+
+    def _saved_copy(self) -> WarpState:
+        return copy.deepcopy(self._panel.section.warp)
+
+    def _commit(self) -> bool:
         """Commit the current control-point list as this slice's warp.
 
         Saving is also how the user *accepts* an auto-generated (elastix) warp:
-        promoting ``warp.status`` to COMPLETE turns the proposal green. An empty
-        warp resets to NOT_STARTED so it reads gray.
+        ``commit_warp`` promotes ``warp.status`` to COMPLETE (turning the
+        proposal green) and the affine plane the warp sits on too, and resets an
+        empty warp to NOT_STARTED so it reads gray.
         """
-        section = self._panel.section
-        if section is None:
-            return False
-        # commit_warp promotes the affine plane the warp sits on to COMPLETE too
-        # (so the next save's auto-interpolation can't re-guess it), and resets an
-        # empty warp to NOT_STARTED.
-        commit_warp(section)
-        self._reset_undo()
-        self._set_dirty(False)
-        self._state.sync_baseline(section.id, "warp", copy.deepcopy(section.warp))
+        commit_warp(self._panel.section)
         return True
 
-    def revert(self) -> bool:
-        """Discard unsaved control-point edits, restoring the last-saved warp."""
-        section = self._panel.section
-        baseline = self._saved_warp()
-        if section is None or baseline is None:
-            return False
-        section.warp = copy.deepcopy(baseline)
-        self._cp_hovered = -1
-        self._cp_dragging = -1
-        self._cp_drag_start_norm = None
-        self._cp_drag_start_dst = None
-        self._reset_undo()
-        self._set_dirty(False)
-        self._state.sync_baseline(section.id, "warp", copy.deepcopy(section.warp))
+    def _apply_saved(self, baseline: WarpState) -> None:
+        self._panel.section.warp = copy.deepcopy(baseline)
+        self._reset_cp_interaction()
         if self._active:
             self._panel.update_overlay()
-        return True
 
-    def clear(self) -> bool:
-        """Wipe this slice's warp control points."""
+    def _wipe(self) -> None:
         section = self._panel.section
-        if section is None:
-            return False
         section.warp.control_points.clear()
         section.warp.status = AlignmentStatus.NOT_STARTED
-        self._cp_hovered = -1
-        self._cp_dragging = -1
-        self._cp_drag_start_norm = None
-        self._cp_drag_start_dst = None
-        self._reset_undo()
-        self._set_dirty(False)
-        self._state.sync_baseline(section.id, "warp", copy.deepcopy(section.warp))
+        self._reset_cp_interaction()
         if self._active:
             self._panel.update_overlay()
-        return True
 
-    # ------------------------------------------------------------------
-    # Undo
-    # ------------------------------------------------------------------
-
-    def undo(self) -> None:
-        """Restore the previous control-point set from history (Ctrl+Z)."""
-        section = self._panel.section
-        if section is None or not self._undo_stack:
-            return
-        previous = self._undo_stack.pop()
-        section.warp.control_points = previous
-        self._cp_hovered = -1
-        self._cp_dragging = -1
-        self._cp_drag_start_norm = None
-        self._cp_drag_start_dst = None
+    def _end_edit_gesture(self) -> None:
         self._warp_timer.stop()
-        self._panel.update_overlay()
-        baseline = self._saved_warp()
-        base_cps = baseline.control_points if baseline else []
-        self._set_dirty(previous != base_cps)
+        self._reset_cp_interaction()
+
+    def _after_undo_restore(self) -> None:
         self.cp_changed.emit()
 
-    def _push_undo(self) -> None:
-        """Snapshot the current control points before a mutating edit."""
-        section = self._panel.section
-        if section is None:
-            return
-        self._undo_stack.append(copy.deepcopy(section.warp.control_points))
-        # Bound the history so a long editing session can't grow without limit.
-        if len(self._undo_stack) > self._UNDO_LIMIT:
-            self._undo_stack.pop(0)
-
-    def _reset_undo(self) -> None:
-        """Clear the undo history (called whenever the baseline is re-snapshotted)."""
-        self._undo_stack.clear()
-
-    def _set_dirty(self, dirty: bool) -> None:
-        """Flip the current section's ``warp`` dirty flag in AppState.
-
-        AppState is the single source of truth; ``mark_dirty``/``clear_dirty``
-        are idempotent and emit ``dirty_changed`` only on a real transition,
-        which drives the save bar and filmstrip dot.
-        """
-        section = self._panel.section
-        if section is None:
-            return
-        if dirty:
-            self._state.mark_dirty(section.id, "warp")
-        else:
-            self._state.clear_dirty(section.id, "warp")
+    def _reset_cp_interaction(self) -> None:
+        """Clear transient control-point hover / drag state."""
+        self._cp_hovered = -1
+        self._cp_dragging = -1
+        self._cp_drag_start_px = None
+        self._cp_drag_start_dst = None
