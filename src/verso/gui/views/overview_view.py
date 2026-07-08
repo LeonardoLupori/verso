@@ -280,6 +280,7 @@ class OverviewView(QWidget):
             self._refresh_status()
         else:
             self._rebuild()
+        self._sync_selection()
 
     def refresh_row(self, section_index: int) -> None:
         """Update a single row's status cells (e.g. after a flip or align edit)."""
@@ -351,9 +352,17 @@ class OverviewView(QWidget):
         # the frequent status-only refreshes cheap.
         t.resizeColumnsToContents()
 
-        # Restore the highlight and scroll position for the selected section.
+    def _sync_selection(self) -> None:
+        """Highlight and scroll to the row for the current section.
+
+        Runs after every refresh (not just a structural rebuild) so the
+        highlighted row stays in sync when the current section changes
+        elsewhere (e.g. selecting a slice in Prep) without any add / remove /
+        reorder that would otherwise trigger a rebuild.
+        """
+        t = self._table
         idx = self._state.section_index
-        if 0 <= idx < t.rowCount():
+        if 0 <= idx < t.rowCount() and t.currentRow() != idx:
             t.blockSignals(True)
             t.setCurrentCell(idx, 0)
             t.blockSignals(False)
