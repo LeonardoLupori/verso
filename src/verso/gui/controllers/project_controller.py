@@ -37,10 +37,6 @@ class ProjectController:
     def __init__(self, window: MainWindow) -> None:
         self._window = window
         self._state = window._state
-        # Proposal direction shared between series interpolation (here) and the
-        # DeepSlice / reverse batch operations (JobController). Reset to False on
-        # every project load by MainWindow._on_project_changed.
-        self.reverse_axis_proposal = False
 
     # ------------------------------------------------------------------
     # Series anchoring proposals (thin orchestration over engine.anchoring)
@@ -85,7 +81,6 @@ class ProjectController:
             sections,
             atlas_shape=atlas.shape,
             interpolation_axis=self.interpolation_axis,
-            reverse_axis=self.reverse_axis_proposal,
         )
 
     # ------------------------------------------------------------------
@@ -413,7 +408,6 @@ class ProjectController:
                 project.sections,
                 atlas_shape=self._state.atlas.shape,
                 interpolation_axis=project.interpolation_axis_index,
-                reverse_axis=self.reverse_axis_proposal,
             )
         self.sync_position_mm(project.sections)
         self._state.structure_changed.emit()

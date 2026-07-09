@@ -67,7 +67,6 @@ class MainWindow(QMainWindow):
     _section_shortcuts: list[QShortcut]
     _view_buttons: list[QPushButton]
     _project_label: QLabel
-    _act_reverse_proposal: QAction
     _act_deepslice: QAction
     _act_default_proposal: QAction
     _act_clear_all_alignments: QAction
@@ -206,7 +205,6 @@ class MainWindow(QMainWindow):
         self._props.set_mode(self._current_mode)
         self._refresh_properties()
         self._refresh_reset_enabled()
-        self._update_reverse_order_enabled()
         self._update_deepslice_enabled()
         self._refresh_filmstrip_dots()
 
@@ -282,15 +280,11 @@ class MainWindow(QMainWindow):
                 self._panel.load_section(section)
         if self._current_mode in ("align", "warp"):
             self._panel.update_overlay()
-        # A batch op may have flipped the proposal direction (ProjectController
-        # owns the flag); keep the Align navigator in step. Idempotent.
-        self._align.set_reverse_axis(self._project.reverse_axis_proposal)
         self._overview.refresh()
         self._refresh_properties()
         self._update_slicing_position()
         self._refresh_reset_enabled()
         self._refresh_filmstrip_dots()
-        self._update_reverse_order_enabled()
         self._update_deepslice_enabled()
         if write and self._state.project is not None and self._state.project_path is not None:
             self._project.write_project(self._state.project_path)
@@ -354,8 +348,6 @@ class MainWindow(QMainWindow):
 
         self._set_project_views_enabled(True)
 
-        self._project.reverse_axis_proposal = False
-        self._align.set_reverse_axis(False)
         self._align.set_interpolation_axis(project.interpolation_axis_index)
         self._props.align.slicing_position.set_axis_name(project.interpolation_axis)
 
@@ -375,7 +367,6 @@ class MainWindow(QMainWindow):
                 project.sections,
                 atlas_shape=self._state.atlas.shape,
                 interpolation_axis=project.interpolation_axis_index,
-                reverse_axis=self._project.reverse_axis_proposal,
             )
         self._project.sync_position_mm(project.sections)
 
@@ -396,7 +387,6 @@ class MainWindow(QMainWindow):
             self._brightness_dialog.set_channels(project.channels)
         self._props.warp.cp.apply_style(project.cp_size, project.cp_shape, project.cp_color)
         self._warp.set_cp_style(project.cp_size, project.cp_shape, project.cp_color)
-        self._update_reverse_order_enabled()
         self._update_deepslice_enabled()
 
         if project.atlas:
@@ -438,7 +428,6 @@ class MainWindow(QMainWindow):
                 self._project.sync_position_mm(project.sections)
                 self._panel.update_overlay()
                 self._update_slicing_position()
-                self._update_reverse_order_enabled()
                 self._update_deepslice_enabled()
 
     def _on_atlas_error(self, message: str) -> None:
@@ -629,18 +618,6 @@ class MainWindow(QMainWindow):
         self._project.initialize_default_anchorings(project.sections)
         self._project.sync_position_mm(project.sections)
         self.sync_dependent_ui()
-
-    def _update_reverse_order_enabled(self) -> None:
-        project = self._state.project
-        if project is None:
-            self._act_reverse_proposal.setEnabled(False)
-            return
-        has_stored_alignment = any(
-            section.alignment.status == AlignmentStatus.COMPLETE for section in project.sections
-        )
-        self._act_reverse_proposal.setEnabled(
-            self._state.atlas is not None and len(project.sections) > 1 and not has_stored_alignment
-        )
 
     def _update_deepslice_enabled(self, running: bool = False) -> None:
         project = self._state.project

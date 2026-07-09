@@ -114,11 +114,6 @@ def build_menus(window: MainWindow) -> None:
     window._act_default_proposal.triggered.connect(window._jobs.revert_to_default_proposal)
     align_menu.addAction(window._act_default_proposal)
 
-    window._act_reverse_proposal = QAction("&Reverse proposal", window)
-    window._act_reverse_proposal.setEnabled(False)
-    window._act_reverse_proposal.triggered.connect(window._jobs.reverse_section_order)
-    align_menu.addAction(window._act_reverse_proposal)
-
     align_menu.addSeparator()
     window._act_clear_all_alignments = QAction("&Clear all alignments…", window)
     window._act_clear_all_alignments.setEnabled(False)

@@ -187,10 +187,9 @@ class _SliceView(QWidget):
         self._dims = dims
         self._anchoring: list[float] | None = None
         self._view_h = _view_height(axis, dims)
-        self._reverse_axis: bool = False
-        # The project's slicing axis (anchoring voxel index 0/1/2).  Controls
-        # which translate/rotate steps get sign-flipped when the series is
-        # reversed.
+        # The project's slicing axis (anchoring voxel index 0/1/2), used to
+        # pick which orthogonal view is hidden (the one parallel to the slices)
+        # and as the reference axis for the tilt clamp.
         self._interpolation_axis: int = 1
 
         # drag state
@@ -339,9 +338,6 @@ class _SliceView(QWidget):
         ):
             btn.setEnabled(enabled)
 
-    def set_reverse_axis(self, reverse: bool) -> None:
-        self._reverse_axis = reverse
-
     def set_interpolation_axis(self, axis: int) -> None:
         self._interpolation_axis = int(axis)
 
@@ -402,8 +398,6 @@ class _SliceView(QWidget):
         """Translate cut-plane origin along an atlas axis by *delta* voxels."""
         if self._anchoring is None:
             return
-        if atlas_axis == self._interpolation_axis and self._reverse_axis:
-            delta = -delta
         new_anchoring = list(self._anchoring)
         new_anchoring[atlas_axis] += delta
         self.anchoring_changed.emit(new_anchoring)
@@ -413,8 +407,6 @@ class _SliceView(QWidget):
         if self._anchoring is None:
             return
         deg = deg_signed * self._ANGLE_SIGNS[self._axis]
-        if self._reverse_axis and self._axis != self._interpolation_axis:
-            deg = -deg
         deg = clamp_rotation_to_max_tilt(
             self._anchoring, self._axis, deg, self._interpolation_axis, _MAX_TILT_DEG
         )
@@ -591,11 +583,6 @@ class _SliceView(QWidget):
         d = (cur_angle - self._drag_last_angle + math.pi) % (2.0 * math.pi) - math.pi
         self._drag_last_angle = cur_angle
         deg = math.degrees(d) * self._ANGLE_SIGNS[self._axis]
-        # The two views that aren't perpendicular to the slicing axis rotate
-        # around axes that tilt the plane along the slicing direction —
-        # invert when the series is reversed.
-        if self._reverse_axis and self._axis != self._interpolation_axis:
-            deg = -deg
 
         deg = clamp_rotation_to_max_tilt(
             self._anchoring, self._axis, deg, self._interpolation_axis, _MAX_TILT_DEG
@@ -779,10 +766,6 @@ class NavigatorPanel(QWidget):
     def set_stretch_enabled(self, enabled: bool) -> None:
         for btn in self._stretch_btns:
             btn.setEnabled(enabled)
-
-    def set_reverse_axis(self, reverse: bool) -> None:
-        for view in (self._sag, self._cor, self._hor):
-            view.set_reverse_axis(reverse)
 
     def set_interpolation_axis(self, axis: int) -> None:
         for view in (self._sag, self._cor, self._hor):

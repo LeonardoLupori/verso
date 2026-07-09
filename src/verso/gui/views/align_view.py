@@ -59,7 +59,6 @@ class AlignView(BaseCanvasView):
     ) -> None:
         super().__init__(state, parent)
         self._panel = panel
-        self._reverse_axis = False
         self._interpolation_axis = 1
         # Dirty flag, last-saved baseline, and the undo stack live in the base
         # (BaseCanvasView) keyed by (section.id, "align").  A continuous run of
@@ -156,11 +155,6 @@ class AlignView(BaseCanvasView):
     # ------------------------------------------------------------------
     # External API used by MainWindow
     # ------------------------------------------------------------------
-
-    def set_reverse_axis(self, reverse: bool) -> None:
-        """Invert slicing-axis movement and tilt directions when the series is reversed."""
-        self._reverse_axis = reverse
-        self._navigator.set_reverse_axis(reverse)
 
     def set_interpolation_axis(self, axis: int) -> None:
         """Update the anchoring voxel axis used to compute ``position_mm``."""

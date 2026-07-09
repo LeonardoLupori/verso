@@ -44,6 +44,10 @@ class JobController:
         self._batch_mask_job: BackgroundJob[BatchMaskWorker] | None = None
         self._auto_cp_job: BackgroundJob[AutoCPWorker] | None = None
         self._auto_cp_batch = False
+        # Last "sections ordered anterior -> posterior" checkbox value from the
+        # DeepSlice dialog, remembered only to pre-fill the dialog and to
+        # reorient that same run's results (see apply_deepslice_suggestions_with_atlas).
+        self._deepslice_reverse_axis = False
         # Persistent warm child process for elastix registrations (see ElastixWorker).
         self._elastix_worker = ElastixWorker()
 
@@ -152,37 +156,6 @@ class JobController:
         self._batch_mask_job = None
 
     # ------------------------------------------------------------------
-    # Reverse proposal
-    # ------------------------------------------------------------------
-
-    def reverse_section_order(self) -> None:
-        """Reverse the startup proposal direction before any alignment is stored."""
-        project = self._state.project
-        if project is None or len(project.sections) < 2:
-            return
-
-        has_stored_alignment = any(
-            section.alignment.status == AlignmentStatus.COMPLETE for section in project.sections
-        )
-        if has_stored_alignment:
-            QMessageBox.information(
-                self._window,
-                "Cannot reverse proposal",
-                "The startup proposal can only be reversed before any alignment is stored.",
-            )
-            return
-
-        from verso.engine.drafts import reset_alignment
-
-        self._project.reverse_axis_proposal = not self._project.reverse_axis_proposal
-        for section in project.sections:
-            reset_alignment(section)
-
-        self._project.initialize_default_anchorings(project.sections)
-        self._project.sync_position_mm(project.sections)
-        self._state.notify_sections_changed()
-
-    # ------------------------------------------------------------------
     # DeepSlice
     # ------------------------------------------------------------------
 
@@ -196,12 +169,12 @@ class JobController:
         from verso.gui.dialogs.bad_sections import BadSectionsDialog
 
         dlg = BadSectionsDialog(
-            project.sections, reverse_order=self._project.reverse_axis_proposal, parent=self._window
+            project.sections, reverse_order=self._deepslice_reverse_axis, parent=self._window
         )
         if dlg.exec() != BadSectionsDialog.DialogCode.Accepted:
             return
         bad_ids = dlg.bad_section_ids()
-        self._project.reverse_axis_proposal = dlg.reverse_section_order()
+        self._deepslice_reverse_axis = dlg.reverse_section_order()
 
         self._state.deepslice_running_changed.emit(True)
         self._state.show_status("Running DeepSlice suggestions...")
@@ -210,7 +183,7 @@ class JobController:
             self._window,
             DeepSliceWorker(
                 project,
-                reverse_section_order=self._project.reverse_axis_proposal,
+                reverse_section_order=self._deepslice_reverse_axis,
                 bad_section_ids=bad_ids,
             ),
             title="DeepSlice",
@@ -242,7 +215,7 @@ class JobController:
             project,
             result,
             atlas.shape if atlas is not None else None,
-            reverse_axis=self._project.reverse_axis_proposal,
+            reverse_axis=self._deepslice_reverse_axis,
         )
         if atlas is not None:
             self._project.sync_position_mm(project.sections)
@@ -280,7 +253,6 @@ class JobController:
             project.sections,
             atlas.shape,
             interpolation_axis=self._project.interpolation_axis,
-            reverse_axis=self._project.reverse_axis_proposal,
         )
         self._project.sync_position_mm(project.sections)
         self._state.notify_sections_changed()
@@ -317,7 +289,6 @@ class JobController:
             project.sections,
             atlas.shape,
             interpolation_axis=self._project.interpolation_axis,
-            reverse_axis=self._project.reverse_axis_proposal,
             include_complete=True,
         )
         self._project.sync_position_mm(project.sections)
