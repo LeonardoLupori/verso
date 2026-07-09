@@ -110,18 +110,11 @@ class VersoRegistration:
     def __init__(self, path: str | Path) -> None:
         """Load a project from its native JSON and build the coordinate snapshot.
 
-        Older project files (pre-v1.2) are migrated on load: missing per-section
-        pixel dimensions and atlas metadata are backfilled from the image files
-        and brainglobe. A modern, self-contained file loads fully offline.
 
         Args:
             path: Path to a ``project-verso.json`` file.
         """
-        from verso.engine.io.project_metadata import backfill_metadata
-
-        path = Path(path)
-        project = Project.load(path)
-        backfill_metadata(project, path.parent)
+        project = Project.load(Path(path))
         self._init_from_project(project)
 
     @classmethod
@@ -130,7 +123,7 @@ class VersoRegistration:
 
         Args:
             project: A project whose section dimensions and atlas metadata are
-                already populated (no backfill is performed).
+                already populated.
 
         Returns:
             A ready-to-use :class:`VersoRegistration`.

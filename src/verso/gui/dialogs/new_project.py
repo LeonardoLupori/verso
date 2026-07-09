@@ -47,7 +47,7 @@ from verso.engine.io.image_io import (
     probe_channels,
     thumbnail_filename,
 )
-from verso.engine.io.project_metadata import backfill_metadata
+from verso.engine.io.project_metadata import AtlasUnavailableError, populate_metadata
 from verso.engine.model.alignment import Alignment, AlignmentStatus, WarpState
 from verso.engine.model.project import (
     DEFAULT_PROJECT_FILENAME,
@@ -515,13 +515,27 @@ class NewProjectDialog(QDialog):
         self._generate_thumbnails(self._project.sections, self._project.working_scale)
 
         # Cache image dimensions and atlas resolution/shape so the saved project
-        # is self-contained for pixel <-> atlas voxel mapping. If the atlas
-        # cannot be fetched yet (offline / first download), leave the file
-        # pre-1.2 so the next load completes the migration.
+        # is self-contained for pixel <-> atlas voxel mapping. This needs the
+        # atlas, which is downloaded from brainglobe on first use; fail loudly if
+        # it cannot be fetched rather than writing an unusable project.
         try:
-            backfill_metadata(self._project, folder_path)
-        except Exception:
-            self._project.version = "1.1"
+            populate_metadata(self._project, folder_path)
+        except AtlasUnavailableError as exc:
+            QMessageBox.critical(
+                self,
+                "Atlas download failed",
+                "Could not download the reference atlas. An internet connection is "
+                "required the first time an atlas is used.\n\n"
+                f"Details: {exc}",
+            )
+            return
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                "Could not create project",
+                f"Failed to read image metadata while creating the project.\n\nDetails: {exc}",
+            )
+            return
         self._project.save(self._project_path)
 
         self.accept()

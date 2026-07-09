@@ -324,7 +324,7 @@ class OverviewView(QWidget):
         """Return "W x H" for a section's registration image.
 
         Read from the section's cached ``resolution_thumbnail_wh`` (populated by
-        ``backfill_metadata`` at import and persisted in the project file).
+        ``populate_metadata`` at import and persisted in the project file).
         """
         w, h = section.resolution_thumbnail_wh
         return f"{w} x {h}"

@@ -10,10 +10,8 @@ from verso.engine.model.elastix import ElastixParams
 
 DEFAULT_PROJECT_FILENAME = "project-verso.json"
 
-# Current project-schema version. Bumped to 1.2 when per-section pixel
-# dimensions and atlas resolution/shape were added so the file is self-contained
-# for pixel <-> atlas voxel mapping. Older files are migrated on load.
-SCHEMA_VERSION = "1.2"
+# Project-schema version, stamped on every saved file.
+SCHEMA_VERSION = "1.0"
 
 # Mapping between the stored axis-name field and the anchoring voxel axis index.
 # Anchoring voxel space ordering is (LR=0, AP=1, DV=2); "ML" is the storage name
@@ -37,7 +35,7 @@ class AtlasRef:
     dimensions in BrainGlobe's ``(AP, DV, LR)`` order) are cached here so the
     project file is self-contained for coordinate work without re-fetching the
     atlas. They are ``0.0`` / ``(0, 0, 0)`` until populated (see
-    ``backfill_metadata``).
+    ``populate_metadata``).
     """
 
     name: str
@@ -272,7 +270,7 @@ class Project:
             working_scale=float(d.get("working_scale", 0.2)),
             elastix_params=elastix_params,
             dialog_prefs=DialogPrefs.from_dict(d.get("dialog_prefs", {})),
-            version=str(d.get("version", "1.1")),
+            version=str(d.get("version", SCHEMA_VERSION)),
         )
         project.sort_sections()
         return project

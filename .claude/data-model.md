@@ -28,7 +28,7 @@ Top level:
 
 ```json
 {
-  "version": "1.2",
+  "version": "1.0",
   "name": "My Experiment",
   "atlas": {
     "name": "allen_mouse_25um",
@@ -48,7 +48,7 @@ Top level:
 
 | Field | Type | Notes |
 |---|---|---|
-| `version` | str | Schema version the file was written under; currently `"1.2"`. Informational only — see "Schema versioning" below. **Early development: no migration / backward-compatibility support.** |
+| `version` | str | Schema version the file was written under; currently `"1.0"`. Informational only — see "Schema versioning" below. **Early development: no migration / backward-compatibility support.** |
 | `name` | str | Project display name. |
 | `atlas` | `AtlasRef` | `{name, source, resolution_um, shape}`. `source` defaults to `"brainglobe"`. `resolution_um` is the isotropic atlas voxel size (microns); `shape` is the atlas voxel grid `[AP, DV, LR]` in BrainGlobe order. Both are cached so the project file is self-contained for pixel ↔ atlas voxel mapping without re-fetching the atlas; `0.0` / `[0, 0, 0]` until populated. |
 | `interpolation_axis` | str | Brain axis the cutting series runs along: `"AP"` (coronal, default), `"ML"` (sagittal), or `"DV"` (horizontal). Set at project creation; drives the anchoring voxel axis used by `propagate_series_anchorings`. See "Interpolation axis" below. |
@@ -60,15 +60,16 @@ Top level:
 ### Schema versioning
 
 VERSO is in **early development: there is no schema migration or backward-compatibility
-support.** The `version` field records the schema a file was written under, but nothing
-compares or upgrades it — `Project.load` simply calls `Project.from_dict`, and older or
-foreign project files are not guaranteed to load. When the schema changes, expect to
-recreate projects rather than migrate them.
+support.** The `version` field is stamped on every saved file (currently always `"1.0"`)
+but nothing compares or upgrades it — `Project.load` simply calls `Project.from_dict`, and
+older or foreign project files are not guaranteed to load. When the schema changes, expect
+to recreate projects rather than migrate them. The field is kept so that, once versioning
+does matter, a missing `version` unambiguously means "pre-1.0".
 
-Missing *metadata* on an otherwise-current file (per-section pixel dimensions, atlas
-`resolution_um`/`shape` — the `0` / `0.0` / `(0, 0, 0)` sentinels) can be backfilled in
-place by `backfill_metadata` (`engine/io/project_metadata.py`), which reads the image files
-and the `AtlasVolume`. This is best-effort population of unset fields, not version migration.
+Derived metadata (per-section pixel dimensions, atlas `resolution_um`/`shape`) is populated
+once at project creation by `populate_metadata` (`engine/io/project_metadata.py`), which
+reads the image files and the `AtlasVolume`, so the saved file is self-contained. Atlas
+download requires internet the first time an atlas is used; creation fails loudly otherwise.
 
 ### `ChannelSpec`
 

@@ -227,7 +227,7 @@ def test_project_json_is_valid(tmp_path: Path):
     p.save(json_path)
 
     data = json.loads(json_path.read_text())
-    assert data["version"] == "1.2"
+    assert data["version"] == "1.0"
     assert data["interpolation_axis"] == "AP"
     assert len(data["sections"]) == 1
     assert data["sections"][0]["id"] == "s001"
@@ -247,17 +247,17 @@ def test_project_round_trips_non_coronal_axis():
     assert loaded.interpolation_axis_index == 0
 
 
-def test_project_legacy_v1_0_dict_loads_with_default_axis_and_preserves_version():
+def test_project_legacy_dict_loads_with_default_axis_and_preserves_version():
     p = _make_project()
     legacy = p.to_dict()
     legacy.pop("interpolation_axis")
-    legacy["version"] = "1.0"
+    legacy["version"] = "0.9"
 
-    # from_dict is pure: it preserves the stored version so Project.load can
-    # detect that a pre-1.2 file needs metadata backfill.
+    # from_dict tolerates a missing interpolation_axis (defaults to AP) and
+    # preserves whatever version string the file carried.
     loaded = Project.from_dict(legacy)
     assert loaded.interpolation_axis == "AP"
-    assert loaded.version == "1.0"
+    assert loaded.version == "0.9"
 
 
 def test_project_invalid_axis_falls_back_to_ap():

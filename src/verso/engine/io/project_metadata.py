@@ -1,8 +1,8 @@
-"""In-place operations on a loaded VERSO project.
+"""In-place operations on a VERSO project.
 
 Serialization itself lives on the data model (``Project.save`` / ``Project.load``).
-This module holds post-load helpers that augment an existing project: backfilling
-missing metadata (image dimensions, atlas resolution/shape) and importing styling
+This module holds helpers that augment a project: populating derived metadata
+(image dimensions, atlas resolution/shape) at creation time and importing styling
 (channel colors, control-point style) from another project.
 """
 
@@ -17,6 +17,10 @@ if TYPE_CHECKING:
     from verso.engine.atlas import AtlasVolume
 
 
+class AtlasUnavailableError(RuntimeError):
+    """The reference atlas could not be obtained (e.g. offline first download)."""
+
+
 def _resolve(path: str, project_dir: Path) -> Path:
     """Resolve a stored artifact path against the project directory.
 
@@ -27,19 +31,20 @@ def _resolve(path: str, project_dir: Path) -> Path:
     return p if p.is_absolute() else project_dir / p
 
 
-def backfill_metadata(
+def populate_metadata(
     project: Project,
     project_dir: Path,
     *,
     atlas: AtlasVolume | None = None,
 ) -> None:
-    """Populate missing v1.2 metadata (image dims + atlas resolution/shape) in place.
+    """Populate derived metadata (image dims + atlas resolution/shape) in place.
 
-    Only fields that are still unpopulated (``0`` / ``0.0`` / ``(0, 0, 0)``) are
-    filled, so already-complete projects are untouched. Image dimensions come
-    from the image files via :func:`image_dimensions`; atlas resolution and
-    shape come from ``atlas`` if supplied, else from a freshly constructed
-    :class:`~verso.engine.atlas.AtlasVolume`.
+    Called at project creation to make the file self-contained for pixel <->
+    atlas voxel mapping. Only fields that are still unpopulated (``0`` / ``0.0``
+    / ``(0, 0, 0)``) are filled, so already-complete projects are untouched.
+    Image dimensions come from the image files via :func:`image_dimensions`;
+    atlas resolution and shape come from ``atlas`` if supplied, else from a
+    freshly constructed :class:`~verso.engine.atlas.AtlasVolume`.
 
     Args:
         project: Project to update in place.
@@ -50,7 +55,8 @@ def backfill_metadata(
 
     Raises:
         FileNotFoundError: If an image needed for dimensions is missing.
-        RuntimeError: If the atlas metadata cannot be obtained.
+        AtlasUnavailableError: If the atlas metadata cannot be obtained (e.g. the
+            atlas is not cached locally and cannot be downloaded).
     """
     from verso.engine.io.image_io import ensure_working_copy, image_dimensions
 
@@ -61,7 +67,7 @@ def backfill_metadata(
             orig = _resolve(section.original_path, project_dir)
             if not orig.exists():
                 raise FileNotFoundError(
-                    f"Cannot backfill dimensions for section {section.id!r}: "
+                    f"Cannot populate dimensions for section {section.id!r}: "
                     f"original image not found at {orig}"
                 )
             section.resolution_original_wh = image_dimensions(orig)
@@ -72,7 +78,7 @@ def backfill_metadata(
                 # is absent (e.g. generation was skipped at import).
                 if ensure_working_copy(section, project.working_scale) is None:
                     raise FileNotFoundError(
-                        f"Cannot backfill dimensions for section {section.id!r}: "
+                        f"Cannot populate dimensions for section {section.id!r}: "
                         f"thumbnail missing and could not be regenerated from "
                         f"{_resolve(section.original_path, project_dir)}"
                     )
@@ -86,8 +92,8 @@ def backfill_metadata(
 
                 atlas = AtlasVolume(ref.name)
             except Exception as exc:
-                raise RuntimeError(
-                    f"Cannot backfill atlas metadata for {ref.name!r}: {exc}"
+                raise AtlasUnavailableError(
+                    f"Cannot populate atlas metadata for {ref.name!r}: {exc}"
                 ) from exc
         ref.resolution_um = float(atlas.resolution_um)
         ref.shape = tuple(int(v) for v in atlas.shape)  # type: ignore[assignment]
