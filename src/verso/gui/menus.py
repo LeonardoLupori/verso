@@ -178,7 +178,7 @@ def build_toolbar(window: MainWindow) -> None:
     )
     window.addToolBar(Qt.ToolBarArea.TopToolBarArea, tb)
 
-    window._view_buttons: list[QPushButton] = []
+    window._view_buttons = []
     view_specs = [
         ("Overview", VIEW_OVERVIEW),
         ("Preprocess", VIEW_PREP),

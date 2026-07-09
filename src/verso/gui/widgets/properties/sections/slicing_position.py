@@ -6,6 +6,8 @@ import pyqtgraph as pg
 from PyQt6.QtGui import QPalette
 from PyQt6.QtWidgets import QGroupBox, QSizePolicy, QVBoxLayout
 
+from verso.gui.utils import require
+
 
 class SlicingPositionBox(QGroupBox):
     def __init__(self) -> None:
@@ -17,10 +19,10 @@ class SlicingPositionBox(QGroupBox):
         # paints with the app palette's Window color. pyqtgraph ignores the Qt
         # palette, so we feed it that color explicitly rather than hardcoding.
         bg = self.palette().color(QPalette.ColorRole.Window)
-        self._plot = pg.PlotWidget(background=bg)
+        self._plot = pg.PlotWidget(background=bg.name())
         self._plot.setFixedHeight(200)
         self._plot.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        pi = self._plot.getPlotItem()
+        pi = require(self._plot.getPlotItem())
         pi.hideAxis("top")
         pi.hideAxis("right")
         pi.getAxis("bottom").setLabel("Slice index", color="#aaa")
@@ -37,7 +39,7 @@ class SlicingPositionBox(QGroupBox):
         The group box title stays axis-agnostic ("Slicing position"); only the
         y-axis label reflects the actual interpolation axis and units.
         """
-        self._plot.getPlotItem().getAxis("left").setLabel(f"{name} (mm)", color="#aaa")
+        require(self._plot.getPlotItem()).getAxis("left").setLabel(f"{name} (mm)", color="#aaa")
 
     # Translucency for the dots so they blend into the plot background; the hues
     # themselves come from status.STATUS_COLOR (the filmstrip's traffic lights).
@@ -53,7 +55,7 @@ class SlicingPositionBox(QGroupBox):
         """
         from verso.engine.model.status import STATUS_COLOR, section_step_status
 
-        pi = self._plot.getPlotItem()
+        pi = require(self._plot.getPlotItem())
         pi.clear()
 
         if not sections:

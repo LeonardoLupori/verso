@@ -39,6 +39,8 @@ class _KeyStateFilter(QObject):
     window, etc).
     """
 
+    _instance: ClassVar[_KeyStateFilter | None] = None
+
     def eventFilter(self, _: QObject, event: QEvent) -> bool:
         if not isinstance(event, QKeyEvent):
             return False
@@ -71,7 +73,7 @@ class _KeyStateFilter(QObject):
 def ensure_key_state_filter() -> None:
     """Install the singleton key-state event filter on the application once."""
     app = QApplication.instance()
-    if app is not None and getattr(app, "_verso_key_state_filter", None) is None:
+    if app is not None and _KeyStateFilter._instance is None:
         filt = _KeyStateFilter()
-        app._verso_key_state_filter = filt
+        _KeyStateFilter._instance = filt
         app.installEventFilter(filt)

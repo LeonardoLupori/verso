@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import itertools
 import re
+from collections.abc import Sequence
 from pathlib import Path
 
 import numpy as np
@@ -52,7 +53,7 @@ def _natural_key(stem: str) -> list[object]:
     return [int(chunk) if chunk.isdigit() else chunk for chunk in re.split(r"(\d+)", stem)]
 
 
-def guess_slice_indices(paths: list[str | Path]) -> list[int]:
+def guess_slice_indices(paths: Sequence[str | Path]) -> list[int]:
     """Guess a slice index per file from numbers embedded in the filenames.
 
     A batch of histology filenames usually shares a layout where one numeric

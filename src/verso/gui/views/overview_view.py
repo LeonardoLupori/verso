@@ -33,7 +33,7 @@ from PyQt6.QtWidgets import (
 
 from verso.engine.io.image_io import SUPPORTED_IMAGE_EXTENSIONS
 from verso.engine.model.alignment import AlignmentStatus
-from verso.engine.model.project import Project, Section
+from verso.engine.model.project import Preprocessing, Project, Section
 from verso.engine.model.status import STATUS_COLOR as _STATUS_COLOR
 from verso.engine.model.status import section_step_status
 from verso.gui.utils import colored_svg_pixmap, require
@@ -388,7 +388,7 @@ class OverviewView(QWidget):
         self, event: QDragEnterEvent | QDragMoveEvent | QDropEvent
     ) -> list[str]:
         """Local file paths from ``event`` whose extension looks like an image."""
-        mime = event.mimeData()
+        mime = require(event.mimeData())
         if not mime.hasUrls():
             return []
         return [
@@ -437,7 +437,7 @@ class OverviewView(QWidget):
         means a section was added, removed, or reordered, so the table must be
         rebuilt rather than updated in place.
         """
-        sections = self._project.sections
+        sections = require(self._project).sections
         if self._table.rowCount() != len(sections):
             return False
         return all(
@@ -446,7 +446,7 @@ class OverviewView(QWidget):
 
     def _rebuild(self) -> None:
         """Full structural rebuild — static + dynamic cells for every row."""
-        p = self._project
+        p = require(self._project)
         self._empty.setVisible(False)
         self._table.setVisible(True)
 
@@ -484,11 +484,11 @@ class OverviewView(QWidget):
             t.blockSignals(True)
             t.setCurrentCell(idx, 0)
             t.blockSignals(False)
-            t.scrollTo(t.model().index(idx, 0))
+            t.scrollTo(require(t.model()).index(idx, 0))
 
     def _refresh_status(self) -> None:
         """Update only the dynamic cells (and the summary) — no static churn."""
-        p = self._project
+        p = require(self._project)
         self._suppress_edits = True
         complete, in_progress = 0, 0
         for row, section in enumerate(p.sections):
@@ -542,7 +542,7 @@ class OverviewView(QWidget):
         # live in the baseline — so colour each sub-step on its own.
         mask_dirty = self._state.has_working(section.id, "prep")
         baseline = self._state.get_baseline(section.id, "prep")
-        if baseline is not None:
+        if isinstance(baseline, Preprocessing):
             flip_dirty = (
                 baseline.flip_horizontal != section.preprocessing.flip_horizontal
                 or baseline.flip_vertical != section.preprocessing.flip_vertical

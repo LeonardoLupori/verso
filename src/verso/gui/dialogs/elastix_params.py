@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
 )
 
 from verso.engine.model.elastix import ElastixParams
+from verso.gui.utils import require
 
 
 class ElastixParamsDialog(QDialog):
@@ -107,7 +108,7 @@ class ElastixParamsDialog(QDialog):
         )
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        buttons.button(QDialogButtonBox.StandardButton.RestoreDefaults).clicked.connect(
+        require(buttons.button(QDialogButtonBox.StandardButton.RestoreDefaults)).clicked.connect(
             self._restore_defaults
         )
         layout.addWidget(buttons)

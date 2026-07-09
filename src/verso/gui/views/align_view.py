@@ -32,8 +32,6 @@ from verso.gui.widgets.section_canvas_panel import SectionCanvasPanel
 from verso.gui.widgets.view_chrome import make_view_status_bar
 
 if TYPE_CHECKING:
-    from PyQt6.QtCore import pyqtBoundSignal  # noqa: F401
-
     from verso.engine.model.project import Section
     from verso.gui.state import AppState
 
@@ -359,10 +357,10 @@ class AlignView(BaseCanvasView):
         return is_anchored(section.alignment.stored_anchoring)
 
     def _capture_edit(self) -> list[float]:
-        return list(self._panel.section.alignment.current_anchoring)
+        return list(require(self._panel.section).alignment.current_anchoring)
 
     def _restore(self, snapshot: list[float]) -> None:
-        section = self._panel.section
+        section = require(self._panel.section)
         section.alignment.current_anchoring = snapshot
         self._sync_position_from_anchoring(snapshot)
         self._panel.update_overlay()
@@ -373,11 +371,11 @@ class AlignView(BaseCanvasView):
         return snapshot == base_anchoring
 
     def _saved_copy(self) -> Alignment:
-        return copy.deepcopy(self._panel.section.alignment)
+        return copy.deepcopy(require(self._panel.section).alignment)
 
     def _commit(self) -> bool:
         """Seed a default plane if untouched, then promote to stored + COMPLETE."""
-        section = self._panel.section
+        section = require(self._panel.section)
         atlas = self._panel.atlas
         raw = self._panel.raw_image
         if atlas is None:
@@ -397,7 +395,7 @@ class AlignView(BaseCanvasView):
         return True
 
     def _apply_saved(self, baseline: Alignment) -> None:
-        section = self._panel.section
+        section = require(self._panel.section)
         section.alignment = copy.deepcopy(baseline)
         self._sync_position_from_anchoring(section.alignment.current_anchoring)
         self._panel.update_overlay()
@@ -406,19 +404,23 @@ class AlignView(BaseCanvasView):
         """Wipe the alignment (and the slice's warp, which depended on it)."""
         from verso.engine.drafts import reset_alignment
 
-        reset_alignment(self._panel.section)
+        reset_alignment(require(self._panel.section))
 
     def _end_edit_gesture(self) -> None:
         self._end_pan_run()
 
     def _after_undo_restore(self) -> None:
-        self.anchoring_changed.emit(list(self._panel.section.alignment.current_anchoring))
+        self.anchoring_changed.emit(
+            list(require(self._panel.section).alignment.current_anchoring)
+        )
 
     def _after_save(self) -> None:
         self.alignments_updated.emit()
 
     def _after_revert(self) -> None:
-        self.anchoring_changed.emit(list(self._panel.section.alignment.current_anchoring))
+        self.anchoring_changed.emit(
+            list(require(self._panel.section).alignment.current_anchoring)
+        )
         self.alignments_updated.emit()
 
     def _after_clear(self) -> None:

@@ -184,6 +184,14 @@ class BaseCanvasView(QWidget):
         """Reset this step's state to default (clear)."""
         raise NotImplementedError
 
+    def has_persisted_state(self) -> bool:
+        """Whether Clear has saved/non-default state to wipe (enables Reset).
+
+        Public because :class:`~verso.gui.controllers.save_controller.SaveController`
+        reads it to drive each save bar's Reset button.
+        """
+        raise NotImplementedError
+
     # ------------------------------------------------------------------
     # Optional hooks — default no-ops
     # ------------------------------------------------------------------

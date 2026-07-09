@@ -8,9 +8,9 @@ the standard signal wiring so call sites in the main window stay short.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, cast
 
-from PyQt6.QtCore import QObject, QThread, pyqtSignal
+from PyQt6.QtCore import QObject, QThread, pyqtBoundSignal, pyqtSignal
 from PyQt6.QtWidgets import QProgressDialog, QWidget
 
 if TYPE_CHECKING:
@@ -140,12 +140,20 @@ class JobWorker(Protocol):
     (the three workers above). An optional ``error`` signal is discovered at
     runtime via ``getattr``, so it is not part of the protocol.
 
-    ``done`` is typed as ``pyqtSignal`` (the class-level descriptor type the
-    workers actually declare) so the structural match succeeds; accessing it on
-    an instance resolves through the descriptor to a ``pyqtBoundSignal``.
+    ``done`` is declared as a read-only property returning ``pyqtSignal`` —
+    the *declared* type of each concrete worker's ``done = pyqtSignal(...)``
+    attribute. A read-only property is checked covariantly, so ``pyqtSignal``
+    matches ``pyqtSignal`` and the workers satisfy the protocol structurally.
+    (A plain attribute would demand an *invariant* match and, more importantly,
+    the type checker does not apply the ``pyqtSignal`` descriptor's ``__get__``
+    when matching protocol members, so it compares the raw ``pyqtSignal`` type
+    rather than the ``pyqtBoundSignal`` an instance access resolves to.) The
+    bound signal — the thing with ``.connect`` — is recovered with a ``cast``
+    at the single connect site in :meth:`BackgroundJob.start`.
     """
 
-    done: pyqtSignal
+    @property
+    def done(self) -> pyqtSignal: ...
 
     def run(self) -> None: ...
     def moveToThread(self, thread: QThread) -> None: ...
@@ -201,8 +209,11 @@ class BackgroundJob[W: JobWorker]:
         thread = self._thread
         worker = self.worker
         thread.started.connect(worker.run)
-        worker.done.connect(on_done)
-        worker.done.connect(thread.quit)
+        # ``worker.done`` is declared ``pyqtSignal`` on the protocol; on the
+        # concrete QObject worker it is the bound signal that carries ``.connect``.
+        done = cast(pyqtBoundSignal, worker.done)
+        done.connect(on_done)
+        done.connect(thread.quit)
         error = getattr(worker, "error", None)
         if error is not None:
             if on_error is not None:

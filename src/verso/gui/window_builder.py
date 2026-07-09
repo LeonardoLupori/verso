@@ -85,7 +85,7 @@ def build_docks(window: MainWindow) -> None:
 
 def build_shortcuts(window: MainWindow) -> None:
     """Register the left/right arrow section-stepping shortcuts."""
-    window._section_shortcuts: list[QShortcut] = []
+    window._section_shortcuts = []
     for key, delta in (
         (Qt.Key.Key_Left, -1),
         (Qt.Key.Key_Right, 1),

@@ -57,6 +57,7 @@ from verso.engine.model.project import (
     Project,
     Section,
 )
+from verso.gui.utils import require
 
 # Default per-channel pseudo-color palettes used when seeding Project.channels
 # at project creation time.
@@ -300,14 +301,15 @@ class NewProjectDialog(QDialog):
             QAbstractItemView.EditTrigger.DoubleClicked
             | QAbstractItemView.EditTrigger.EditKeyPressed
         )
-        self._file_table.verticalHeader().setVisible(False)
+        v_header = require(self._file_table.verticalHeader())
+        v_header.setVisible(False)
+        v_header.setDefaultSectionSize(30)
         self._file_table.setMinimumHeight(160)
         self._file_table.setAlternatingRowColors(True)
         self._file_table.setShowGrid(False)
-        self._file_table.verticalHeader().setDefaultSectionSize(30)
-        self._file_table.horizontalHeader().setHighlightSections(False)
         self._file_table.setStyleSheet(_TABLE_STYLE)
-        header = self._file_table.horizontalHeader()
+        header = require(self._file_table.horizontalHeader())
+        header.setHighlightSections(False)
         header.setSectionResizeMode(_FILE_COL, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(_IDX_COL, QHeaderView.ResizeMode.ResizeToContents)
         # Slice index is the only editable column — render it as an input chip
@@ -368,8 +370,8 @@ class NewProjectDialog(QDialog):
         """Return ``(path, slice_index)`` for every table row, in row order."""
         entries: list[tuple[str, int]] = []
         for row in range(self._file_table.rowCount()):
-            file_item = self._file_table.item(row, _FILE_COL)
-            idx_item = self._file_table.item(row, _IDX_COL)
+            file_item = require(self._file_table.item(row, _FILE_COL))
+            idx_item = require(self._file_table.item(row, _IDX_COL))
             path = file_item.data(Qt.ItemDataRole.UserRole)
             entries.append((path, int(idx_item.data(Qt.ItemDataRole.UserRole))))
         return entries

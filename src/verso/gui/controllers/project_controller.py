@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import contextlib
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
@@ -27,6 +27,8 @@ from verso.gui.dialogs.new_project import NewProjectDialog
 from verso.gui.utils import warn_if_missing_dimensions
 
 if TYPE_CHECKING:
+    import numpy as np
+
     from verso.engine.model.project import Section
     from verso.gui.main_window import MainWindow
 
@@ -232,7 +234,9 @@ class ProjectController:
                 # Flip invalidation already happened at toggle time, so this only
                 # writes the mask (None when only flips changed) — it won't
                 # clobber an alignment the user redid after flipping.
-                mask = self._state.pop_working(section.id, "prep")
+                # The draft store is step-agnostic (returns ``object | None``);
+                # the prep payload is always the slice mask array.
+                mask = cast("np.ndarray | None", self._state.pop_working(section.id, "prep"))
                 commit_prep_draft(section, mask)
                 self._state.clear_dirty(section.id, "prep")
             # Commit align before warp so warp can reach COMPLETE.

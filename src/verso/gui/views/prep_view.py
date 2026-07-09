@@ -191,7 +191,7 @@ class PrepView(BaseCanvasView):
         # edit carried across navigation) overrides it for display.
         self._saved_mask = self._load_saved_mask()
         working = self._state.get_working(section.id, "prep")
-        self._current_mask = working if working is not None else self._saved_mask
+        self._current_mask = working if isinstance(working, np.ndarray) else self._saved_mask
         # Sync the last-saved Preprocessing baseline into AppState (a no-op while
         # dirty, so a stash carried across navigation survives — the section's
         # flips may already hold the unsaved edit).  The window refreshes the
@@ -341,7 +341,8 @@ class PrepView(BaseCanvasView):
 
     def _commit(self) -> bool:
         section = require(self._section)
-        mask = self._state.get_working(section.id, "prep")
+        working = self._state.get_working(section.id, "prep")
+        mask = working if isinstance(working, np.ndarray) else None
         changed = mask is not None or self._flip_is_dirty()
         commit_prep_draft(section, mask)
         self._state.pop_working(section.id, "prep")
@@ -414,7 +415,11 @@ class PrepView(BaseCanvasView):
             self._state.pop_working(self._section.id, "prep")
 
     def _mask_matches_saved(self) -> bool:
-        return self._saved_mask is not None and np.array_equal(self._current_mask, self._saved_mask)
+        return (
+            self._current_mask is not None
+            and self._saved_mask is not None
+            and np.array_equal(self._current_mask, self._saved_mask)
+        )
 
     def _flip_is_dirty(self) -> bool:
         if self._section is None:

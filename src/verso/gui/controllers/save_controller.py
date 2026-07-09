@@ -21,10 +21,25 @@ window in its coordinator role.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
+    from verso.engine.model.project import Section
     from verso.gui.main_window import MainWindow
+    from verso.gui.views.base_canvas_view import BaseCanvasView
+    from verso.gui.widgets.properties.sections.save_bar import SaveBarBox
+
+
+class _SaveBarPage(Protocol):
+    """A properties page that carries a save bar and can repaint from a section.
+
+    The three pages (Prep/Align/Warp) share no base class, only this structural
+    shape, so SaveController — their sole consumer — declares it here.
+    """
+
+    save_bar: SaveBarBox
+
+    def update_section(self, section: Section | None) -> None: ...
 
 
 class SaveController:
@@ -34,13 +49,13 @@ class SaveController:
         self._window = window
         self._state = window._state
         # step -> (view, properties page); filled by register() as views are wired.
-        self._views: dict[str, tuple[object, object]] = {}
+        self._views: dict[str, tuple[BaseCanvasView, _SaveBarPage]] = {}
         # Drive the save bars from the single source of truth: an edit that flips
         # a section's dirty flag emits AppState.dirty_changed, which enables or
         # disables the matching bar's Save / Clear buttons.
         self._state.dirty_changed.connect(self._on_dirty_changed)
 
-    def register(self, step: str, view, page) -> None:
+    def register(self, step: str, view: BaseCanvasView, page: _SaveBarPage) -> None:
         """Associate a step name ("prep"/"align"/"warp") with its view and page."""
         self._views[step] = (view, page)
 
@@ -85,7 +100,7 @@ class SaveController:
             # Clear writes to disk (it wipes persisted state), so use the save path.
             self._window.after_view_save()
 
-    def _refresh_page(self, step: str, page) -> None:
+    def _refresh_page(self, step: str, page: _SaveBarPage) -> None:
         """Re-render the properties page after a revert/clear.
 
         Only Prep repaints its page from the section (mask/flip controls); the
