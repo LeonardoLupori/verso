@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QTimer
@@ -10,7 +9,6 @@ from PyQt6.QtWidgets import (
     QAbstractSlider,
     QAbstractSpinBox,
     QComboBox,
-    QFileDialog,
     QLineEdit,
     QMainWindow,
     QMessageBox,
@@ -20,38 +18,68 @@ from PyQt6.QtWidgets import (
 
 from verso.engine.atlas import orientation_labels
 from verso.engine.model.alignment import AlignmentStatus
-from verso.engine.model.project import Project
+from verso.gui import menus, window_builder
 from verso.gui.controllers.export_controller import ExportController
 from verso.gui.controllers.job_controller import JobController
 from verso.gui.controllers.project_controller import ProjectController
 from verso.gui.controllers.save_controller import SaveController
 from verso.gui.dialogs.brightness import BrightnessDialog
 from verso.gui.dialogs.info import show_info_dialog
-from verso.gui.menus import (
-    VIEW_OVERVIEW,
-    VIEW_PREP,
-    build_menus,
-    build_toolbar,
-)
 from verso.gui.state import AppState
 from verso.gui.utils import warn_if_missing_dimensions
-from verso.gui.window_builder import (
-    build_central,
-    build_docks,
-    build_shortcuts,
-    build_status_bar,
-    connect_signals,
-)
 
 if TYPE_CHECKING:
-    pass
+    from PyQt6.QtGui import QAction, QShortcut
+    from PyQt6.QtWidgets import (
+        QDockWidget,
+        QLabel,
+        QPushButton,
+        QStackedWidget,
+        QStatusBar,
+    )
+
+    from verso.gui.views.align_view import AlignView
+    from verso.gui.views.overview_view import OverviewView
+    from verso.gui.views.prep_view import PrepView
+    from verso.gui.views.warp_view import WarpView
+    from verso.gui.widgets.filmstrip import Filmstrip
+    from verso.gui.widgets.filmstrip_status import FilmstripStatusPresenter
+    from verso.gui.widgets.properties import PropertiesPanel
+    from verso.gui.widgets.section_canvas_panel import SectionCanvasPanel
 
 
 class MainWindow(QMainWindow):
+    # Constructed by the window_builder and menus functions (called from
+    # __init__ below), which stash the handles back onto ``self``.
+    # Here these are declared so type checkers know these attributes exist wont complain
+    _stack: QStackedWidget
+    _overview: OverviewView
+    _prep: PrepView
+    _panel: SectionCanvasPanel
+    _align: AlignView
+    _warp: WarpView
+    _props: PropertiesPanel
+    _right_dock: QDockWidget
+    _filmstrip: Filmstrip
+    _bottom_dock: QDockWidget
+    _filmstrip_status: FilmstripStatusPresenter
+    _statusbar: QStatusBar
+    _section_shortcuts: list[QShortcut]
+    _view_buttons: list[QPushButton]
+    _project_label: QLabel
+    _act_reverse_proposal: QAction
+    _act_deepslice: QAction
+    _act_default_proposal: QAction
+    _act_clear_all_alignments: QAction
+    _act_clear_all_slice_masks: QAction
+    _act_clear_manual_cps: QAction
+    _act_clear_auto_cps: QAction
+    _act_batch_auto_cp: QAction
+
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("VERSO")
-        self.resize(1100, 600)
+        self.resize(1000, 600)
 
         self._state = AppState(self)
         self._current_mode = "overview"
@@ -74,15 +102,16 @@ class MainWindow(QMainWindow):
         self._saves = SaveController(self)
         self._jobs = JobController(self)
 
-        build_menus(self)
-        build_toolbar(self)
-        build_central(self)
-        build_docks(self)
-        connect_signals(self)
-        build_shortcuts(self)
-        build_status_bar(self)
+        # Build the UI menus and widgets form the window_builder file
+        menus.build_menus(self)
+        menus.build_toolbar(self)
+        window_builder.build_central(self)
+        window_builder.build_docks(self)
+        window_builder.connect_signals(self)
+        window_builder.build_shortcuts(self)
+        window_builder.build_status_bar(self)
 
-        self._switch_view(VIEW_OVERVIEW)
+        self._switch_view(menus.VIEW_OVERVIEW)
 
     def closeEvent(self, event) -> None:
         if self._jobs.warn_if_busy():
@@ -91,6 +120,8 @@ class MainWindow(QMainWindow):
         if not self.confirm_discard_active_draft():
             event.ignore()
             return
+        # Stop background work before the window is destroyed: the elastix
+        # child process, and the filmstrip/atlas loader QThreads.
         self._jobs.shutdown()
         self._filmstrip.shutdown()
         self._state.shutdown()
@@ -113,14 +144,6 @@ class MainWindow(QMainWindow):
         self._brightness_dialog.raise_()
         self._brightness_dialog.activateWindow()
 
-    def _on_cp_style_changed(self, size: int, shape: str, color: str) -> None:
-        self._warp.set_cp_style(size, shape, color)
-        project = self._state.project
-        if project is not None:
-            project.cp_size = size
-            project.cp_shape = shape
-            project.cp_color = color
-
     # ------------------------------------------------------------------
     # View switching
     # ------------------------------------------------------------------
@@ -135,6 +158,7 @@ class MainWindow(QMainWindow):
         elif self._current_mode == "warp":
             self._warp.deactivate()
 
+        # Make the selected view visible
         self._stack.setCurrentIndex(index)
 
         self._current_mode = entering_mode
@@ -143,7 +167,7 @@ class MainWindow(QMainWindow):
             btn.setChecked(i == index)
 
         # Show filmstrip outside Overview; enable stored-alignment badges in Align/Warp
-        self._bottom_dock.setVisible(index != VIEW_OVERVIEW)
+        self._bottom_dock.setVisible(index != menus.VIEW_OVERVIEW)
         if self._current_mode == "overview":
             self._overview.refresh()
 
@@ -163,15 +187,11 @@ class MainWindow(QMainWindow):
             # then ensure the section state is current.
             if self._current_mode == "align":
                 self._align.activate()
-                # The AP plot is no longer refreshed on every section change
-                # (only while Align is visible), so refresh it on entry to pick
-                # up any section change made while Align was hidden.
+                # Refresh the AP plot
                 self._update_slicing_position()
             else:
                 self._warp.activate()
-                # Spawn + warm the elastix child process now so the first
-                # "Auto-generate" click hits a warm optimizer instead of paying
-                # the ~15 s cold-start cost interactively.
+                # Spawn + warm the elastix child process now
                 self._jobs.warm_elastix_if_supported()
             # Push the working scale before load_section so any thumbnail
             # regeneration uses the project's scale, not the panel default.
@@ -189,50 +209,6 @@ class MainWindow(QMainWindow):
         self._update_reverse_order_enabled()
         self._update_deepslice_enabled()
         self._refresh_filmstrip_dots()
-
-    def _import_settings_from_project(self) -> None:
-        """Copy channel colors and control-point styling from another project."""
-        project = self._state.project
-        if project is None:
-            QMessageBox.information(
-                self,
-                "No project loaded",
-                "Open or create a project before importing settings.",
-            )
-            return
-
-        path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Import settings from project",
-            "",
-            "VERSO project (*.json);;JSON files (*.json);;All files (*)",
-        )
-        if not path:
-            return
-
-        try:
-            source = Project.load(Path(path))
-        except Exception as exc:
-            QMessageBox.critical(self, "Cannot read project", str(exc))
-            return
-
-        from verso.engine.io.project_metadata import import_project_styling
-
-        import_project_styling(project, source)
-
-        # Refresh widgets that depend on channel display or CP styling.
-        self._panel.set_channels(project.channels)
-        self._prep.set_channels(project.channels)
-        if self._brightness_dialog is not None:
-            self._brightness_dialog.set_channels(project.channels)
-        self._filmstrip.populate(project.sections, project.channels, project.working_scale)
-        self._props.warp.cp.apply_style(project.cp_size, project.cp_shape, project.cp_color)
-        self._warp.set_cp_style(project.cp_size, project.cp_shape, project.cp_color)
-
-        if self._state.project_path is not None:
-            self._project.write_project(self._state.project_path)
-
-        self._statusbar.showMessage(f"Imported settings from {Path(path).name}", 3000)
 
     # ------------------------------------------------------------------
     # Per-view draft save / clear / discard
@@ -426,7 +402,7 @@ class MainWindow(QMainWindow):
         if project.atlas:
             self._state.load_atlas(project.atlas.name)
 
-        self._switch_view(VIEW_OVERVIEW)
+        self._switch_view(menus.VIEW_OVERVIEW)
 
     def _seed_channels_from_first_section(self, project) -> None:
         """Populate project.channels when loading an old project that lacks them."""
@@ -522,7 +498,7 @@ class MainWindow(QMainWindow):
     def _on_section_activated(self, index: int) -> None:
         """Double-click in Overview → switch to Prep."""
         self._state.set_section(index)
-        self._switch_view(VIEW_PREP)
+        self._switch_view(menus.VIEW_PREP)
         self._prep.load_section(self._state.current_section)
 
     def _on_structure_changed(self) -> None:

@@ -56,7 +56,7 @@ def build_menus(window: MainWindow) -> None:
     file_menu.addSeparator()
 
     act_import_settings = QAction("Import &settings from project…", window)
-    act_import_settings.triggered.connect(window._import_settings_from_project)
+    act_import_settings.triggered.connect(window._project.import_settings_from_project)
     file_menu.addAction(act_import_settings)
 
     file_menu.addSeparator()

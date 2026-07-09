@@ -156,6 +156,19 @@ class WarpView(BaseCanvasView):
         if self._active:
             self._draw_control_points()
 
+    def on_cp_style_changed(self, size: int, shape: str, color: str) -> None:
+        """Handle a user-driven style change from the properties panel.
+
+        Unlike ``set_cp_style`` (also used to sync the view from a freshly
+        loaded project), this persists the new style back onto the project.
+        """
+        self.set_cp_style(size, shape, color)
+        project = self._state.project
+        if project is not None:
+            project.cp_size = size
+            project.cp_shape = shape
+            project.cp_color = color
+
     def apply_auto_control_points(self, cps: list[ControlPoint]) -> None:
         """Replace this slice's auto-generated control points with ``cps``.
 

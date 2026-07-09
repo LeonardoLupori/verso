@@ -175,7 +175,7 @@ def connect_signals(window: MainWindow) -> None:
     # when the user explicitly saves or clears, triggering re-interpolation.
     window._align.anchoring_changed.connect(window._on_anchoring_changed)
     window._align.alignments_updated.connect(window._on_alignments_updated)
-    window._props.warp.cp.style_changed.connect(window._on_cp_style_changed)
+    window._props.warp.cp.style_changed.connect(window._warp.on_cp_style_changed)
     window._props.warp.cp.autogen_requested.connect(window._jobs.auto_generate_warp_cps)
     window._props.warp.cp.edit_params_requested.connect(window._jobs.edit_elastix_params)
 

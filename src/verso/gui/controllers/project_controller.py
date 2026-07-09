@@ -105,6 +105,49 @@ class ProjectController:
         except Exception as exc:
             QMessageBox.critical(self._window, "Cannot save project", str(exc))
 
+    def import_settings_from_project(self) -> None:
+        """Copy channel colors and control-point styling from another project."""
+        project = self._state.project
+        if project is None:
+            QMessageBox.information(
+                self._window,
+                "No project loaded",
+                "Open or create a project before importing settings.",
+            )
+            return
+
+        path, _ = QFileDialog.getOpenFileName(
+            self._window,
+            "Import settings from project",
+            "",
+            "VERSO project (*.json);;JSON files (*.json);;All files (*)",
+        )
+        if not path:
+            return
+
+        try:
+            source = Project.load(Path(path))
+        except Exception as exc:
+            QMessageBox.critical(self._window, "Cannot read project", str(exc))
+            return
+
+        from verso.engine.io.project_metadata import import_project_styling
+
+        import_project_styling(project, source)
+
+        # Refresh widgets that depend on channel display or CP styling.
+        window = self._window
+        window._panel.set_channels(project.channels)
+        window._prep.set_channels(project.channels)
+        if window._brightness_dialog is not None:
+            window._brightness_dialog.set_channels(project.channels)
+        window._filmstrip.populate(project.sections, project.channels, project.working_scale)
+        window._props.warp.cp.apply_style(project.cp_size, project.cp_shape, project.cp_color)
+        window._warp.set_cp_style(project.cp_size, project.cp_shape, project.cp_color)
+
+        self.write_project()
+        self._state.show_status(f"Imported settings from {Path(path).name}")
+
     # ------------------------------------------------------------------
     # Opening / creating projects (each guarded by the unsaved-edits prompt)
     # ------------------------------------------------------------------
