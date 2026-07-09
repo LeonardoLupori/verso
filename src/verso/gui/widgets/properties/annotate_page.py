@@ -12,7 +12,7 @@ The page is a pure view: it emits intent signals and renders whatever
 from __future__ import annotations
 
 from PyQt6.QtCore import QSize, Qt, pyqtSignal
-from PyQt6.QtGui import QColor
+from PyQt6.QtGui import QAction, QColor
 from PyQt6.QtWidgets import (
     QColorDialog,
     QComboBox,
@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QPushButton,
     QScrollArea,
     QSlider,
@@ -28,7 +29,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from verso.engine.model.annotation import PointSeries
+from verso.engine.model.annotation import Annotation, AreaAnnotation
 from verso.engine.model.project import Section
 from verso.gui.utils import colored_svg_pixmap
 from verso.gui.widgets.properties._common import (
@@ -74,7 +75,8 @@ class _RenameLineEdit(QLineEdit):
 
 
 class AnnotatePage(QWidget):
-    new_requested = pyqtSignal()
+    new_point_requested = pyqtSignal()
+    new_area_requested = pyqtSignal()
     import_requested = pyqtSignal()
     delete_requested = pyqtSignal()
     active_changed = pyqtSignal(int)
@@ -124,11 +126,18 @@ class AnnotatePage(QWidget):
 
         actions = QHBoxLayout()
         actions.setSpacing(4)
-        self._new_btn = QPushButton("New")
+        self._new_btn = QPushButton("New ▾")
         self._new_btn.setToolTip("Create an empty annotation")
-        self._new_btn.clicked.connect(self.new_requested)
+        new_menu = QMenu(self._new_btn)
+        act_points = QAction("Point series", new_menu)
+        act_points.triggered.connect(self.new_point_requested)
+        act_area = QAction("Area", new_menu)
+        act_area.triggered.connect(self.new_area_requested)
+        new_menu.addAction(act_points)
+        new_menu.addAction(act_area)
+        self._new_btn.setMenu(new_menu)
         self._import_btn = QPushButton("From CSV…")
-        self._import_btn.setToolTip("Create an annotation from a CSV of points")
+        self._import_btn.setToolTip("Create a point series from a CSV of points")
         self._import_btn.clicked.connect(self.import_requested)
         self._delete_btn = QPushButton("Delete")
         self._delete_btn.setToolTip("Delete the selected annotation")
@@ -162,7 +171,7 @@ class AnnotatePage(QWidget):
         self._eye_btn.toggled.connect(self._on_eye_toggled)
         self._color_btn = QPushButton()
         self._color_btn.setFixedSize(20, 20)
-        self._color_btn.setToolTip("Point colour")
+        self._color_btn.setToolTip("Colour")
         self._color_btn.clicked.connect(self._on_color)
         title_row.addWidget(self._type_icon)
         title_row.addWidget(self._eye_btn)
@@ -185,8 +194,11 @@ class AnnotatePage(QWidget):
 
         self._count_label = QLabel("-")
         self._count_label.setStyleSheet("color: #888;")
-        form.addRow("Points:", self._count_label)
+        self._count_caption = QLabel("Points:")
+        form.addRow(self._count_caption, self._count_label)
 
+        # Point-series tools (Add/Remove). Hidden while an Area is selected; area
+        # brush/freehand tools are added in D5c.
         tool_row, self._tool_btns, tool_group = make_segmented_buttons(
             self,
             [("add", "Add"), ("remove", "Remove")],
@@ -194,7 +206,10 @@ class AnnotatePage(QWidget):
             initial_key="add",
         )
         tool_group.buttonClicked.connect(self._on_tool_clicked)
-        form.addRow("Tool:", tool_row)
+        self._tool_caption = QLabel("Tool:")
+        self._tool_widget = QWidget()
+        self._tool_widget.setLayout(tool_row)
+        form.addRow(self._tool_caption, self._tool_widget)
 
         self._selected_box = box
         return box
@@ -215,7 +230,7 @@ class AnnotatePage(QWidget):
     # Population (driven by AnnotationController)
     # ------------------------------------------------------------------
 
-    def set_annotations(self, annotations: list[PointSeries], active_index: int) -> None:
+    def set_annotations(self, annotations: list[Annotation], active_index: int) -> None:
         """Rebuild the dropdown and reflect the active annotation's controls."""
         self._combo.blockSignals(True)
         self._combo.clear()
@@ -234,7 +249,13 @@ class AnnotatePage(QWidget):
             self._title_edit.setText("")
             self._count_label.setText("-")
 
-    def _update_selected(self, ann: PointSeries) -> None:
+    def _update_selected(self, ann: Annotation) -> None:
+        is_area = isinstance(ann, AreaAnnotation)
+
+        icon = "area.svg" if is_area else "scatter.svg"
+        self._type_icon.setPixmap(colored_svg_pixmap(icon, "#aaaaaa", 16))
+        self._type_icon.setToolTip("Area" if is_area else "Point series")
+
         self._eye_btn.blockSignals(True)
         self._eye_btn.setChecked(ann.visible)
         self._eye_btn.setIcon(eye_icon(ann.visible))
@@ -249,7 +270,17 @@ class AnnotatePage(QWidget):
         self._opacity_slider.setValue(round(ann.opacity * 100))
         self._opacity_slider.blockSignals(False)
 
-        self._count_label.setText(str(len(ann.points)))
+        if is_area:
+            n = sum(1 for m in ann.masks.values() if m.any())
+            self._count_caption.setText("Sections:")
+            self._count_label.setText(str(n))
+        else:
+            self._count_caption.setText("Points:")
+            self._count_label.setText(str(len(ann.points)))
+
+        # Point tools apply only to point series (area tools arrive in D5c).
+        self._tool_caption.setVisible(not is_area)
+        self._tool_widget.setVisible(not is_area)
 
     def set_dirty(self, dirty: bool) -> None:
         self._save_btn.setEnabled(bool(dirty))
@@ -270,7 +301,7 @@ class AnnotatePage(QWidget):
         self.visibility_changed.emit(checked)
 
     def _on_color(self) -> None:
-        color = QColorDialog.getColor(QColor(*self._color_rgb), self, "Point colour")
+        color = QColorDialog.getColor(QColor(*self._color_rgb), self, "Annotation colour")
         if color.isValid():
             self._color_rgb = (color.red(), color.green(), color.blue())
             self._color_btn.setStyleSheet(color_swatch_style(self._color_rgb))

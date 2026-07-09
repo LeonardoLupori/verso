@@ -21,13 +21,15 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
+from verso.engine.model.annotation import AreaAnnotation, PointSeries
+from verso.engine.preprocessing import mask_to_rgba
 from verso.gui.utils import require
 from verso.gui.widgets.canvas import ImageCanvas
 from verso.gui.widgets.channel_display import push_channel_display
 from verso.gui.widgets.view_chrome import make_view_status_bar
 
 if TYPE_CHECKING:
-    from verso.engine.model.annotation import PointSeries
+    from verso.engine.model.annotation import Annotation
     from verso.engine.model.project import ChannelSpec, Section
     from verso.gui.state import AppState
 
@@ -57,7 +59,7 @@ class AnnotateView(QWidget):
         self._planes_version: int = 0
         # Annotations to render (pushed by AnnotationController) and the active
         # one (drawn with a white ring); coordinates are original-resolution px.
-        self._annotations: list[PointSeries] = []
+        self._annotations: list[Annotation] = []
         self._active_index: int = -1
         # Editing tool + in-progress lasso stroke (display coords).
         self._tool = "add"
@@ -162,7 +164,7 @@ class AnnotateView(QWidget):
         self._display_image()
         self._render_annotations()
 
-    def set_annotations(self, annotations: list[PointSeries], active_index: int = -1) -> None:
+    def set_annotations(self, annotations: list[Annotation], active_index: int = -1) -> None:
         """Set the annotations to render and which one is active (highlighted)."""
         self._annotations = list(annotations)
         self._active_index = active_index
@@ -183,16 +185,18 @@ class AnnotateView(QWidget):
         )
 
     def _render_annotations(self) -> None:
-        """Draw the current section's annotation points onto the canvas.
+        """Draw the current section's annotations onto the canvas.
 
-        Points are stored in original-resolution pixels keyed by image filename;
-        here they are filtered to the current section, scaled to working
+        Point series are filtered to the current section, scaled to working
         resolution, and mirrored to match the displayed (possibly flipped) image.
+        Area masks (working resolution, mirrored the same way) render as coloured
+        overlays below the points.
         """
         section = self._section
         project = self._state.project
         if self._raw_image is None or section is None or project is None:
             self._canvas.clear_annotations()
+            self._canvas.clear_area_masks()
             return
 
         filename = os.path.basename(section.original_path).lower()
@@ -201,46 +205,79 @@ class AnnotateView(QWidget):
         flip_h = section.preprocessing.flip_horizontal
         flip_v = section.preprocessing.flip_vertical
 
-        layers = []
+        point_layers = []
+        area_layers = []
         for i, ann in enumerate(self._annotations):
             if not ann.visible:
                 continue
-            xs: list[float] = []
-            ys: list[float] = []
-            for p in ann.points:
-                if os.path.basename(p.image).lower() != filename:
+            if isinstance(ann, PointSeries):
+                xs: list[float] = []
+                ys: list[float] = []
+                for p in ann.points:
+                    if os.path.basename(p.image).lower() != filename:
+                        continue
+                    x = p.x * scale
+                    y = p.y * scale
+                    if flip_h:
+                        x = (w - 1) - x
+                    if flip_v:
+                        y = (h - 1) - y
+                    xs.append(x)
+                    ys.append(y)
+                point_layers.append(
+                    {
+                        "xs": xs,
+                        "ys": ys,
+                        "color": ann.color,
+                        "opacity": ann.opacity,
+                        "size": _POINT_SIZE,
+                        "active": i == self._active_index,
+                    }
+                )
+            elif isinstance(ann, AreaAnnotation):
+                mask = self._section_mask(ann, filename)
+                if mask is None or not mask.any():
                     continue
-                x = p.x * scale
-                y = p.y * scale
+                disp = mask
                 if flip_h:
-                    x = (w - 1) - x
+                    disp = np.fliplr(disp)
                 if flip_v:
-                    y = (h - 1) - y
-                xs.append(x)
-                ys.append(y)
-            layers.append(
-                {
-                    "xs": xs,
-                    "ys": ys,
-                    "color": ann.color,
-                    "opacity": ann.opacity,
-                    "size": _POINT_SIZE,
-                    "active": i == self._active_index,
-                }
-            )
-        self._canvas.set_annotations(layers)
+                    disp = np.flipud(disp)
+                rgba = mask_to_rgba(
+                    np.ascontiguousarray(disp), negative=False, opacity=1.0, color=ann.color
+                )
+                area_layers.append({"rgba": rgba, "w": w, "h": h, "opacity": ann.opacity})
+
+        self._canvas.set_annotations(point_layers)
+        self._canvas.set_area_masks(area_layers)
+
+    @staticmethod
+    def _section_mask(area: AreaAnnotation, filename_lower: str) -> np.ndarray | None:
+        """The area's mask for a section (matched by filename, case-insensitive)."""
+        for key, mask in area.masks.items():
+            if os.path.basename(key).lower() == filename_lower:
+                return mask
+        return None
 
     # ------------------------------------------------------------------
     # Editing interactions
     # ------------------------------------------------------------------
 
+    def _active_annotation(self) -> Annotation | None:
+        if 0 <= self._active_index < len(self._annotations):
+            return self._annotations[self._active_index]
+        return None
+
     def _editable(self) -> bool:
-        """Editing is possible only with an image and an active annotation."""
+        """Point editing is possible only with an image and an active point series.
+
+        (Area editing is added in D5c; it branches on the active annotation type.)
+        """
         return (
             self._raw_image is not None
             and self._section is not None
             and self._state.project is not None
-            and 0 <= self._active_index < len(self._annotations)
+            and isinstance(self._active_annotation(), PointSeries)
         )
 
     def _on_canvas_clicked(self, x: float, y: float) -> None:

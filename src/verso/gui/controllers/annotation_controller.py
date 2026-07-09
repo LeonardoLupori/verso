@@ -29,7 +29,12 @@ from verso.engine.io.annotation_io import (
     load_points_csv,
     save_annotations,
 )
-from verso.engine.model.annotation import AnnotationPoint, PointSeries
+from verso.engine.model.annotation import (
+    Annotation,
+    AnnotationPoint,
+    AreaAnnotation,
+    PointSeries,
+)
 
 if TYPE_CHECKING:
     from verso.gui.main_window import MainWindow
@@ -55,7 +60,7 @@ class AnnotationController:
     def __init__(self, window: MainWindow) -> None:
         self._window = window
         self._state = window._state
-        self._annotations: list[PointSeries] = []
+        self._annotations: list[Annotation] = []
         self._active: int = -1
         self._dirty: bool = False
         self._undo_stack: list[tuple[int, list[AnnotationPoint]]] = []
@@ -65,7 +70,8 @@ class AnnotationController:
     # ------------------------------------------------------------------
 
     def connect_page(self, page: AnnotatePage) -> None:
-        page.new_requested.connect(self.new_annotation)
+        page.new_point_requested.connect(self.new_point_series)
+        page.new_area_requested.connect(self.new_area)
         page.import_requested.connect(self.import_csv)
         page.delete_requested.connect(self.delete_active)
         page.active_changed.connect(self.set_active)
@@ -98,7 +104,7 @@ class AnnotationController:
             self._active = 0
         self._refresh()
 
-    def _active_annotation(self) -> PointSeries | None:
+    def _active_annotation(self) -> Annotation | None:
         if 0 <= self._active < len(self._annotations):
             return self._annotations[self._active]
         return None
@@ -107,12 +113,23 @@ class AnnotationController:
     # Operations
     # ------------------------------------------------------------------
 
-    def new_annotation(self) -> None:
+    def new_point_series(self) -> None:
         if self._state.project is None:
             return
         color = self._PALETTE[len(self._annotations) % len(self._PALETTE)]
-        title = self._unique_title("annotation")
+        title = self._unique_title("points")
         self._annotations.append(PointSeries(title=title, color=color))
+        self._active = len(self._annotations) - 1
+        self._undo_stack.clear()
+        self._mark_dirty()
+        self._refresh()
+
+    def new_area(self) -> None:
+        if self._state.project is None:
+            return
+        color = self._PALETTE[len(self._annotations) % len(self._PALETTE)]
+        title = self._unique_title("area")
+        self._annotations.append(AreaAnnotation(title=title, color=color))
         self._active = len(self._annotations) - 1
         self._undo_stack.clear()
         self._mark_dirty()
@@ -224,10 +241,10 @@ class AnnotationController:
     # ------------------------------------------------------------------
 
     def add_point(self, x: float, y: float) -> None:
-        """Append a point (original-res px) to the active annotation."""
+        """Append a point (original-res px) to the active point series."""
         ann = self._active_annotation()
         section = self._state.current_section
-        if ann is None or section is None:
+        if not isinstance(ann, PointSeries) or section is None:
             return
         self._push_undo()
         image = os.path.basename(section.original_path)
@@ -244,7 +261,7 @@ class AnnotationController:
         """
         ann = self._active_annotation()
         section = self._state.current_section
-        if ann is None or section is None or len(polygon) < 3:
+        if not isinstance(ann, PointSeries) or section is None or len(polygon) < 3:
             return
         image = os.path.basename(section.original_path).lower()
         on_section = [

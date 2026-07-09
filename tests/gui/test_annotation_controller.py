@@ -13,7 +13,7 @@ from types import SimpleNamespace
 from PyQt6.QtWidgets import QMessageBox
 
 from verso.engine.io.annotation_io import load_annotations
-from verso.engine.model.annotation import AnnotationPoint
+from verso.engine.model.annotation import AnnotationPoint, AreaAnnotation
 from verso.gui.controllers.annotation_controller import AnnotationController
 
 
@@ -61,7 +61,7 @@ def _make_controller(tmp_path: Path, section_name: str | None = None) -> Annotat
 
 def test_new_annotation_marks_dirty_and_refreshes(tmp_path: Path):
     ctrl = _make_controller(tmp_path)
-    ctrl.new_annotation()
+    ctrl.new_point_series()
     assert ctrl.is_dirty()
     page = ctrl._window._props.annotate  # type: ignore[attr-defined]
     assert len(page.annotations) == 1
@@ -73,17 +73,41 @@ def test_new_annotation_marks_dirty_and_refreshes(tmp_path: Path):
 
 def test_new_annotations_get_distinct_titles_and_colors(tmp_path: Path):
     ctrl = _make_controller(tmp_path)
-    ctrl.new_annotation()
-    ctrl.new_annotation()
+    ctrl.new_point_series()
+    ctrl.new_point_series()
     titles = [a.title for a in ctrl._annotations]
     colors = [a.color for a in ctrl._annotations]
     assert len(set(titles)) == 2
     assert colors[0] != colors[1]
 
 
+def test_new_area_creates_area_annotation(tmp_path: Path):
+    ctrl = _make_controller(tmp_path)
+    ctrl.new_area()
+    assert len(ctrl._annotations) == 1
+    assert isinstance(ctrl._annotations[0], AreaAnnotation)
+    assert ctrl.is_dirty()
+
+
+def test_new_area_then_save_reload_round_trip(tmp_path: Path):
+    import numpy as np
+
+    ctrl = _make_controller(tmp_path)
+    ctrl.new_area()
+    ctrl.rename_active("injection")
+    ctrl._annotations[0].masks["sec.tif"] = np.ones((6, 6), dtype=bool)
+    assert ctrl.save() is True
+
+    ctrl2 = _make_controller(tmp_path)
+    ctrl2.load_for_project()
+    assert isinstance(ctrl2._annotations[0], AreaAnnotation)
+    assert ctrl2._annotations[0].title == "injection"
+    assert "sec.tif" in ctrl2._annotations[0].masks
+
+
 def test_edit_active_updates_model(tmp_path: Path):
     ctrl = _make_controller(tmp_path)
-    ctrl.new_annotation()
+    ctrl.new_point_series()
     ctrl.set_color((1, 2, 3))
     ctrl.set_opacity(0.25)
     ctrl.set_visibility(False)
@@ -97,27 +121,27 @@ def test_edit_active_updates_model(tmp_path: Path):
 
 def test_rename_dedupes_against_other_titles(tmp_path: Path):
     ctrl = _make_controller(tmp_path)
-    ctrl.new_annotation()  # "annotation"
-    ctrl.new_annotation()  # "annotation 2", active
-    ctrl.rename_active("annotation")
-    assert ctrl._annotations[1].title != "annotation"
+    ctrl.new_point_series()  # "points"
+    ctrl.new_point_series()  # "points 2", active
+    ctrl.rename_active("points")  # collides with the first
+    assert ctrl._annotations[1].title != "points"
 
 
 def test_delete_active_removes_and_prompts(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
     ctrl = _make_controller(tmp_path)
-    ctrl.new_annotation()
-    ctrl.new_annotation()
+    ctrl.new_point_series()
+    ctrl.new_point_series()
     ctrl.delete_active()
     assert len(ctrl._annotations) == 1
 
 
 def test_set_active_does_not_dirty(tmp_path: Path):
     ctrl = _make_controller(tmp_path)
-    ctrl.new_annotation()
+    ctrl.new_point_series()
     ctrl.save()  # clears dirty (path exists)
     assert not ctrl.is_dirty()
-    ctrl.new_annotation()
+    ctrl.new_point_series()
     ctrl.save()
     ctrl.set_active(0)
     assert not ctrl.is_dirty()
@@ -125,7 +149,7 @@ def test_set_active_does_not_dirty(tmp_path: Path):
 
 def test_save_and_reload_round_trip(tmp_path: Path):
     ctrl = _make_controller(tmp_path)
-    ctrl.new_annotation()
+    ctrl.new_point_series()
     ctrl.rename_active("cells")
     ctrl.set_color((10, 20, 30))
     assert ctrl.save() is True
@@ -147,7 +171,7 @@ def test_save_without_project_path_is_noop(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: None)
     ctrl = _make_controller(tmp_path)
     ctrl._state.project_path = None  # type: ignore[attr-defined]
-    ctrl.new_annotation()
+    ctrl.new_point_series()
     assert ctrl.save() is False
     # Still dirty (nothing was written).
     assert ctrl.is_dirty()
@@ -169,7 +193,7 @@ _SQUARE = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)]
 
 def test_add_point_appends_to_active_with_section_filename(tmp_path: Path):
     ctrl = _make_controller(tmp_path, "sec.tif")
-    ctrl.new_annotation()
+    ctrl.new_point_series()
     ctrl.add_point(100.0, 200.0)
     pts = ctrl._annotations[0].points
     assert len(pts) == 1
@@ -184,7 +208,7 @@ def test_add_point_without_active_is_noop(tmp_path: Path):
 
 def test_remove_in_polygon_removes_enclosed(tmp_path: Path):
     ctrl = _make_controller(tmp_path, "sec.tif")
-    ctrl.new_annotation()
+    ctrl.new_point_series()
     ctrl.add_point(5.0, 5.0)  # inside the square
     ctrl.add_point(50.0, 50.0)  # outside
     ctrl.remove_in_polygon(_SQUARE)
@@ -194,7 +218,7 @@ def test_remove_in_polygon_removes_enclosed(tmp_path: Path):
 
 def test_remove_only_affects_current_section(tmp_path: Path):
     ctrl = _make_controller(tmp_path, "sec.tif")
-    ctrl.new_annotation()
+    ctrl.new_point_series()
     # A point on a *different* image, inside the polygon, must survive.
     ctrl._annotations[0].points.append(AnnotationPoint(5.0, 5.0, "other.tif"))
     ctrl.add_point(5.0, 5.0)  # on sec.tif, inside
@@ -204,7 +228,7 @@ def test_remove_only_affects_current_section(tmp_path: Path):
 
 def test_undo_restores_previous_points(tmp_path: Path):
     ctrl = _make_controller(tmp_path, "sec.tif")
-    ctrl.new_annotation()
+    ctrl.new_point_series()
     ctrl.add_point(1.0, 1.0)
     ctrl.add_point(2.0, 2.0)
     ctrl.undo()

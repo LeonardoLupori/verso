@@ -41,6 +41,7 @@ from PyQt6.QtWidgets import (
 from verso.gui.utils import require
 from verso.gui.widgets.align_handle import AlignHandle
 from verso.gui.widgets.annotation_overlay import AnnotationLayer, AnnotationOverlay
+from verso.gui.widgets.area_overlay import AreaLayer, AreaOverlay
 from verso.gui.widgets.control_points import ControlPointOverlay
 from verso.gui.widgets.cursors import (
     make_circle_cursor,
@@ -254,6 +255,9 @@ class ImageCanvas(QWidget):
         # Point-annotation layers (Annotate mode). Manages its own scatter items
         # dynamically, so it needs the plot to add/remove them.
         self._annotation_overlay = AnnotationOverlay(self.plot)
+
+        # Area-mask layers (Annotate mode), rendered below the point overlay.
+        self._area_overlay = AreaOverlay(self.plot)
 
         # Live freehand stroke preview (Prep mode)
         self.stroke_item = pg.PlotCurveItem(
@@ -652,6 +656,13 @@ class ImageCanvas(QWidget):
     def clear_annotations(self) -> None:
         self._annotation_overlay.clear()
 
+    def set_area_masks(self, layers: list[AreaLayer]) -> None:
+        """Draw area-mask layers (Annotate mode). See AreaOverlay."""
+        self._area_overlay.set(layers)
+
+    def clear_area_masks(self) -> None:
+        self._area_overlay.clear()
+
     def set_stroke_preview(
         self,
         points: list[tuple[float, float]],
@@ -684,4 +695,5 @@ class ImageCanvas(QWidget):
         self._update_handle_visibility()
         self._cp_overlay.clear()
         self._annotation_overlay.clear()
+        self._area_overlay.clear()
         self.stroke_item.clear()

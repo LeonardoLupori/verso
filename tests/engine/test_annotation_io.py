@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
+
 from verso.engine.io.annotation_io import (
     annotations_dir,
     guess_point_columns,
@@ -14,7 +16,13 @@ from verso.engine.io.annotation_io import (
     slugify,
     write_points_csv,
 )
-from verso.engine.model.annotation import POINT_SERIES, AnnotationPoint, PointSeries
+from verso.engine.model.annotation import (
+    AREA,
+    POINT_SERIES,
+    AnnotationPoint,
+    AreaAnnotation,
+    PointSeries,
+)
 
 # ---------------------------------------------------------------------------
 # Model
@@ -158,3 +166,96 @@ def test_load_annotations_skips_folder_without_metadata(tmp_path: Path):
     (root / "not_an_annotation").mkdir(parents=True)
     (root / "not_an_annotation" / "points.csv").write_text("x,y,image\n", encoding="utf-8")
     assert load_annotations(tmp_path) == []
+
+
+# ---------------------------------------------------------------------------
+# Area annotations
+# ---------------------------------------------------------------------------
+
+
+def _mask(h: int, w: int, box: tuple[int, int, int, int]) -> np.ndarray:
+    """A bool mask of shape (h, w) with ``box`` = (r0, r1, c0, c1) set True."""
+    m = np.zeros((h, w), dtype=bool)
+    r0, r1, c0, c1 = box
+    m[r0:r1, c0:c1] = True
+    return m
+
+
+def test_area_metadata_round_trip():
+    area = AreaAnnotation(title="injection", color=(10, 20, 30), opacity=0.5, visible=False)
+    restored = AreaAnnotation.from_metadata(area.metadata_to_dict(), {})
+    assert restored == area
+    assert restored.type == AREA
+
+
+def test_area_metadata_defaults():
+    area = AreaAnnotation.from_metadata({"title": "x", "type": AREA}, {})
+    assert area.opacity == 0.5  # areas default to semi-transparent
+    assert area.visible is True
+    assert area.masks == {}
+
+
+def test_area_save_load_round_trip(tmp_path: Path):
+    masks = {
+        "s001.tif": _mask(20, 30, (2, 10, 3, 12)),
+        "s005.tif": _mask(20, 30, (5, 15, 8, 20)),
+    }
+    area = AreaAnnotation(title="injection", color=(255, 0, 0), opacity=0.4, masks=masks)
+    save_annotations(tmp_path, [area])
+
+    loaded = load_annotations(tmp_path)
+    assert len(loaded) == 1
+    got = loaded[0]
+    assert isinstance(got, AreaAnnotation)
+    assert got.title == "injection"
+    assert got.color == (255, 0, 0)
+    assert got.opacity == 0.4
+    assert set(got.masks) == {"s001.tif", "s005.tif"}
+    for name, mask in masks.items():
+        assert np.array_equal(got.masks[name], mask)
+    # Mask files are named <image>.png so the basename round-trips.
+    assert (annotations_dir(tmp_path) / "injection" / "masks" / "s001.tif.png").exists()
+
+
+def test_area_skips_and_prunes_empty_masks(tmp_path: Path):
+    area = AreaAnnotation(
+        title="a",
+        masks={"s001.tif": _mask(10, 10, (1, 5, 1, 5)), "s002.tif": np.zeros((10, 10), bool)},
+    )
+    save_annotations(tmp_path, [area])
+    masks_dir = annotations_dir(tmp_path) / "a" / "masks"
+    # The all-False mask leaves no PNG behind.
+    assert (masks_dir / "s001.tif.png").exists()
+    assert not (masks_dir / "s002.tif.png").exists()
+    assert set(load_annotations(tmp_path)[0].masks) == {"s001.tif"}
+
+
+def test_area_save_prunes_removed_section_mask(tmp_path: Path):
+    area = AreaAnnotation(
+        title="a",
+        masks={"s001.tif": _mask(10, 10, (1, 5, 1, 5)), "s002.tif": _mask(10, 10, (2, 6, 2, 6))},
+    )
+    save_annotations(tmp_path, [area])
+    masks_dir = annotations_dir(tmp_path) / "a" / "masks"
+    assert (masks_dir / "s002.tif.png").exists()
+
+    # Drop one section's mask and re-save: its PNG must be pruned.
+    area.masks.pop("s002.tif")
+    save_annotations(tmp_path, [area])
+    assert not (masks_dir / "s002.tif.png").exists()
+    assert (masks_dir / "s001.tif.png").exists()
+
+
+def test_mixed_point_and_area_round_trip(tmp_path: Path):
+    points = PointSeries(
+        title="cells", color=(0, 255, 0), points=[AnnotationPoint(1, 2, "s001.tif")]
+    )
+    area = AreaAnnotation(title="injection", masks={"s001.tif": _mask(8, 8, (1, 4, 1, 4))})
+    save_annotations(tmp_path, [points, area])
+
+    loaded = load_annotations(tmp_path)
+    kinds = {type(a).__name__ for a in loaded}
+    assert kinds == {"PointSeries", "AreaAnnotation"}
+    by_title = {a.title: a for a in loaded}
+    assert by_title["cells"].points == points.points
+    assert np.array_equal(by_title["injection"].masks["s001.tif"], area.masks["s001.tif"])
