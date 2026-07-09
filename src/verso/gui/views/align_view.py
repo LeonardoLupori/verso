@@ -410,17 +410,13 @@ class AlignView(BaseCanvasView):
         self._end_pan_run()
 
     def _after_undo_restore(self) -> None:
-        self.anchoring_changed.emit(
-            list(require(self._panel.section).alignment.current_anchoring)
-        )
+        self.anchoring_changed.emit(list(require(self._panel.section).alignment.current_anchoring))
 
     def _after_save(self) -> None:
         self.alignments_updated.emit()
 
     def _after_revert(self) -> None:
-        self.anchoring_changed.emit(
-            list(require(self._panel.section).alignment.current_anchoring)
-        )
+        self.anchoring_changed.emit(list(require(self._panel.section).alignment.current_anchoring))
         self.alignments_updated.emit()
 
     def _after_clear(self) -> None:
