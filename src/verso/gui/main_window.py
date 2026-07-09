@@ -290,7 +290,7 @@ class MainWindow(QMainWindow):
             self._project.write_project(self._state.project_path)
 
     def after_view_save(self) -> None:
-        """Refresh dependent UI after a per-view save/reset and write project."""
+        """Refresh dependent UI after a per-view save and write project."""
         self.sync_dependent_ui(write=True)
 
     def after_view_revert(self) -> None:
@@ -300,6 +300,25 @@ class MainWindow(QMainWindow):
         the last-saved version — no write is needed.
         """
         self.sync_dependent_ui()
+        self._refresh_active_page()
+
+    def after_view_clear(self) -> None:
+        """Refresh dependent UI after a per-view "Reset" (writes the wipe).
+
+        Clear wipes persisted state, so the project is written like a save; the
+        active page is repainted since the wipe can change section-derived
+        controls (the Prep flip checkboxes).
+        """
+        self.sync_dependent_ui(write=True)
+        self._refresh_active_page()
+
+    def _refresh_active_page(self) -> None:
+        """Repaint the active view's properties page from the current section.
+
+        Only Prep has section-derived controls to refresh; Align/Warp pages
+        ``update_section`` is a no-op, so this is uniform across modes.
+        """
+        self._props.update_section(self._state.current_section, self._current_mode)
 
     def _refresh_reset_enabled(self) -> None:
         """Re-sync every save bar (dirty + Reset) to the current section.

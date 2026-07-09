@@ -21,25 +21,12 @@ window in its coordinator role.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from verso.engine.model.project import Section
     from verso.gui.main_window import MainWindow
     from verso.gui.views.base_canvas_view import BaseCanvasView
     from verso.gui.widgets.properties.sections.save_bar import SaveBarBox
-
-
-class _SaveBarPage(Protocol):
-    """A properties page that carries a save bar and can repaint from a section.
-
-    The three pages (Prep/Align/Warp) share no base class, only this structural
-    shape, so SaveController — their sole consumer — declares it here.
-    """
-
-    save_bar: SaveBarBox
-
-    def update_section(self, section: Section | None) -> None: ...
 
 
 class SaveController:
@@ -48,16 +35,18 @@ class SaveController:
     def __init__(self, window: MainWindow) -> None:
         self._window = window
         self._state = window._state
-        # step -> (view, properties page); filled by register() as views are wired.
-        self._views: dict[str, tuple[BaseCanvasView, _SaveBarPage]] = {}
+        # step -> (view, its save bar); filled by register() as views are wired.
+        # Only the save bar is kept, not the whole properties page: repainting a
+        # page after revert/clear is a dependent-UI refresh the window owns.
+        self._views: dict[str, tuple[BaseCanvasView, SaveBarBox]] = {}
         # Drive the save bars from the single source of truth: an edit that flips
         # a section's dirty flag emits AppState.dirty_changed, which enables or
         # disables the matching bar's Save / Clear buttons.
         self._state.dirty_changed.connect(self._on_dirty_changed)
 
-    def register(self, step: str, view: BaseCanvasView, page: _SaveBarPage) -> None:
-        """Associate a step name ("prep"/"align"/"warp") with its view and page."""
-        self._views[step] = (view, page)
+    def register(self, step: str, view: BaseCanvasView, save_bar: SaveBarBox) -> None:
+        """Associate a step name ("prep"/"align"/"warp") with its view and save bar."""
+        self._views[step] = (view, save_bar)
 
     def refresh_all(self) -> None:
         """Re-sync every save bar's dirty + reset-enabled to the current section.
@@ -66,10 +55,10 @@ class SaveController:
         after the view has re-synced its baseline into AppState.
         """
         section = self._state.current_section
-        for step, (view, page) in self._views.items():
+        for step, (view, save_bar) in self._views.items():
             dirty = section is not None and self._state.is_dirty(section.id, step)
-            page.save_bar.set_dirty(dirty)
-            page.save_bar.set_reset_enabled(view.has_persisted_state())
+            save_bar.set_dirty(dirty)
+            save_bar.set_reset_enabled(view.has_persisted_state())
 
     def _on_dirty_changed(self, section_id: str, step: str) -> None:
         """Reflect one section/step's dirty flag onto its save bar while editing."""
@@ -79,8 +68,7 @@ class SaveController:
         entry = self._views.get(step)
         if entry is None:
             return
-        _view, page = entry
-        page.save_bar.set_dirty(self._state.is_dirty(section_id, step))
+        entry[1].set_dirty(self._state.is_dirty(section_id, step))
 
     def on_save(self, step: str) -> None:
         view, _ = self._views[step]
@@ -88,23 +76,11 @@ class SaveController:
             self._window.after_view_save()
 
     def on_revert(self, step: str) -> None:
-        view, page = self._views[step]
+        view, _ = self._views[step]
         if view.revert():
-            self._refresh_page(step, page)
             self._window.after_view_revert()
 
     def on_clear(self, step: str) -> None:
-        view, page = self._views[step]
+        view, _ = self._views[step]
         if view.clear():
-            self._refresh_page(step, page)
-            # Clear writes to disk (it wipes persisted state), so use the save path.
-            self._window.after_view_save()
-
-    def _refresh_page(self, step: str, page: _SaveBarPage) -> None:
-        """Re-render the properties page after a revert/clear.
-
-        Only Prep repaints its page from the section (mask/flip controls); the
-        Align/Warp pages have nothing section-derived to refresh.
-        """
-        if step == "prep":
-            page.update_section(self._state.current_section)
+            self._window.after_view_clear()

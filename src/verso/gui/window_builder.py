@@ -187,7 +187,7 @@ def connect_signals(window: MainWindow) -> None:
         ("warp", window._warp, window._props.warp),
     )
     for step, view, page in view_bindings:
-        window._saves.register(step, view, page)
+        window._saves.register(step, view, page.save_bar)
         # The views mutate AppState directly (the single source of truth) and
         # SaveController drives the save bars off AppState.dirty_changed — no
         # per-view dirty signal to mirror here.
