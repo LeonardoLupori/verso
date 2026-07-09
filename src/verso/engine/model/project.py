@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
@@ -44,12 +44,7 @@ class AtlasRef:
     shape: tuple[int, int, int] = (0, 0, 0)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "name": self.name,
-            "source": self.source,
-            "resolution_um": self.resolution_um,
-            "shape": list(self.shape),
-        }
+        return asdict(self)
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> AtlasRef:
@@ -72,12 +67,7 @@ class ChannelSpec:
     visible: bool = True
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "name": self.name,
-            "color": list(self.color),
-            "scale": self.scale,
-            "visible": self.visible,
-        }
+        return asdict(self)
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> ChannelSpec:
@@ -99,11 +89,7 @@ class Preprocessing:
     slice_mask_path: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "flip_horizontal": self.flip_horizontal,
-            "flip_vertical": self.flip_vertical,
-            "slice_mask_path": self.slice_mask_path,
-        }
+        return asdict(self)
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Preprocessing:
@@ -176,23 +162,12 @@ class DialogPrefs:
     show_warp_tutorial: bool = True
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "show_align_deletion": self.show_align_deletion,
-            "show_overview_tutorial": self.show_overview_tutorial,
-            "show_preprocessing_tutorial": self.show_preprocessing_tutorial,
-            "show_align_tutorial": self.show_align_tutorial,
-            "show_warp_tutorial": self.show_warp_tutorial,
-        }
+        return asdict(self)
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> DialogPrefs:
-        return cls(
-            show_align_deletion=d.get("show_align_deletion", True),
-            show_overview_tutorial=d.get("show_overview_tutorial", True),
-            show_preprocessing_tutorial=d.get("show_preprocessing_tutorial", True),
-            show_align_tutorial=d.get("show_align_tutorial", True),
-            show_warp_tutorial=d.get("show_warp_tutorial", True),
-        )
+        defaults = cls()
+        return cls(**{f.name: bool(d.get(f.name, getattr(defaults, f.name))) for f in fields(cls)})
 
 
 @dataclass
