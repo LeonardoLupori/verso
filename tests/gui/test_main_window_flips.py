@@ -1,7 +1,7 @@
 """Flip-invalidates-alignment behaviour under the persistent-edits model.
 
 Toggling a flip changes the image coordinate frame, so the alignment + warp are
-wiped the instant the flip is toggled (``MainWindow._invalidate_alignment_for_flip``)
+wiped the instant the flip is toggled (``ProjectController.invalidate_alignment_for_flip``)
 rather than deferred to prep save.  Doing it at toggle time keeps a re-alignment
 performed in the new orientation from being clobbered when the flip is later
 saved.  (That prep save itself never touches the alignment is covered at the
@@ -12,13 +12,14 @@ from types import SimpleNamespace
 
 from verso.engine.model.alignment import Alignment, AlignmentStatus, ControlPoint, WarpState
 from verso.engine.model.project import DialogPrefs, Section
-from verso.gui.main_window import MainWindow
+from verso.gui.controllers.project_controller import ProjectController
 
 
 class _FakeState:
     """Minimal AppState stand-in for the dirty registry / baselines."""
 
     section_index = 0
+    atlas = None  # keeps seed_alignment_to_default_proposal a no-op
 
     def __init__(self, *, project=None, dirty_steps=()):
         self.project = project
@@ -34,20 +35,14 @@ class _FakeState:
         return step in self._dirty_steps
 
 
-def _make_window_mock(state: _FakeState | None = None) -> SimpleNamespace:
-    """SimpleNamespace that quacks like MainWindow for the flip-invalidate path."""
-    mock = SimpleNamespace(
-        _state=state if state is not None else _FakeState(),
-        _overview=SimpleNamespace(refresh_row=lambda _i: None),
-        _refresh_filmstrip_dots=lambda: None,
-    )
-    mock._clear_alignment_view_state = lambda s: MainWindow._clear_alignment_view_state(mock, s)
-    mock._seed_alignment_to_default_proposal = lambda s: None
-    mock._invalidate_alignment_for_flip = lambda s: MainWindow._invalidate_alignment_for_flip(
-        mock, s
-    )
-    mock._confirm_flip = lambda s: MainWindow._confirm_flip(mock, s)
-    return mock
+def _controller(state: _FakeState | None = None) -> ProjectController:
+    """A ProjectController wired to a fake window carrying only the state.
+
+    ``__init__`` only stashes ``window`` (dialog parent) and ``window._state``, so
+    no QApplication/widgets are needed for the flip-domain methods under test.
+    """
+    window = SimpleNamespace(_state=state if state is not None else _FakeState())
+    return ProjectController(window)
 
 
 def _stored_anchoring_section() -> Section:
@@ -69,9 +64,9 @@ def _stored_anchoring_section() -> Section:
 
 def test_flip_toggle_invalidates_alignment_and_warp():
     section = _stored_anchoring_section()
-    window = _make_window_mock()
+    project = _controller()
 
-    window._invalidate_alignment_for_flip(section)
+    assert project.invalidate_alignment_for_flip(section) is True
 
     assert section.alignment.current_anchoring == [0.0] * 9
     assert section.alignment.status == AlignmentStatus.NOT_STARTED
@@ -83,10 +78,10 @@ def test_flip_toggle_invalidates_alignment_and_warp():
 
 def test_flip_toggle_noop_when_nothing_aligned():
     section = Section(id="s002", slice_index=2, original_path="s.png", thumbnail_path="s.png")
-    window = _make_window_mock()
+    project = _controller()
 
-    # No alignment to wipe — must not raise or fabricate state.
-    window._invalidate_alignment_for_flip(section)
+    # No alignment to wipe — must not raise, fabricate state, or report a wipe.
+    assert project.invalidate_alignment_for_flip(section) is False
 
     assert section.alignment.status == AlignmentStatus.NOT_STARTED
     assert section.alignment.current_anchoring == [0.0] * 9
@@ -115,8 +110,7 @@ def test_confirm_flip_skips_dialog_for_auto_interpolated_alignment(monkeypatch):
             source="series_interpolation",
         ),
     )
-    state = _FakeState(project=_project_with_dialog_enabled())
-    window = _make_window_mock(state)
+    project = _controller(_FakeState(project=_project_with_dialog_enabled()))
 
     called = False
 
@@ -129,14 +123,13 @@ def test_confirm_flip_skips_dialog_for_auto_interpolated_alignment(monkeypatch):
         "verso.gui.dialogs.flip_warning.confirm_flip_deletes_alignment", _fake_dialog
     )
 
-    assert window._confirm_flip(section) is True
+    assert project.confirm_flip(section) is True
     assert called is False
 
 
 def test_confirm_flip_shows_dialog_for_saved_alignment(monkeypatch):
     section = _stored_anchoring_section()
-    state = _FakeState(project=_project_with_dialog_enabled())
-    window = _make_window_mock(state)
+    project = _controller(_FakeState(project=_project_with_dialog_enabled()))
 
     called = False
 
@@ -149,15 +142,14 @@ def test_confirm_flip_shows_dialog_for_saved_alignment(monkeypatch):
         "verso.gui.dialogs.flip_warning.confirm_flip_deletes_alignment", _fake_dialog
     )
 
-    assert window._confirm_flip(section) is True
+    assert project.confirm_flip(section) is True
     assert called is True
 
 
 def test_confirm_flip_shows_dialog_for_dirty_unsaved_alignment(monkeypatch):
     """No saved alignment yet, but the align step has an in-progress unsaved edit."""
     section = Section(id="s004", slice_index=4, original_path="s.png", thumbnail_path="s.png")
-    state = _FakeState(project=_project_with_dialog_enabled(), dirty_steps={"align"})
-    window = _make_window_mock(state)
+    project = _controller(_FakeState(project=_project_with_dialog_enabled(), dirty_steps={"align"}))
 
     called = False
 
@@ -170,5 +162,5 @@ def test_confirm_flip_shows_dialog_for_dirty_unsaved_alignment(monkeypatch):
         "verso.gui.dialogs.flip_warning.confirm_flip_deletes_alignment", _fake_dialog
     )
 
-    assert window._confirm_flip(section) is True
+    assert project.confirm_flip(section) is True
     assert called is True

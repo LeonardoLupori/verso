@@ -137,5 +137,5 @@ def run(project_path: Path | None = None) -> None:
         QTimer.singleShot(100, lambda: window.setWindowIcon(app_icon))
 
     if project_path is not None:
-        window.open_project_path(project_path)
+        window._project.open_project_path(project_path)
     sys.exit(app.exec())

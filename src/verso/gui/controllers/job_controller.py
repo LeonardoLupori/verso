@@ -6,8 +6,10 @@ control-point generation — plus the batch clear/reverse operations and the war
 elastix child process. It holds the job references and exposes :meth:`is_busy`
 and :meth:`shutdown` for the window's close handling.
 
-Dependent-UI refreshes stay on the window (its coordinator role); this
-controller calls back into them through ``self._window``.
+Dependent-UI refreshes are requested by emitting ``AppState.sections_changed``
+(the window's single ``sync_dependent_ui`` slot reacts); status text goes through
+``AppState.status_message``. The window reference is kept only to parent modal
+dialogs, so this controller no longer reaches into window widgets.
 """
 
 from __future__ import annotations
@@ -32,8 +34,12 @@ class JobController:
     """Runs DeepSlice / batch-mask / auto-CP jobs and the batch clear operations."""
 
     def __init__(self, window: MainWindow) -> None:
+        # ``_window`` is used only to parent modal dialogs and to prompt for
+        # discard. Refresh/status/anchoring/persistence all go through ``_state``
+        # (emit ``sections_changed`` / ``status_message``) and ``_project``.
         self._window = window
         self._state = window._state
+        self._project = window._project
         self._deepslice_job: BackgroundJob[DeepSliceWorker] | None = None
         self._batch_mask_job: BackgroundJob[BatchMaskWorker] | None = None
         self._auto_cp_job: BackgroundJob[AutoCPWorker] | None = None
@@ -133,12 +139,8 @@ class JobController:
                 self._state.set_baseline(sid, "prep", copy.deepcopy(section.preprocessing))
                 self._state.mark_dirty(sid, "prep")
 
-        self._window._overview.refresh()
-        if self._window._current_mode == "prep":
-            self._window._prep.load_section(self._state.current_section)
-        self._window._refresh_properties()
-        self._window._refresh_filmstrip_dots()
-        self._window._statusbar.showMessage(f"Auto-detected {completed} slice masks", 5000)
+        self._state.notify_sections_changed()
+        self._state.show_status(f"Auto-detected {completed} slice masks")
         warn_errors(
             self._window,
             "Some masks failed",
@@ -172,19 +174,13 @@ class JobController:
 
         from verso.engine.drafts import reset_alignment
 
-        self._window._reverse_axis_proposal = not self._window._reverse_axis_proposal
-        self._window._align.set_reverse_axis(self._window._reverse_axis_proposal)
+        self._project.reverse_axis_proposal = not self._project.reverse_axis_proposal
         for section in project.sections:
             reset_alignment(section)
 
-        self._window._initialize_default_anchorings(project.sections)
-        self._window._sync_position_mm(project.sections)
-
-        self._window._overview.refresh()
-        self._window._on_section_changed(self._state.section_index)
-        self._window._update_slicing_position()
-        self._window._update_reverse_order_enabled()
-        self._window._update_deepslice_enabled()
+        self._project.initialize_default_anchorings(project.sections)
+        self._project.sync_position_mm(project.sections)
+        self._state.notify_sections_changed()
 
     # ------------------------------------------------------------------
     # DeepSlice
@@ -200,21 +196,21 @@ class JobController:
         from verso.gui.dialogs.bad_sections import BadSectionsDialog
 
         dlg = BadSectionsDialog(
-            project.sections, reverse_order=self._window._reverse_axis_proposal, parent=self._window
+            project.sections, reverse_order=self._project.reverse_axis_proposal, parent=self._window
         )
         if dlg.exec() != BadSectionsDialog.DialogCode.Accepted:
             return
         bad_ids = dlg.bad_section_ids()
-        self._window._reverse_axis_proposal = dlg.reverse_section_order()
+        self._project.reverse_axis_proposal = dlg.reverse_section_order()
 
-        self._window._update_deepslice_enabled(running=True)
-        self._window._statusbar.showMessage("Running DeepSlice suggestions...")
+        self._state.deepslice_running_changed.emit(True)
+        self._state.show_status("Running DeepSlice suggestions...")
 
         self._deepslice_job = BackgroundJob(
             self._window,
             DeepSliceWorker(
                 project,
-                reverse_section_order=self._window._reverse_axis_proposal,
+                reverse_section_order=self._project.reverse_axis_proposal,
                 bad_section_ids=bad_ids,
             ),
             title="DeepSlice",
@@ -246,10 +242,10 @@ class JobController:
             project,
             result,
             atlas.shape if atlas is not None else None,
-            reverse_axis=self._window._reverse_axis_proposal,
+            reverse_axis=self._project.reverse_axis_proposal,
         )
         if atlas is not None:
-            self._window._sync_position_mm(project.sections)
+            self._project.sync_position_mm(project.sections)
 
         # DeepSlice proposals are unsaved edits: flag the sections it touched as
         # dirty so the Overview table and filmstrip show them yellow until the
@@ -258,21 +254,18 @@ class JobController:
             self._state.set_baseline(section_id, "align", baselines[section_id])
             self._state.mark_dirty(section_id, "align")
 
-        self._window._overview.refresh()
-        # Reload the current view so the align SaveBar reflects the new dirty
-        # state; this also re-renders the panel for the active section.
-        self._window._on_section_changed(self._state.section_index)
-        self._window._refresh_filmstrip_dots()
-        self._window._update_slicing_position()
-        self._window._statusbar.showMessage(f"Applied {len(touched)} DeepSlice suggestions", 5000)
+        # Emitting reloads the active view (so the align SaveBar reflects the new
+        # dirty state), re-renders the panel, and refreshes overview/filmstrip.
+        self._state.notify_sections_changed()
+        self._state.show_status(f"Applied {len(touched)} DeepSlice suggestions")
 
     def _on_deepslice_error(self, message: str) -> None:
         QMessageBox.warning(self._window, "DeepSlice failed", message)
-        self._window._statusbar.showMessage("DeepSlice failed", 5000)
+        self._state.show_status("DeepSlice failed")
 
     def _on_deepslice_finished(self) -> None:
         self._deepslice_job = None
-        self._window._update_deepslice_enabled(running=False)
+        self._state.deepslice_running_changed.emit(False)
 
     def revert_to_default_proposal(self) -> None:
         project = self._state.project
@@ -286,14 +279,12 @@ class JobController:
         changed = reset_in_progress_to_default_proposals(
             project.sections,
             atlas.shape,
-            interpolation_axis=self._window._interpolation_axis(),
-            reverse_axis=self._window._reverse_axis_proposal,
+            interpolation_axis=self._project.interpolation_axis,
+            reverse_axis=self._project.reverse_axis_proposal,
         )
-        self._window._sync_position_mm(project.sections)
-        self._window._overview.refresh()
-        self._window._on_section_changed(self._state.section_index)
-        self._window._update_slicing_position()
-        self._window._statusbar.showMessage(f"Restored {changed} default proposals", 3000)
+        self._project.sync_position_mm(project.sections)
+        self._state.notify_sections_changed()
+        self._state.show_status(f"Restored {changed} default proposals")
 
     # ------------------------------------------------------------------
     # Batch clears
@@ -325,16 +316,14 @@ class JobController:
         changed = reset_in_progress_to_default_proposals(
             project.sections,
             atlas.shape,
-            interpolation_axis=self._window._interpolation_axis(),
-            reverse_axis=self._window._reverse_axis_proposal,
+            interpolation_axis=self._project.interpolation_axis,
+            reverse_axis=self._project.reverse_axis_proposal,
             include_complete=True,
         )
-        self._window._sync_position_mm(project.sections)
-        self._window._after_batch_clear()
-        self._window._statusbar.showMessage(
-            f"Cleared all alignments and restored {changed} default proposals",
-            5000,
-        )
+        self._project.sync_position_mm(project.sections)
+        self._project.write_project()
+        self._state.notify_sections_changed()
+        self._state.show_status(f"Cleared all alignments and restored {changed} default proposals")
 
     def clear_all_slice_masks(self) -> None:
         project = self._state.project
@@ -360,8 +349,9 @@ class JobController:
                     Path(old).unlink(missing_ok=True)
                 removed += 1
             section.preprocessing.slice_mask_path = None
-        self._window._after_batch_clear()
-        self._window._statusbar.showMessage(f"Cleared {removed} slice masks", 5000)
+        self._project.write_project()
+        self._state.notify_sections_changed()
+        self._state.show_status(f"Cleared {removed} slice masks")
 
     def clear_all_manual_cps(self) -> None:
         """Batch: drop every hand-placed control point, keeping auto ones."""
@@ -400,10 +390,9 @@ class JobController:
                 section.warp.status = AlignmentStatus.COMPLETE
             else:
                 section.warp.status = AlignmentStatus.IN_PROGRESS
-        self._window._after_batch_clear()
-        self._window._statusbar.showMessage(
-            f"Cleared {kind} control points on {cleared} sections", 5000
-        )
+        self._project.write_project()
+        self._state.notify_sections_changed()
+        self._state.show_status(f"Cleared {kind} control points on {cleared} sections")
 
     # ------------------------------------------------------------------
     # Automatic (elastix) control points
@@ -430,9 +419,8 @@ class JobController:
         dialog = ElastixParamsDialog(self._resolve_elastix_params(), self._window)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             project.elastix_params = dialog.get_params()
-            if self._state.project_path is not None:
-                self._window._write_project(self._state.project_path)
-            self._window._statusbar.showMessage("Saved automatic registration parameters", 4000)
+            self._project.write_project()
+            self._state.show_status("Saved automatic registration parameters")
 
     def auto_generate_warp_cps(self) -> None:
         """Generate control points for the current section (Warp view button)."""
@@ -517,7 +505,9 @@ class JobController:
             modal=True,
             min_width=350,
         )
-        self._window._update_deepslice_enabled()  # disable triggers while running
+        # Recompute batch-action availability (auto_cp_busy is now True → disabled)
+        # without a full refresh; running=False since DeepSlice is not running.
+        self._state.deepslice_running_changed.emit(False)
         self._auto_cp_job.start(on_done, self._on_auto_cp_finished)
 
     def _on_single_auto_cp_done(self, completed: int, errors: list[str]) -> None:
@@ -528,9 +518,11 @@ class JobController:
             cps = worker.results.get(section.id)
             if cps is not None:
                 n = len(cps)
+                # Deliver the result into the active Warp view's editing session
+                # (undo stack + dirty draft): the one place this controller drives
+                # a view directly, since it's a per-section edit, not a refresh.
                 self._window._warp.apply_auto_control_points(cps)
-        self._window._refresh_current_step_dot()
-        self._window._statusbar.showMessage(f"Generated {n} control points", 5000)
+        self._state.show_status(f"Generated {n} control points")
         warn_errors(
             self._window,
             "Some sections failed",
@@ -558,10 +550,9 @@ class JobController:
                     # Auto-only warp: a proposal awaiting review → yellow.
                     section.warp.status = AlignmentStatus.IN_PROGRESS
                 total += len(cps)
-        self._window._after_batch_clear()  # refresh dependent UI + persist project
-        self._window._statusbar.showMessage(
-            f"Generated {total} control points across {completed} sections", 6000
-        )
+        self._project.write_project()
+        self._state.notify_sections_changed()
+        self._state.show_status(f"Generated {total} control points across {completed} sections")
         warn_errors(
             self._window,
             "Some sections failed",
@@ -571,4 +562,5 @@ class JobController:
 
     def _on_auto_cp_finished(self) -> None:
         self._auto_cp_job = None
-        self._window._update_deepslice_enabled()
+        # Recompute batch-action availability now that the job is done.
+        self._state.deepslice_running_changed.emit(False)

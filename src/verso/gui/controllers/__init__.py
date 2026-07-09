@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from verso.gui.controllers.export_controller import ExportController
 from verso.gui.controllers.job_controller import JobController
+from verso.gui.controllers.project_controller import ProjectController
 from verso.gui.controllers.save_controller import SaveController
 
-__all__ = ["ExportController", "JobController", "SaveController"]
+__all__ = ["ExportController", "JobController", "ProjectController", "SaveController"]

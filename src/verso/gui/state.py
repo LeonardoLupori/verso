@@ -39,6 +39,18 @@ class AppState(QObject):
     atlas_changed = pyqtSignal()  # emitted when atlas finishes loading
     atlas_error = pyqtSignal(str)
     dirty_changed = pyqtSignal(str, str)  # (section_id, step) — edit registry change
+    # "Series content/status changed across one or more sections; re-render
+    # dependent UI." Distinct from section_changed(int), which is selection.
+    # Controllers emit this after mutating the model instead of poking the window.
+    sections_changed = pyqtSignal()
+    status_message = pyqtSignal(str)  # transient status-bar text
+    # The section *list* changed (add/remove/reorder), so list-dependent UI
+    # (filmstrip tiles, overview table) must be rebuilt — heavier than the
+    # status-only sections_changed, which only recolours existing dots/rows.
+    structure_changed = pyqtSignal()
+    # A DeepSlice run started (True) / ended (False) — drives the menu action's
+    # "running…" label and disabled state without a controller→window poke.
+    deepslice_running_changed = pyqtSignal(bool)
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -76,6 +88,18 @@ class AppState(QObject):
 
     def set_project_path(self, path: Path | None) -> None:
         self._project_path = path
+
+    # ------------------------------------------------------------------
+    # UI notifications (let controllers signal the window without a back-ref)
+    # ------------------------------------------------------------------
+
+    def notify_sections_changed(self) -> None:
+        """Signal that series content/status changed; dependent UI should refresh."""
+        self.sections_changed.emit()
+
+    def show_status(self, message: str) -> None:
+        """Post transient text to the status bar."""
+        self.status_message.emit(message)
 
     # ------------------------------------------------------------------
     # Edit registry (persistent unsaved-edit tracking) — delegates to DraftStore
