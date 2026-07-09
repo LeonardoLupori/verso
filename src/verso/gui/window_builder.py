@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import QDockWidget, QStackedWidget, QWidget
 
 from verso.gui.utils import require
 from verso.gui.views.align_view import AlignView
+from verso.gui.views.annotate_view import AnnotateView
 from verso.gui.views.overview_view import OverviewView
 from verso.gui.views.prep_view import PrepView
 from verso.gui.views.warp_view import WarpView
@@ -43,11 +44,13 @@ def build_central(window: MainWindow) -> None:
     window._panel = SectionCanvasPanel()
     window._align = AlignView(window._panel, window._state)
     window._warp = WarpView(window._panel, window._state)
+    window._annotate = AnnotateView(window._state)
 
     window._stack.addWidget(window._overview)  # 0
     window._stack.addWidget(window._prep)  # 1
     window._stack.addWidget(window._align)  # 2
     window._stack.addWidget(window._warp)  # 3
+    window._stack.addWidget(window._annotate)  # 4
 
     # Park the panel inside AlignView's slot immediately.  If we left it as
     # a free-floating child of MainWindow (the default when ``SectionCanvasPanel``

@@ -20,6 +20,11 @@ their own submodules, e.g.:
 """
 
 from verso.engine.atlas import AtlasVolume, orientation_labels
+from verso.engine.io.annotation_io import (
+    annotations_dir,
+    load_annotations,
+    save_annotations,
+)
 from verso.engine.io.export_images import ExportOptions, export_section
 from verso.engine.io.export_stack import ExportStackOptions, export_aligned_stack
 from verso.engine.io.quint_io import (
@@ -30,6 +35,7 @@ from verso.engine.io.quint_io import (
     save_visualign,
 )
 from verso.engine.model.alignment import Alignment, AlignmentStatus, ControlPoint, WarpState
+from verso.engine.model.annotation import AnnotationPoint, PointSeries
 from verso.engine.model.elastix import ElastixParams
 from verso.engine.model.project import (
     AtlasRef,
@@ -52,6 +58,7 @@ from verso.engine.warping import (
 __all__ = [
     "Alignment",
     "AlignmentStatus",
+    "AnnotationPoint",
     "AtlasRef",
     "AtlasToImageResult",
     "AtlasVolume",
@@ -61,18 +68,22 @@ __all__ = [
     "ElastixParams",
     "ExportOptions",
     "ExportStackOptions",
+    "PointSeries",
     "Preprocessing",
     "Project",
     "Section",
     "VersoRegistration",
     "WarpState",
+    "annotations_dir",
     "export_aligned_stack",
     "export_section",
     "find_atlas_position",
+    "load_annotations",
     "load_deepslice",
     "load_quicknii",
     "load_visualign",
     "orientation_labels",
+    "save_annotations",
     "save_quicknii",
     "save_visualign",
     "warp_overlay",

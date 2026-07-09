@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     )
 
     from verso.gui.views.align_view import AlignView
+    from verso.gui.views.annotate_view import AnnotateView
     from verso.gui.views.overview_view import OverviewView
     from verso.gui.views.prep_view import PrepView
     from verso.gui.views.warp_view import WarpView
@@ -58,6 +59,7 @@ class MainWindow(QMainWindow):
     _panel: SectionCanvasPanel
     _align: AlignView
     _warp: WarpView
+    _annotate: AnnotateView
     _props: PropertiesPanel
     _right_dock: QDockWidget
     _filmstrip: Filmstrip
@@ -148,7 +150,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _switch_view(self, index: int) -> None:
-        modes = ("overview", "prep", "align", "warp")
+        modes = ("overview", "prep", "align", "warp", "annotate")
         entering_mode = modes[index]
 
         # Release panel hooks from whichever Align/Warp view currently owns it.
@@ -181,6 +183,14 @@ class MainWindow(QMainWindow):
             # Pick up any brightness edits made while Prep was hidden.
             if project is not None:
                 self._prep.set_channels(project.channels)
+        elif self._current_mode == "annotate":
+            if self._annotate._section is section:
+                self._annotate.refresh_display()
+            else:
+                self._annotate.load_section(section)
+            # Pick up any brightness edits made while Annotate was hidden.
+            if project is not None:
+                self._annotate.set_channels(project.channels)
         elif self._current_mode in ("align", "warp"):
             # Activate the new view (reparents the shared panel + installs hooks),
             # then ensure the section state is current.
@@ -213,7 +223,11 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def active_view(self):
-        """The currently visible canvas view (Prep/Align/Warp), or None in Overview."""
+        """The currently visible canvas view (Prep/Align/Warp), or None otherwise.
+
+        The Annotate view has its own project-global save model and is not a
+        draft-tracked BaseCanvasView, so it is intentionally excluded here.
+        """
         if self._current_mode == "prep":
             return self._prep
         if self._current_mode == "align":
@@ -276,6 +290,8 @@ class MainWindow(QMainWindow):
             section = self._state.current_section
             if self._current_mode == "prep" and section is not None:
                 self._prep.load_section(section)
+            elif self._current_mode == "annotate" and section is not None:
+                self._annotate.load_section(section)
             elif self._current_mode in ("align", "warp"):
                 self._panel.load_section(section)
         if self._current_mode in ("align", "warp"):
@@ -363,6 +379,7 @@ class MainWindow(QMainWindow):
             self._set_project_views_enabled(False)
             self._prep.canvas.set_orientation_labels(None)
             self._panel.canvas.set_orientation_labels(None)
+            self._annotate.canvas.set_orientation_labels(None)
             return
 
         self._set_project_views_enabled(True)
@@ -375,6 +392,7 @@ class MainWindow(QMainWindow):
         labels = orientation_labels(project.interpolation_axis)
         self._prep.canvas.set_orientation_labels(labels)
         self._panel.canvas.set_orientation_labels(labels)
+        self._annotate.canvas.set_orientation_labels(labels)
 
         # Series interpolation needs atlas dimensions for the no-anchor and
         # one-anchor endpoint controls. If the atlas is still loading,
@@ -400,6 +418,7 @@ class MainWindow(QMainWindow):
         self._overview.load_project(project)
         self._filmstrip.populate(project.sections, project.channels, project.working_scale)
         self._prep.set_channels(project.channels)
+        self._annotate.set_channels(project.channels)
         self._panel.set_channels(project.channels)
         self._panel.set_working_scale(project.working_scale)
         if self._brightness_dialog is not None:
@@ -462,6 +481,8 @@ class MainWindow(QMainWindow):
 
         if self._current_mode == "prep":
             self._prep.load_section(section)
+        elif self._current_mode == "annotate":
+            self._annotate.load_section(section)
         elif self._current_mode in ("align", "warp"):
             self._panel.load_section(section)
 
@@ -601,6 +622,8 @@ class MainWindow(QMainWindow):
         # plane on the GPU, so the re-seed is essentially a LUT swap.
         if self._current_mode == "prep":
             self._prep.set_channels(channels)
+        elif self._current_mode == "annotate":
+            self._annotate.set_channels(channels)
         elif self._current_mode in ("align", "warp"):
             self._panel.set_channels(channels)
 
