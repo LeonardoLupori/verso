@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
 from verso.engine.atlas import orientation_labels
 from verso.engine.model.alignment import AlignmentStatus
 from verso.gui import menus, window_builder
+from verso.gui.controllers.annotation_controller import AnnotationController
 from verso.gui.controllers.export_controller import ExportController
 from verso.gui.controllers.job_controller import JobController
 from verso.gui.controllers.project_controller import ProjectController
@@ -102,6 +103,7 @@ class MainWindow(QMainWindow):
         self._export = ExportController(self)
         self._saves = SaveController(self)
         self._jobs = JobController(self)
+        self._annotations = AnnotationController(self)
 
         # Build the UI menus and widgets form the window_builder file
         menus.build_menus(self)
@@ -245,17 +247,25 @@ class MainWindow(QMainWindow):
     def confirm_discard_active_draft(self) -> bool:
         """Prompt when unsaved edits exist anywhere before a disruptive operation.
 
-        Offers Save all / Discard all / Cancel across every dirty section.
-        Returns True if the caller may proceed (nothing dirty, or the user chose
-        Save all / Discard all); False on Cancel (or a cancelled Save-As).
+        Offers Save all / Discard all / Cancel across every dirty section and any
+        unsaved annotation edits.  Returns True if the caller may proceed (nothing
+        dirty, or the user chose Save all / Discard all); False on Cancel (or a
+        cancelled Save-As).
         """
-        if not self._state.any_dirty():
+        annotations_dirty = self._annotations.is_dirty()
+        if not self._state.any_dirty() and not annotations_dirty:
             return True
+        parts = []
         n = len(self._state.dirty_sections())
+        if n:
+            parts.append(f"{n} section(s)")
+        if annotations_dirty:
+            parts.append("annotations")
+        where = " and ".join(parts)
         reply = QMessageBox.question(
             self,
             "Unsaved changes",
-            f"You have unsaved edits in {n} section(s). Save them before continuing?",
+            f"You have unsaved edits in {where}. Save them before continuing?",
             QMessageBox.StandardButton.Save
             | QMessageBox.StandardButton.Discard
             | QMessageBox.StandardButton.Cancel,
@@ -380,6 +390,7 @@ class MainWindow(QMainWindow):
             self._prep.canvas.set_orientation_labels(None)
             self._panel.canvas.set_orientation_labels(None)
             self._annotate.canvas.set_orientation_labels(None)
+            self._annotations.load_for_project()
             return
 
         self._set_project_views_enabled(True)
@@ -421,6 +432,7 @@ class MainWindow(QMainWindow):
         self._annotate.set_channels(project.channels)
         self._panel.set_channels(project.channels)
         self._panel.set_working_scale(project.working_scale)
+        self._annotations.load_for_project()
         if self._brightness_dialog is not None:
             self._brightness_dialog.set_channels(project.channels)
         self._props.warp.cp.apply_style(project.cp_size, project.cp_shape, project.cp_color)

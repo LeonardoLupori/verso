@@ -198,6 +198,16 @@ def connect_signals(window: MainWindow) -> None:
         page.save_bar.revert_requested.connect(lambda s=step: window._saves.on_revert(s))
         page.save_bar.reset_requested.connect(lambda s=step: window._saves.on_clear(s))
 
+    # Annotation manager (project-global; its own controller + save model).
+    window._annotations.connect_page(window._props.annotate)
+    # Point editing: the view emits intents, the controller mutates; the tool
+    # state is mirrored both ways so the page buttons and canvas stay in sync.
+    window._annotate.point_added.connect(window._annotations.add_point)
+    window._annotate.points_lassoed.connect(window._annotations.remove_in_polygon)
+    window._annotate.undo_requested.connect(window._annotations.undo)
+    window._annotate.tool_changed.connect(window._props.annotate.set_tool)
+    window._props.annotate.tool_changed.connect(window._annotate.set_tool)
+
     # A prep save/clear that flips the section invalidates its alignment+warp.
     window._prep.alignment_invalidated.connect(window._project.on_prep_invalidated_alignment)
     # CP add/delete changes the warp dot even when the dirty flag is unchanged

@@ -259,6 +259,13 @@ class ProjectController:
                 return False  # user cancelled the Save-As dialog
         else:
             self.write_project(self._state.project_path)
+
+        # 5. Flush unsaved annotations (a project-global resource with its own
+        #    folder). Guarded on dirty so untouched projects don't grow an empty
+        #    annotations/ folder on every save.
+        if self._window._annotations.is_dirty():
+            self._window._annotations.save()
+
         self._window.sync_dependent_ui()
         return True
 

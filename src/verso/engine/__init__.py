@@ -19,6 +19,7 @@ their own submodules, e.g.:
     from verso.engine.elastix import auto_control_points
 """
 
+from verso.engine.annotations import points_in_polygon
 from verso.engine.atlas import AtlasVolume, orientation_labels
 from verso.engine.io.annotation_io import (
     annotations_dir,
@@ -83,6 +84,7 @@ __all__ = [
     "load_quicknii",
     "load_visualign",
     "orientation_labels",
+    "points_in_polygon",
     "save_annotations",
     "save_quicknii",
     "save_visualign",

@@ -40,6 +40,7 @@ from PyQt6.QtWidgets import (
 
 from verso.gui.utils import require
 from verso.gui.widgets.align_handle import AlignHandle
+from verso.gui.widgets.annotation_overlay import AnnotationLayer, AnnotationOverlay
 from verso.gui.widgets.control_points import ControlPointOverlay
 from verso.gui.widgets.cursors import (
     make_circle_cursor,
@@ -75,7 +76,7 @@ class _OverlayViewBox(pg.ViewBox):
     canvas_dragged = pyqtSignal(float, float)  # drag update
     canvas_drag_ended = pyqtSignal(float, float)  # drag finish
 
-    _InteractionMode = Literal["align", "warp", "prep", "view"]
+    _InteractionMode = Literal["align", "warp", "prep", "annotate", "view"]
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -94,7 +95,7 @@ class _OverlayViewBox(pg.ViewBox):
             ev.accept()
             return
         if (
-            self._interaction_mode in ("warp", "prep")
+            self._interaction_mode in ("warp", "prep", "annotate")
             and ev.button() == Qt.MouseButton.LeftButton
             and not SpaceState.held
         ):
@@ -142,7 +143,7 @@ class _OverlayViewBox(pg.ViewBox):
                 # Default: drag anywhere else translates the atlas overlay.
                 self.overlay_panned.emit(p2.x() - p1.x(), p2.y() - p1.y())
         elif (
-            self._interaction_mode in ("warp", "prep")
+            self._interaction_mode in ("warp", "prep", "annotate")
             and not SpaceState.held
             and ev.button() == Qt.MouseButton.LeftButton
         ):
@@ -188,7 +189,7 @@ class ImageCanvas(QWidget):
     # content (e.g. the atlas outline) so it stays ~1 screen-pixel wide.
     view_range_changed = pyqtSignal()
 
-    _InteractionMode = Literal["align", "warp", "prep", "view"]
+    _InteractionMode = Literal["align", "warp", "prep", "annotate", "view"]
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -249,6 +250,10 @@ class ImageCanvas(QWidget):
         # Control-point dots + displacement vectors (Warp mode). Owns its own
         # graphics items; the canvas adds them to the plot at their z-values.
         self._cp_overlay = ControlPointOverlay()
+
+        # Point-annotation layers (Annotate mode). Manages its own scatter items
+        # dynamically, so it needs the plot to add/remove them.
+        self._annotation_overlay = AnnotationOverlay(self.plot)
 
         # Live freehand stroke preview (Prep mode)
         self.stroke_item = pg.PlotCurveItem(
@@ -571,6 +576,9 @@ class ImageCanvas(QWidget):
             self._refresh_align_cursor()
         elif self._interaction_mode == "prep":
             self._refresh_prep_cursor()
+        elif self._interaction_mode == "annotate":
+            if not self._apply_pan_cursor():
+                self.view.setCursor(Qt.CursorShape.CrossCursor)
         elif not self._apply_pan_cursor():
             self.view.unsetCursor()
 
@@ -637,6 +645,13 @@ class ImageCanvas(QWidget):
     def clear_control_points(self) -> None:
         self._cp_overlay.clear()
 
+    def set_annotations(self, layers: list[AnnotationLayer]) -> None:
+        """Draw point-annotation layers (Annotate mode). See AnnotationOverlay."""
+        self._annotation_overlay.set(layers)
+
+    def clear_annotations(self) -> None:
+        self._annotation_overlay.clear()
+
     def set_stroke_preview(
         self,
         points: list[tuple[float, float]],
@@ -668,4 +683,5 @@ class ImageCanvas(QWidget):
         self._overlay_present = False
         self._update_handle_visibility()
         self._cp_overlay.clear()
+        self._annotation_overlay.clear()
         self.stroke_item.clear()
