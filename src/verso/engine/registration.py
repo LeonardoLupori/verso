@@ -255,21 +255,7 @@ class VersoRegistration:
             raise ValueError(f"Section {snap.id!r} has no alignment; cannot map pixels.")
 
         pts = np.asarray(xy, dtype=np.float64).reshape(-1, 2)
-        if space == "full":
-            px = pts[:, 0] * snap.work_w / snap.full_w
-            py = pts[:, 1] * snap.work_h / snap.full_h
-        else:  # "working"
-            px, py = pts[:, 0].copy(), pts[:, 1].copy()
-
-        # Mirror on-disk (un-flipped) pixels into displayed section space.
-        if snap.flip_h:
-            px = snap.work_w - px
-        if snap.flip_v:
-            py = snap.work_h - py
-
-        s = px / snap.work_w
-        t = py / snap.work_h
-        st = np.column_stack([s, t])
+        st = self._image_px_to_st(snap, pts, space)
         if len(snap.src_px):
             uv = warp_points_section_to_atlas(
                 st, snap.src_px, snap.dst_px, snap.work_w, snap.work_h
@@ -277,11 +263,10 @@ class VersoRegistration:
         else:
             uv = st
 
-        voxel = (
-            snap.o[None, :] + uv[:, 0, None] * snap.u[None, :] + uv[:, 1, None] * snap.v[None, :]
-        )
+        voxel = self._st_to_voxel(snap, uv)
         coords = self._to_units(voxel, units)
         if return_valid:
+            s, t = st[:, 0], st[:, 1]
             inside = (s >= 0.0) & (s <= 1.0) & (t >= 0.0) & (t <= 1.0)
             return coords, inside
         return coords
@@ -350,16 +335,7 @@ class VersoRegistration:
             st = warp_points_atlas_to_section(
                 uv[better], snap.src_px, snap.dst_px, snap.work_w, snap.work_h
             )
-            px = st[:, 0] * snap.work_w
-            py = st[:, 1] * snap.work_h
-            # Un-mirror displayed section pixels back to on-disk orientation.
-            if snap.flip_h:
-                px = snap.work_w - px
-            if snap.flip_v:
-                py = snap.work_h - py
-            if space == "full":
-                px = px * snap.full_w / snap.work_w
-                py = py * snap.full_h / snap.work_h
+            px, py = self._st_to_image_px(snap, st, space)
 
             best_dist[better] = dist[better]
             section_id[better] = snap.id
@@ -453,11 +429,7 @@ class VersoRegistration:
             else:
                 uv = st
 
-            voxel = (
-                snap.o[None, :]
-                + uv[:, 0, None] * snap.u[None, :]
-                + uv[:, 1, None] * snap.v[None, :]
-            ).reshape(r1 - r0, out_w, 3)
+            voxel = self._st_to_voxel(snap, uv).reshape(r1 - r0, out_w, 3)
 
             if kind == "template":
                 chunk_gray, chunk_inside = atlas.sample_reference_at(voxel)
@@ -479,6 +451,71 @@ class VersoRegistration:
         if return_valid:
             return result, in_bounds
         return result
+
+    # -- coordinate plumbing -------------------------------------------------
+
+    @staticmethod
+    def _image_px_to_st(snap: _SectionSnapshot, pts: np.ndarray, space: str) -> np.ndarray:
+        """Image pixels (full/working, on-disk orientation) -> normalized display st (N,2).
+
+        Args:
+            snap: Section snapshot providing working/full dimensions and flips.
+            pts: ``(N, 2)`` array of image pixels in the requested ``space``.
+            space: ``"full"`` (original full-resolution pixels) or ``"working"``
+                (working/thumbnail-resolution pixels).
+
+        Returns:
+            An ``(N, 2)`` array of normalized display coordinates ``(s, t)``.
+        """
+        if space == "full":
+            px = pts[:, 0] * snap.work_w / snap.full_w
+            py = pts[:, 1] * snap.work_h / snap.full_h
+        else:  # "working"
+            px, py = pts[:, 0], pts[:, 1]
+        if snap.flip_h:
+            px = snap.work_w - px
+        if snap.flip_v:
+            py = snap.work_h - py
+        return np.column_stack([px / snap.work_w, py / snap.work_h])
+
+    @staticmethod
+    def _st_to_image_px(
+        snap: _SectionSnapshot, st: np.ndarray, space: str
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Normalized display st -> image pixels (px, py) in the requested space.
+
+        Args:
+            snap: Section snapshot providing working/full dimensions and flips.
+            st: ``(N, 2)`` array of normalized display coordinates ``(s, t)``.
+            space: ``"full"`` (original full-resolution pixels) or ``"working"``
+                (working/thumbnail-resolution pixels).
+
+        Returns:
+            A ``(px, py)`` tuple of ``(N,)`` arrays, image pixels in ``space``.
+        """
+        px = st[:, 0] * snap.work_w
+        py = st[:, 1] * snap.work_h
+        if snap.flip_h:
+            px = snap.work_w - px
+        if snap.flip_v:
+            py = snap.work_h - py
+        if space == "full":
+            px = px * snap.full_w / snap.work_w
+            py = py * snap.full_h / snap.work_h
+        return px, py
+
+    @staticmethod
+    def _st_to_voxel(snap: _SectionSnapshot, uv: np.ndarray) -> np.ndarray:
+        """Normalized atlas-plane coords -> atlas voxel via the anchoring affine (N,3).
+
+        Args:
+            snap: Section snapshot providing the anchoring origin/right/down vectors.
+            uv: ``(N, 2)`` array of normalized atlas-plane coordinates.
+
+        Returns:
+            An ``(N, 3)`` array of atlas voxel coordinates.
+        """
+        return snap.o[None, :] + uv[:, 0, None] * snap.u[None, :] + uv[:, 1, None] * snap.v[None, :]
 
     # -- units -------------------------------------------------------------
 

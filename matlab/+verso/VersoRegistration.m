@@ -100,32 +100,17 @@ classdef VersoRegistration < handle
                     "Section '%s' has no alignment; cannot map pixels.", snap.Id);
             end
 
-            if opts.Space == "full"
-                px = xy(:, 1) * snap.WorkW / snap.FullW;
-                py = xy(:, 2) * snap.WorkH / snap.FullH;
-            else
-                px = xy(:, 1);
-                py = xy(:, 2);
-            end
-
-            if snap.FlipH
-                px = snap.WorkW - px;
-            end
-            if snap.FlipV
-                py = snap.WorkH - py;
-            end
-
-            s = px / snap.WorkW;
-            t = py / snap.WorkH;
-            st = [s, t];
+            st = obj.imagePxToSt(snap, xy, opts.Space);
             if ~isempty(snap.SrcPx)
                 uv = warpPointsSectionToAtlas(st, snap.SrcPx, snap.DstPx, snap.WorkW, snap.WorkH);
             else
                 uv = st;
             end
 
-            voxel = snap.O + uv(:, 1) .* snap.U + uv(:, 2) .* snap.V;
+            voxel = obj.stToVoxel(snap, uv);
             coords = obj.toUnits(voxel, opts.Units);
+            s = st(:, 1);
+            t = st(:, 2);
             inside = (s >= 0.0 & s <= 1.0) & (t >= 0.0 & t <= 1.0);
         end
 
@@ -185,18 +170,7 @@ classdef VersoRegistration < handle
 
                 stBetter = warpPointsAtlasToSection( ...
                     uv(better, :), snap.SrcPx, snap.DstPx, snap.WorkW, snap.WorkH);
-                px = stBetter(:, 1) * snap.WorkW;
-                py = stBetter(:, 2) * snap.WorkH;
-                if snap.FlipH
-                    px = snap.WorkW - px;
-                end
-                if snap.FlipV
-                    py = snap.WorkH - py;
-                end
-                if opts.Space == "full"
-                    px = px * snap.FullW / snap.WorkW;
-                    py = py * snap.FullH / snap.WorkH;
-                end
+                [px, py] = obj.stToImagePx(snap, stBetter, opts.Space);
 
                 bestDist(better) = dist(better);
                 sectionId(better) = string(snap.Id);
@@ -291,7 +265,7 @@ classdef VersoRegistration < handle
                     uv = st;
                 end
 
-                voxelFlat = snap.O + uv(:, 1) .* snap.U + uv(:, 2) .* snap.V;  % (chunkRows*outW, 3)
+                voxelFlat = obj.stToVoxel(snap, uv);  % (chunkRows*outW, 3)
                 chunkRows = numel(rows0);
                 voxelGrid = reshape(voxelFlat, chunkRows, outW, 3);
 
@@ -428,6 +402,37 @@ classdef VersoRegistration < handle
                 otherwise  % "mm"
                     out = voxel * obj.ResolutionUm / 1000.0;
             end
+        end
+
+        function st = imagePxToSt(~, snap, xy, space)
+            % Image pixels (full/working, on-disk orientation) -> normalized display st (N,2).
+            if space == "full"
+                px = xy(:, 1) * snap.WorkW / snap.FullW;
+                py = xy(:, 2) * snap.WorkH / snap.FullH;
+            else
+                px = xy(:, 1);
+                py = xy(:, 2);
+            end
+            if snap.FlipH, px = snap.WorkW - px; end
+            if snap.FlipV, py = snap.WorkH - py; end
+            st = [px / snap.WorkW, py / snap.WorkH];
+        end
+
+        function [px, py] = stToImagePx(~, snap, st, space)
+            % Normalized display st -> image pixels (px, py) in the requested space.
+            px = st(:, 1) * snap.WorkW;
+            py = st(:, 2) * snap.WorkH;
+            if snap.FlipH, px = snap.WorkW - px; end
+            if snap.FlipV, py = snap.WorkH - py; end
+            if space == "full"
+                px = px * snap.FullW / snap.WorkW;
+                py = py * snap.FullH / snap.WorkH;
+            end
+        end
+
+        function voxel = stToVoxel(~, snap, uv)
+            % Normalized atlas-plane coords -> atlas voxel via the anchoring affine (N,3).
+            voxel = snap.O + uv(:, 1) .* snap.U + uv(:, 2) .* snap.V;
         end
     end
 end
