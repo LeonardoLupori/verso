@@ -8,7 +8,7 @@ it emits intent signals and renders whatever :meth:`update_selected` is handed.
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QColorDialog,
@@ -24,7 +24,11 @@ from PyQt6.QtWidgets import (
 
 from verso.engine.model.annotation import Annotation, AreaAnnotation
 from verso.gui.utils import colored_svg_pixmap
-from verso.gui.widgets.properties._common import color_swatch_style, make_segmented_buttons
+from verso.gui.widgets.properties._common import (
+    color_swatch_style,
+    colored_icon,
+    make_segmented_buttons,
+)
 
 
 class _RenameLineEdit(QLineEdit):
@@ -156,6 +160,11 @@ class EditAnnotationsBox(QGroupBox):
             initial_key="add",
         )
         tool_group.buttonClicked.connect(self._on_tool_clicked)
+        self._tool_btns["add"].setIcon(colored_icon("mouse-pointer-click.svg", "#ffffff"))
+        self._tool_btns["remove"].setIcon(colored_icon("lasso-select.svg", "#ffffff"))
+        for _btn in self._tool_btns.values():
+            _btn.setIconSize(QSize(14, 14))
+            _btn.setMinimumWidth(52)
         v.addLayout(tool_row)
 
         self._point_widget = box
@@ -174,6 +183,11 @@ class EditAnnotationsBox(QGroupBox):
             initial_key="brush",
         )
         area_group.buttonClicked.connect(self._on_area_tool_clicked)
+        self._area_tool_btns["freehand"].setIcon(colored_icon("lasso-select.svg", "#ffffff"))
+        self._area_tool_btns["brush"].setIcon(colored_icon("brush.svg", "#ffffff"))
+        for _btn in self._area_tool_btns.values():
+            _btn.setIconSize(QSize(14, 14))
+            _btn.setMinimumWidth(52)
         v.addLayout(area_tool_row)
 
         self._area_hint = QLabel("Hold Shift to erase")
