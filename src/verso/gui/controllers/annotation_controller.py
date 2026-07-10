@@ -39,6 +39,7 @@ from verso.engine.model.annotation import (
 )
 
 if TYPE_CHECKING:
+    from verso.gui.jobs import BackgroundJob
     from verso.gui.main_window import MainWindow
     from verso.gui.widgets.properties.annotate_page import AnnotatePage
 
@@ -67,6 +68,13 @@ class AnnotationController:
         self._active: int = -1
         self._dirty: bool = False
         self._undo_stack: list[Callable[[], None]] = []
+        # Background-load bookkeeping. ``_load_gen`` is bumped on every (re)load so
+        # a worker that finishes after the project changed again is ignored;
+        # ``_load_jobs`` keeps in-flight jobs referenced until their thread finishes
+        # (each job owns the worker QObject, which would otherwise be collected
+        # mid-run once this method's local goes out of scope).
+        self._load_gen: int = 0
+        self._load_jobs: set[BackgroundJob] = set()
         # Coalesces the O(N) filmstrip-marker rescan during a burst of point adds:
         # markers only change when a section gains its first point for the series,
         # so a stream of clicks pays the rescan once, after it settles.
@@ -100,20 +108,98 @@ class AnnotationController:
         return self._dirty
 
     def load_for_project(self) -> None:
-        """(Re)load annotations from disk for the current project."""
+        """(Re)load annotations from disk for the current project (synchronous).
+
+        Kept synchronous for scripting/tests and as the fallback the async path
+        degrades to. The GUI project-open path calls :meth:`load_for_project_async`
+        instead so a huge point series never blocks the window.
+        """
+        self._reset_for_load()
+        self._install_loaded(self._read_annotations())
+
+    def load_for_project_async(self) -> None:
+        """(Re)load annotations off the UI thread so project-open never blocks.
+
+        Clears the current annotations immediately (the view/manager show an empty
+        set right away), then parses ``annotations/`` in a worker thread and
+        installs the result when it finishes. ``load_annotations`` builds one
+        object per point, so a 500k+ point series takes a couple of seconds —
+        doing it here keeps the window responsive on open. Degrades to a
+        synchronous load when there is nothing to parse.
+
+        The worker start is deferred to the next event-loop turn: parsing is
+        pure-Python and CPU-bound, so it holds the GIL in bursts and would starve
+        the window's *first* paint (a white window on startup) if it began during
+        this call, which runs before the first paint. Posting it after the paint
+        events queued by project-open lets the populated window render first, then
+        the parse runs in the background.
+        """
+        self._reset_for_load()
+        self._refresh()  # paint the empty set now; the worker fills it in later
+        project = self._state.project
+        path = self._state.project_path
+        if project is None or path is None:
+            return
+        gen = self._load_gen
+        QTimer.singleShot(200, lambda: self._begin_load(path.parent, gen))
+
+    def _begin_load(self, project_dir: Path, gen: int) -> None:
+        """Start the deferred background parse, unless a newer load superseded it."""
+        if gen != self._load_gen:
+            return
+        from verso.gui.jobs import AnnotationLoadWorker, BackgroundJob
+
+        job = BackgroundJob(self._window, AnnotationLoadWorker(project_dir, gen), silent=True)
+        self._load_jobs.add(job)
+        # Both callbacks are bound methods of this main-thread controller, so Qt
+        # delivers them as queued connections back on the UI thread.
+        job.start(self._on_async_loaded, self._prune_finished_jobs)
+
+    def _on_async_loaded(self, annotations: list[Annotation], gen: int) -> None:
+        """Install annotations parsed by the worker, unless the load was superseded."""
+        if gen != self._load_gen:
+            return  # a newer (re)load started while this one was parsing
+        # If the user began creating annotations during the load (a narrow race:
+        # the app opens in Overview and the load is brief), keep their in-memory
+        # work rather than clobbering it with the on-disk set.
+        if self._dirty or self._annotations:
+            return
+        self._install_loaded(annotations)
+
+    def _prune_finished_jobs(self) -> None:
+        """Drop references to loader jobs whose thread has stopped."""
+        self._load_jobs = {j for j in self._load_jobs if j.is_running()}
+
+    def _reset_for_load(self) -> None:
+        """Clear annotation state and invalidate any in-flight background load."""
+        self._load_gen += 1
         self._annotations = []
         self._active = -1
         self._dirty = False
         self._undo_stack.clear()
+
+    def _read_annotations(self) -> list[Annotation]:
+        """Load annotations for the current project synchronously (empty on error)."""
         path = self._state.project_path
-        if self._state.project is not None and path is not None:
-            try:
-                self._annotations = load_annotations(path.parent)
-            except Exception:
-                self._annotations = []
-        if self._annotations:
-            self._active = 0
+        if self._state.project is None or path is None:
+            return []
+        try:
+            return load_annotations(path.parent)
+        except Exception:
+            return []
+
+    def _install_loaded(self, annotations: list[Annotation]) -> None:
+        """Adopt a freshly-loaded annotation list and refresh the UI."""
+        self._annotations = annotations
+        self._active = 0 if annotations else -1
         self._refresh()
+
+    def shutdown(self) -> None:
+        """Stop in-flight background loads before the window is destroyed."""
+        self._load_gen += 1  # ignore any result still arriving
+        for job in list(self._load_jobs):
+            job.stop()
+        self._load_jobs.clear()
 
     def _active_annotation(self) -> Annotation | None:
         if 0 <= self._active < len(self._annotations):

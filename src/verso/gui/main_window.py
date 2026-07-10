@@ -127,6 +127,7 @@ class MainWindow(QMainWindow):
         # child process, and the filmstrip/atlas loader QThreads.
         self._jobs.shutdown()
         self._filmstrip.shutdown()
+        self._annotations.shutdown()
         self._state.shutdown()
         super().closeEvent(event)
 
@@ -396,7 +397,7 @@ class MainWindow(QMainWindow):
             self._prep.canvas.set_orientation_labels(None)
             self._panel.canvas.set_orientation_labels(None)
             self._annotate.canvas.set_orientation_labels(None)
-            self._annotations.load_for_project()
+            self._annotations.load_for_project_async()
             return
 
         self._set_project_views_enabled(True)
@@ -438,7 +439,7 @@ class MainWindow(QMainWindow):
         self._annotate.set_channels(project.channels)
         self._panel.set_channels(project.channels)
         self._panel.set_working_scale(project.working_scale)
-        self._annotations.load_for_project()
+        self._annotations.load_for_project_async()
         if self._brightness_dialog is not None:
             self._brightness_dialog.set_channels(project.channels)
         self._props.warp.cp.apply_style(project.cp_size, project.cp_shape, project.cp_color)
