@@ -137,8 +137,38 @@ def load_points_csv(
 
 
 def read_points_csv(path: str | Path) -> list[AnnotationPoint]:
-    """Read a canonical ``x,y,image`` points CSV written by VERSO."""
-    return load_points_csv(path, "x", "y", "image", default_image="")
+    """Read a canonical ``x,y,image`` points CSV written by VERSO.
+
+    A dedicated fast path (column lookup once, then index access via
+    ``csv.reader``) rather than :func:`load_points_csv`'s per-row ``DictReader``:
+    a series can hold hundreds of thousands of points, and this is on the
+    project-open hot path, so avoiding a dict-per-row roughly halves the load
+    time. Column order is taken from the header (case-insensitive), so a file
+    written with a different column order still round-trips; rows whose x/y
+    cannot be parsed are skipped, matching :func:`load_points_csv`.
+    """
+    with open(path, newline="", encoding="utf-8") as fh:
+        reader = csv.reader(fh)
+        header = next(reader, None)
+        if header is None:
+            return []
+        lower = [str(h).strip().lower() for h in header]
+        x_i = lower.index("x") if "x" in lower else None
+        y_i = lower.index("y") if "y" in lower else None
+        img_i = lower.index("image") if "image" in lower else None
+        if x_i is None or y_i is None:
+            return []
+        points: list[AnnotationPoint] = []
+        append = points.append
+        for row in reader:
+            try:
+                x = float(row[x_i])
+                y = float(row[y_i])
+            except (ValueError, IndexError):
+                continue
+            image = row[img_i] if img_i is not None and img_i < len(row) else ""
+            append(AnnotationPoint(x=x, y=y, image=image))
+    return points
 
 
 # ---------------------------------------------------------------------------

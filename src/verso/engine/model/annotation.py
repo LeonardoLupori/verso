@@ -30,9 +30,13 @@ POINT_SERIES = "point_series"
 AREA = "area"
 
 
-@dataclass
+@dataclass(slots=True)
 class AnnotationPoint:
     """A single annotated point in original full-resolution image pixels.
+
+    ``slots=True``: a point series can hold hundreds of thousands of these, so
+    dropping each instance's ``__dict__`` is a large memory saving and a modest
+    construction speed-up when loading big ``points.csv`` files.
 
     Attributes:
         x: X coordinate in original-resolution pixels.
