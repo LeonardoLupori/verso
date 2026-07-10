@@ -91,17 +91,16 @@ class _OverlayViewBox(pg.ViewBox):
         self._align_handle = handle
 
     def mouseClickEvent(self, ev) -> None:
-        editing = self._interaction_mode in ("warp", "prep", "annotate")
-        # Double-click resets the zoom, but only outside the placement modes: in
-        # warp/prep/annotate every click places something, so Qt reporting the
-        # second of a rapid pair as a double-click would otherwise swallow it
-        # (and reset the view). There, treat it as an ordinary click instead.
-        if ev.double() and ev.button() == Qt.MouseButton.LeftButton and not editing:
+        # Middle-click resets the zoom (auto-range) in every mode. This replaces
+        # left double-click, which only worked outside the placement modes (in
+        # warp/prep/annotate a double-click's second press places a point) and so
+        # was inconsistent across views.
+        if ev.button() == Qt.MouseButton.MiddleButton:
             self.autoRange()
             ev.accept()
             return
         if (
-            editing
+            self._interaction_mode in ("warp", "prep", "annotate")
             and ev.button() == Qt.MouseButton.LeftButton
             and not SpaceState.held
         ):
