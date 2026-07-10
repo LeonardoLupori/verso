@@ -80,8 +80,8 @@ class MaskBox(QGroupBox):
             self,
             [("freehand", "Freehand"), ("brush", "Brush")],
             tooltips=[
-                "Freehand draw areas (F; hold shift to remove)",
-                "Paint pixels (B; hold shift to remove)",
+                "Freehand draw areas (F; hold shift to erase)",
+                "Paint pixels (B; hold shift to erase)",
             ],
             initial_key="freehand",
         )
@@ -91,6 +91,15 @@ class MaskBox(QGroupBox):
         for _btn in self._draw_mode_btns.values():
             _btn.setIconSize(QSize(14, 14))
         layout.addLayout(mode_row)
+                
+        # Small hint to Hold shift to erase, pulled up close to the mode buttons
+        layout.addSpacing(-4)
+        self._hint = QLabel("Hold Shift to erase")
+        self._hint.setStyleSheet("color: #888; font-size: 10px;")
+        self._hint.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        layout.addWidget(self._hint)
+        layout.addSpacing(-4)
+
 
         # Row 4: brush size slider
         self._brush_value = QLabel("20")
