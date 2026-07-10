@@ -61,6 +61,8 @@ class PointSeries:
     opacity: float = 1.0
     visible: bool = True
     points: list[AnnotationPoint] = field(default_factory=list)
+    #: Diameter (screen px) points are rendered at in the Annotate view.
+    point_size: int = 9
     #: Type discriminator persisted in annotation.json.
     type: str = POINT_SERIES
 
@@ -72,6 +74,7 @@ class PointSeries:
             "color": list(self.color),
             "opacity": self.opacity,
             "visible": self.visible,
+            "point_size": self.point_size,
         }
 
     @classmethod
@@ -84,6 +87,7 @@ class PointSeries:
             opacity=float(d.get("opacity", 1.0)),
             visible=bool(d.get("visible", True)),
             points=list(points),
+            point_size=int(d.get("point_size", 9)),
             type=str(d.get("type", POINT_SERIES)),
         )
 

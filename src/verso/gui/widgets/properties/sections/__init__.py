@@ -1,7 +1,9 @@
 """Self-contained property sections (one per QGroupBox)."""
 
 from verso.gui.widgets.properties.sections.control_points import ControlPointsBox
+from verso.gui.widgets.properties.sections.edit_annotations import EditAnnotationsBox
 from verso.gui.widgets.properties.sections.flip import FlipBox
+from verso.gui.widgets.properties.sections.manage_annotations import ManageAnnotationsBox
 from verso.gui.widgets.properties.sections.mask import MaskBox
 from verso.gui.widgets.properties.sections.overlay import OverlayBox
 from verso.gui.widgets.properties.sections.save_bar import SaveBarBox
@@ -9,7 +11,9 @@ from verso.gui.widgets.properties.sections.slicing_position import SlicingPositi
 
 __all__ = [
     "ControlPointsBox",
+    "EditAnnotationsBox",
     "FlipBox",
+    "ManageAnnotationsBox",
     "MaskBox",
     "OverlayBox",
     "SaveBarBox",

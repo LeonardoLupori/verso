@@ -91,7 +91,7 @@ class MaskBox(QGroupBox):
         for _btn in self._draw_mode_btns.values():
             _btn.setIconSize(QSize(14, 14))
         layout.addLayout(mode_row)
-                
+
         # Small hint to Hold shift to erase, pulled up close to the mode buttons
         layout.addSpacing(-4)
         self._hint = QLabel("Hold Shift to erase")
@@ -99,7 +99,6 @@ class MaskBox(QGroupBox):
         self._hint.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         layout.addWidget(self._hint)
         layout.addSpacing(-4)
-
 
         # Row 4: brush size slider
         self._brush_value = QLabel("20")

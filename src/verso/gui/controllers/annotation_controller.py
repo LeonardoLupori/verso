@@ -72,15 +72,16 @@ class AnnotationController:
     # ------------------------------------------------------------------
 
     def connect_page(self, page: AnnotatePage) -> None:
-        page.new_point_requested.connect(self.new_point_series)
-        page.new_area_requested.connect(self.new_area)
-        page.import_requested.connect(self.import_csv)
-        page.delete_requested.connect(self.delete_active)
-        page.active_changed.connect(self.set_active)
-        page.visibility_changed.connect(self.set_visibility)
-        page.color_changed.connect(self.set_color)
-        page.opacity_changed.connect(self.set_opacity)
-        page.rename_requested.connect(self.rename_active)
+        page.manager.new_point_requested.connect(self.new_point_series)
+        page.manager.new_area_requested.connect(self.new_area)
+        page.manager.import_requested.connect(self.import_csv)
+        page.manager.delete_requested.connect(self.delete_active)
+        page.manager.active_changed.connect(self.set_active)
+        page.manager.visibility_changed.connect(self.set_visibility)
+        page.selected.color_changed.connect(self.set_color)
+        page.selected.opacity_changed.connect(self.set_opacity)
+        page.selected.point_size_changed.connect(self.set_point_size)
+        page.selected.rename_requested.connect(self.rename_active)
         page.save_requested.connect(self.save)
 
     # ------------------------------------------------------------------
@@ -205,9 +206,11 @@ class AnnotationController:
         self._active = index
         self._refresh()
 
-    def set_visibility(self, visible: bool) -> None:
-        ann = self._active_annotation()
-        if ann is None or ann.visible == visible:
+    def set_visibility(self, index: int, visible: bool) -> None:
+        if not (0 <= index < len(self._annotations)):
+            return
+        ann = self._annotations[index]
+        if ann.visible == visible:
             return
         ann.visible = visible
         self._mark_dirty()
@@ -226,6 +229,14 @@ class AnnotationController:
         if ann is None or ann.opacity == opacity:
             return
         ann.opacity = opacity
+        self._mark_dirty()
+        self._refresh()
+
+    def set_point_size(self, size: int) -> None:
+        ann = self._active_annotation()
+        if not isinstance(ann, PointSeries) or ann.point_size == size:
+            return
+        ann.point_size = size
         self._mark_dirty()
         self._refresh()
 

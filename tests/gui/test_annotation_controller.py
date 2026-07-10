@@ -110,7 +110,7 @@ def test_edit_active_updates_model(tmp_path: Path):
     ctrl.new_point_series()
     ctrl.set_color((1, 2, 3))
     ctrl.set_opacity(0.25)
-    ctrl.set_visibility(False)
+    ctrl.set_visibility(0, False)
     ctrl.rename_active("my cells")
     ann = ctrl._annotations[0]
     assert ann.color == (1, 2, 3)

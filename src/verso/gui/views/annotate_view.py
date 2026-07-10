@@ -33,8 +33,6 @@ if TYPE_CHECKING:
     from verso.engine.model.project import ChannelSpec, Section
     from verso.gui.state import AppState
 
-# Diameter (screen px) of rendered annotation points.
-_POINT_SIZE = 9
 _LASSO_COLOR = (255, 90, 90)
 _DRAW_COLOR = (80, 160, 255)
 _ERASE_COLOR = (255, 90, 90)
@@ -287,7 +285,7 @@ class AnnotateView(QWidget):
                         "ys": ys,
                         "color": ann.color,
                         "opacity": ann.opacity,
-                        "size": _POINT_SIZE,
+                        "size": ann.point_size,
                         "active": i == self._active_index,
                     }
                 )
