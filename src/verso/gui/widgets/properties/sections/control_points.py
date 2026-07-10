@@ -2,19 +2,21 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QColorDialog,
     QComboBox,
     QGridLayout,
     QGroupBox,
+    QHBoxLayout,
     QLabel,
     QPushButton,
+    QSizePolicy,
     QSpinBox,
 )
 
-from verso.gui.widgets.properties._common import color_swatch_style
+from verso.gui.widgets.properties._common import color_swatch_style, colored_icon
 
 _CP_SHAPES = ["Circle", "Cross", "Square", "Diamond"]
 
@@ -32,6 +34,11 @@ class ControlPointsBox(QGroupBox):
         self._size_spin.setValue(10)
         self._size_spin.setSuffix(" px")
         self._size_spin.valueChanged.connect(self._emit_style)
+        # Let the spinbox shrink well below its natural width so it doesn't pin
+        # the panel wide; it stays compact (no grid stretch) and a spacer pushes
+        # the colour swatch to the right instead.
+        self._size_spin.setMinimumWidth(48)
+        self._size_spin.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
 
         self._shape_combo = QComboBox()
         self._shape_combo.addItems(_CP_SHAPES)
@@ -49,10 +56,18 @@ class ControlPointsBox(QGroupBox):
         layout.setHorizontalSpacing(8)
         layout.setVerticalSpacing(6)
         right_label = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-        layout.addWidget(QLabel("Size:"), 0, 0, alignment=right_label)
-        layout.addWidget(self._size_spin, 0, 1)
-        layout.addWidget(QLabel("Color:"), 0, 2, alignment=right_label)
-        layout.addWidget(self._color_btn, 0, 3, alignment=Qt.AlignmentFlag.AlignLeft)
+
+        # Row 0: compact "Size:" spinbox on the left, colour swatch pinned right
+        # with a stretch between them, so this row no longer forces a wide panel.
+        size_row = QHBoxLayout()
+        size_row.setSpacing(6)
+        size_row.addWidget(QLabel("Size:"))
+        size_row.addWidget(self._size_spin)
+        size_row.addStretch(1)
+        size_row.addWidget(QLabel("Color:"))
+        size_row.addWidget(self._color_btn)
+        layout.addLayout(size_row, 0, 0, 1, 4)
+
         layout.addWidget(QLabel("Shape:"), 1, 0, alignment=right_label)
         layout.addWidget(self._shape_combo, 1, 1, 1, 3)
 
@@ -62,14 +77,19 @@ class ControlPointsBox(QGroupBox):
             "to this section (elastix)."
         )
         self._autogen_btn.clicked.connect(self.autogen_requested)
-        self._params_btn = QPushButton("Parameters…")
+        self._params_btn = QPushButton()
+        self._params_btn.setIcon(colored_icon("settings.svg", "#ffffff"))
+        self._params_btn.setIconSize(QSize(16, 16))
         self._params_btn.setToolTip("Edit the automatic registration parameters.")
         self._params_btn.clicked.connect(self.edit_params_requested)
+        self._autogen_btn.setMinimumWidth(72)
         layout.addWidget(self._autogen_btn, 2, 0, 1, 3)
         layout.addWidget(self._params_btn, 2, 3)
 
+        # Column 1 stretches so the shape combo and Auto-generate button fill the
+        # width; column 3 stays tight so the settings icon button stays compact.
         layout.setColumnStretch(1, 1)
-        layout.setColumnStretch(3, 1)
+        layout.setColumnStretch(3, 0)
 
     def set_autogen_enabled(self, enabled: bool) -> None:
         """Enable/disable the automatic control-point generation button."""

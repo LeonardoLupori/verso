@@ -51,7 +51,8 @@ class MaskBox(QGroupBox):
         self._color_btn.setToolTip("Pick mask color")
         self._color_btn.clicked.connect(self._on_color)
         self._refresh_color_btn()
-        self._negative = QCheckBox("Show negative")
+        self._negative = QCheckBox("Negative")
+        self._negative.setToolTip("Show the mask as a negative")
         self._negative.toggled.connect(self.negative_changed)
         row1 = QHBoxLayout()
         row1.addWidget(self._eye_btn)
@@ -90,6 +91,7 @@ class MaskBox(QGroupBox):
         self._draw_mode_btns["brush"].setIcon(colored_icon("brush.svg", "#ffffff"))
         for _btn in self._draw_mode_btns.values():
             _btn.setIconSize(QSize(14, 14))
+            _btn.setMinimumWidth(52)
         layout.addLayout(mode_row)
 
         # Small hint to Hold shift to erase, pulled up close to the mode buttons
@@ -119,9 +121,11 @@ class MaskBox(QGroupBox):
         self._morph_spin.setValue(5)
         self._erode_btn = QPushButton("Erode")
         self._erode_btn.setToolTip("Erode the mask area by a set amount of pixels")
+        self._erode_btn.setMinimumWidth(48)
         self._erode_btn.clicked.connect(lambda: self.erode_requested.emit(self._morph_spin.value()))
         self._expand_btn = QPushButton("Expand")
         self._expand_btn.setToolTip("Expand the mask area by a set amount of pixels")
+        self._expand_btn.setMinimumWidth(48)
         self._expand_btn.clicked.connect(
             lambda: self.expand_requested.emit(self._morph_spin.value())
         )
@@ -137,11 +141,13 @@ class MaskBox(QGroupBox):
         action_row = QHBoxLayout()
         self._autodetect_btn = QPushButton("Auto-detect")
         self._autodetect_btn.setToolTip("Apply adaptive threshold")
+        self._autodetect_btn.setMinimumWidth(60)
         self._autodetect_btn.clicked.connect(self.autodetect_requested)
         self._clear_btn = QPushButton("Clear")
         self._clear_btn.setIcon(colored_icon("circle-x.svg", "#ffffff"))
         self._clear_btn.setIconSize(QSize(14, 14))
         self._clear_btn.setToolTip("Delete the current slice mask")
+        self._clear_btn.setMinimumWidth(52)
         self._clear_btn.clicked.connect(self.clear_requested)
         action_row.addWidget(self._autodetect_btn)
         action_row.addWidget(self._clear_btn)
