@@ -320,7 +320,6 @@ class AnnotateView(QWidget):
                     "xs": xs,
                     "ys": ys,
                     "color": ann.color,
-                    "opacity": ann.opacity,
                     "size": ann.point_size,
                 }
             )

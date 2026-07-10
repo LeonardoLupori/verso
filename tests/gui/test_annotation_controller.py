@@ -128,14 +128,24 @@ def test_edit_active_updates_model(tmp_path: Path):
     ctrl = _make_controller(tmp_path)
     ctrl.new_point_series()
     ctrl.set_color((1, 2, 3))
-    ctrl.set_opacity(0.25)
     ctrl.set_visibility(0, False)
     ctrl.rename_active("my cells")
     ann = ctrl._annotations[0]
     assert ann.color == (1, 2, 3)
-    assert ann.opacity == 0.25
     assert ann.visible is False
     assert ann.title == "my cells"
+
+
+def test_opacity_is_area_only(tmp_path: Path):
+    ctrl = _make_controller(tmp_path)
+    # Point series have no opacity: setting it is a harmless no-op.
+    ctrl.new_point_series()
+    ctrl.set_opacity(0.25)
+    assert not hasattr(ctrl._annotations[0], "opacity")
+    # Areas keep an editable opacity.
+    ctrl.new_area()
+    ctrl.set_opacity(0.25)
+    assert ctrl._annotations[1].opacity == 0.25
 
 
 def test_rename_dedupes_against_other_titles(tmp_path: Path):
@@ -340,8 +350,9 @@ def test_filmstrip_markers_skipped_outside_annotate_view(tmp_path: Path):
 
 
 def test_cosmetic_edits_do_not_repaint_filmstrip_markers(tmp_path: Path):
-    # Opacity/point-size slider drags fire on every tick; they change neither
-    # coverage nor colour, so they must not repaint (and rescan) the markers.
+    # Point-size slider drags (and, for areas, opacity) fire on every tick; they
+    # change neither coverage nor colour, so they must not repaint (and rescan)
+    # the markers. set_opacity here is also a no-op on a point series.
     project = SimpleNamespace(sections=[SimpleNamespace(original_path=str(tmp_path / "a.tif"))])
     ctrl = _make_controller(tmp_path, mode="annotate", project=project)
     ctrl.new_point_series()  # structural change → one marker repaint

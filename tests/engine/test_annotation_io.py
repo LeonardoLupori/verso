@@ -33,7 +33,6 @@ def test_point_series_metadata_round_trip():
     series = PointSeries(
         title="cells ch1",
         color=(10, 20, 30),
-        opacity=0.5,
         visible=False,
         points=[AnnotationPoint(1.0, 2.0, "a.tif")],
     )
@@ -45,9 +44,15 @@ def test_point_series_metadata_round_trip():
 def test_point_series_metadata_defaults():
     series = PointSeries.from_metadata({"title": "x"}, [])
     assert series.color == (255, 64, 64)
-    assert series.opacity == 1.0
     assert series.visible is True
     assert series.points == []
+
+
+def test_point_series_ignores_legacy_opacity():
+    # Point series used to persist an opacity; loading old data must drop it.
+    series = PointSeries.from_metadata({"title": "x", "opacity": 0.3}, [])
+    assert not hasattr(series, "opacity")
+    assert "opacity" not in series.metadata_to_dict()
 
 
 # ---------------------------------------------------------------------------
@@ -128,7 +133,7 @@ def test_slugify_sanitises_and_falls_back():
 def test_save_load_annotations_round_trip(tmp_path: Path):
     anns = [
         PointSeries(title="cells ch1", color=(255, 0, 0), points=[AnnotationPoint(1, 2, "a.tif")]),
-        PointSeries(title="cells ch2", color=(0, 255, 0), opacity=0.3, visible=False),
+        PointSeries(title="cells ch2", color=(0, 255, 0), visible=False),
     ]
     save_annotations(tmp_path, anns)
 

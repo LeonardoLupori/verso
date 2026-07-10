@@ -6,7 +6,7 @@ subfolder per annotation named by a filesystem-safe slug of its title::
     my_experiment/
         annotations/
             cells_ch1/            # point series
-                annotation.json   # {type, title, color, opacity, visible}
+                annotation.json   # {type, title, color, visible, point_size}
                 points.csv        # header: x,y,image  (original-res px, filename)
             injection/            # area
                 annotation.json   # {type:"area", ...}

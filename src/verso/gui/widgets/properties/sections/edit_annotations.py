@@ -1,9 +1,10 @@
 """Selected-annotation section — editing controls for the active annotation.
 
-Shares a colour/title/opacity header across both annotation types, then shows
+Shares a colour/title header across both annotation types, then shows
 type-specific controls below it: point size and Add/Remove tools for point
-series, Freehand/Brush tools and a brush-size slider for areas. A pure view:
-it emits intent signals and renders whatever :meth:`update_selected` is handed.
+series, Freehand/Brush tools plus opacity and brush-size sliders for areas
+(point scatters always render fully opaque). A pure view: it emits intent
+signals and renders whatever :meth:`update_selected` is handed.
 """
 
 from __future__ import annotations
@@ -115,15 +116,6 @@ class EditAnnotationsBox(QGroupBox):
         count_row.addWidget(self._count_label, stretch=1)
         layout.addLayout(count_row)
 
-        # Row 3: opacity slider
-        self._opacity_value = QLabel("1.00")
-        self._opacity_slider = QSlider(Qt.Orientation.Horizontal)
-        self._opacity_slider.setRange(0, 100)
-        self._opacity_slider.setValue(100)
-        self._opacity_slider.setMinimumWidth(20)
-        self._opacity_slider.valueChanged.connect(self._emit_opacity)
-        layout.addLayout(self._slider_row("Opacity", self._opacity_slider, self._opacity_value))
-
         layout.addWidget(self._build_point_controls())
         layout.addWidget(self._build_area_controls())
 
@@ -171,10 +163,20 @@ class EditAnnotationsBox(QGroupBox):
         return box
 
     def _build_area_controls(self) -> QWidget:
-        """Area-only controls: Freehand/Brush tools, erase hint, brush size."""
+        """Area-only controls: opacity, Freehand/Brush tools, erase hint, brush size."""
         box = QWidget()
         v = QVBoxLayout(box)
         v.setContentsMargins(0, 0, 0, 0)
+
+        # Opacity is area-only: masks read better semi-transparent, while point
+        # scatters always render fully opaque.
+        self._opacity_value = QLabel("1.00")
+        self._opacity_slider = QSlider(Qt.Orientation.Horizontal)
+        self._opacity_slider.setRange(0, 100)
+        self._opacity_slider.setValue(100)
+        self._opacity_slider.setMinimumWidth(20)
+        self._opacity_slider.valueChanged.connect(self._emit_opacity)
+        v.addLayout(self._slider_row("Opacity", self._opacity_slider, self._opacity_value))
 
         area_tool_row, self._area_tool_btns, area_group = make_segmented_buttons(
             self,
@@ -223,12 +225,11 @@ class EditAnnotationsBox(QGroupBox):
 
         self._title_edit.setText(ann.title)
 
-        self._opacity_slider.blockSignals(True)
-        self._opacity_slider.setValue(round(ann.opacity * 100))
-        self._opacity_slider.blockSignals(False)
-        self._opacity_value.setText(f"{ann.opacity:.2f}")
-
         if is_area:
+            self._opacity_slider.blockSignals(True)
+            self._opacity_slider.setValue(round(ann.opacity * 100))
+            self._opacity_slider.blockSignals(False)
+            self._opacity_value.setText(f"{ann.opacity:.2f}")
             n = sum(1 for m in ann.masks.values() if m.any())
             self._count_caption.setText("Sections")
             self._count_label.setText(str(n))

@@ -1,8 +1,8 @@
 """Multi-layer point-annotation overlay for the image canvas.
 
 ``AnnotationOverlay`` renders a variable number of annotation layers, one
-``pg.ScatterPlotItem`` per visible annotation, each with its own colour and
-opacity. It is modelled on
+``pg.ScatterPlotItem`` per visible annotation, each with its own colour (point
+scatters always render fully opaque). It is modelled on
 :class:`~verso.gui.widgets.control_points.ControlPointOverlay` but, because the
 number of layers is dynamic, it owns a reference to the plot and adds/removes its
 scatter items to match the layer count (the same reconcile pattern
@@ -25,7 +25,6 @@ class AnnotationLayer(TypedDict):
     xs: np.ndarray
     ys: np.ndarray
     color: tuple[int, int, int]
-    opacity: float
     size: int
 
 
@@ -52,7 +51,6 @@ class AnnotationOverlay:
 
         for item, layer in zip(self._items, layers, strict=False):
             r, g, b = layer["color"]
-            item.setOpacity(max(0.0, min(1.0, layer["opacity"])))
             item.setData(
                 x=layer["xs"],
                 y=layer["ys"],

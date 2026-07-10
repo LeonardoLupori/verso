@@ -233,8 +233,9 @@ class AnnotationController:
         self._refresh()
 
     def set_opacity(self, opacity: float) -> None:
+        # Opacity is area-only; point scatters always render fully opaque.
         ann = self._active_annotation()
-        if ann is None or ann.opacity == opacity:
+        if not isinstance(ann, AreaAnnotation) or ann.opacity == opacity:
             return
         ann.opacity = opacity
         self._mark_dirty()

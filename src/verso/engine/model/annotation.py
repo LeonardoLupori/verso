@@ -1,9 +1,10 @@
 """Annotation data model.
 
 An *annotation* is a named overlay the user draws on the section canvas in the
-Annotate view, with its own colour, opacity, and visibility. Annotations are
-persisted outside ``project-verso.json``, in an ``annotations/`` subfolder of the
-project (see :mod:`verso.engine.io.annotation_io`).
+Annotate view, with its own colour and visibility (areas also carry an opacity;
+point scatters always render fully opaque). Annotations are persisted outside
+``project-verso.json``, in an ``annotations/`` subfolder of the project (see
+:mod:`verso.engine.io.annotation_io`).
 
 Two types exist:
 
@@ -58,7 +59,6 @@ class PointSeries:
 
     title: str
     color: tuple[int, int, int] = (255, 64, 64)
-    opacity: float = 1.0
     visible: bool = True
     points: list[AnnotationPoint] = field(default_factory=list)
     #: Diameter (screen px) points are rendered at in the Annotate view.
@@ -72,19 +72,20 @@ class PointSeries:
             "type": self.type,
             "title": self.title,
             "color": list(self.color),
-            "opacity": self.opacity,
             "visible": self.visible,
             "point_size": self.point_size,
         }
 
     @classmethod
     def from_metadata(cls, d: dict[str, Any], points: list[AnnotationPoint]) -> PointSeries:
-        """Rebuild a series from its metadata dict plus already-loaded points."""
+        """Rebuild a series from its metadata dict plus already-loaded points.
+
+        A legacy ``opacity`` key (point series used to carry one) is ignored.
+        """
         color = d.get("color", [255, 64, 64])
         return cls(
             title=d["title"],
             color=(int(color[0]), int(color[1]), int(color[2])),
-            opacity=float(d.get("opacity", 1.0)),
             visible=bool(d.get("visible", True)),
             points=list(points),
             point_size=int(d.get("point_size", 9)),
