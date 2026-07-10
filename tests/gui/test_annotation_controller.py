@@ -13,7 +13,7 @@ from types import SimpleNamespace
 from PyQt6.QtWidgets import QMessageBox
 
 from verso.engine.io.annotation_io import load_annotations
-from verso.engine.model.annotation import AnnotationPoint, AreaAnnotation
+from verso.engine.model.annotation import AnnotationPoint, AreaAnnotation, PointSeries
 from verso.gui.controllers.annotation_controller import AnnotationController
 
 
@@ -41,12 +41,29 @@ class _FakeView:
         self.active = active_index
 
 
-def _make_controller(tmp_path: Path, section_name: str | None = None) -> AnnotationController:
+class _FakeFilmstrip:
+    def __init__(self) -> None:
+        self.colors: list | None = None
+        self.shape: str | None = None
+        self.calls = 0
+
+    def set_statuses(self, colors, shape="dot") -> None:
+        self.colors = list(colors)
+        self.shape = shape
+        self.calls += 1
+
+
+def _make_controller(
+    tmp_path: Path,
+    section_name: str | None = None,
+    mode: str = "overview",
+    project=None,
+) -> AnnotationController:
     section = None
     if section_name is not None:
         section = SimpleNamespace(original_path=str(tmp_path / section_name))
     state = SimpleNamespace(
-        project=object(),
+        project=object() if project is None else project,
         project_path=tmp_path / "project-verso.json",
         current_section=section,
         show_status=lambda _msg: None,
@@ -55,6 +72,8 @@ def _make_controller(tmp_path: Path, section_name: str | None = None) -> Annotat
         _state=state,
         _props=SimpleNamespace(annotate=_FakePage()),
         _annotate=_FakeView(),
+        _filmstrip=_FakeFilmstrip(),
+        _current_mode=mode,
     )
     return AnnotationController(window)  # type: ignore[arg-type]
 
@@ -286,3 +305,54 @@ def test_begin_area_edit_noop_for_point_series(tmp_path: Path):
     ctrl.begin_area_edit()  # active isn't an area → nothing snapshotted
     ctrl.undo()  # empty undo stack → no crash
     assert isinstance(ctrl._annotations[0], type(ctrl._annotations[0]))
+
+
+def test_filmstrip_markers_flag_sections_with_active_annotation(tmp_path: Path):
+    project = SimpleNamespace(
+        sections=[
+            SimpleNamespace(original_path=str(tmp_path / "a.tif")),
+            SimpleNamespace(original_path=str(tmp_path / "b.tif")),
+            SimpleNamespace(original_path=str(tmp_path / "c.tif")),
+        ]
+    )
+    ctrl = _make_controller(tmp_path, mode="annotate", project=project)
+    ctrl._annotations = [
+        PointSeries(
+            title="pts",
+            color=(10, 20, 30),
+            points=[AnnotationPoint(1.0, 1.0, "A.TIF")],  # section a, other casing
+        )
+    ]
+    ctrl._active = 0
+    ctrl.refresh_filmstrip_markers()
+
+    fs = ctrl._window._filmstrip  # type: ignore[attr-defined]
+    assert fs.shape == "square"
+    assert fs.colors == ["#0a141e", None, None]
+
+
+def test_filmstrip_markers_skipped_outside_annotate_view(tmp_path: Path):
+    ctrl = _make_controller(tmp_path, mode="prep")
+    ctrl._annotations = [PointSeries(title="pts", points=[AnnotationPoint(0, 0, "x.tif")])]
+    ctrl._active = 0
+    ctrl.refresh_filmstrip_markers()  # must not touch the filmstrip in other views
+    assert ctrl._window._filmstrip.colors is None  # type: ignore[attr-defined]
+
+
+def test_cosmetic_edits_do_not_repaint_filmstrip_markers(tmp_path: Path):
+    # Opacity/point-size slider drags fire on every tick; they change neither
+    # coverage nor colour, so they must not repaint (and rescan) the markers.
+    project = SimpleNamespace(sections=[SimpleNamespace(original_path=str(tmp_path / "a.tif"))])
+    ctrl = _make_controller(tmp_path, mode="annotate", project=project)
+    ctrl.new_point_series()  # structural change → one marker repaint
+    fs = ctrl._window._filmstrip  # type: ignore[attr-defined]
+    baseline = fs.calls
+
+    ctrl.set_opacity(0.3)
+    ctrl.set_point_size(15)
+    ctrl.rename_active("renamed")
+    ctrl.set_visibility(0, False)
+    assert fs.calls == baseline  # no marker repaint from cosmetic edits
+
+    ctrl.set_color((1, 2, 3))  # colour, on the other hand, must repaint
+    assert fs.calls == baseline + 1

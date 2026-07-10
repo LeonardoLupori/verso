@@ -19,7 +19,7 @@ their own submodules, e.g.:
     from verso.engine.elastix import auto_control_points
 """
 
-from verso.engine.annotations import points_in_polygon
+from verso.engine.annotations import annotation_images, points_in_polygon
 from verso.engine.atlas import AtlasVolume, orientation_labels
 from verso.engine.io.annotation_io import (
     annotations_dir,
@@ -76,6 +76,7 @@ __all__ = [
     "Section",
     "VersoRegistration",
     "WarpState",
+    "annotation_images",
     "annotations_dir",
     "export_aligned_stack",
     "export_section",

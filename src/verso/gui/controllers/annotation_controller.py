@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
-from verso.engine.annotations import points_in_polygon
+from verso.engine.annotations import annotation_images, points_in_polygon
 from verso.engine.io.annotation_io import (
     guess_point_columns,
     load_annotations,
@@ -214,7 +214,7 @@ class AnnotationController:
             return
         ann.visible = visible
         self._mark_dirty()
-        self._refresh()
+        self._sync_ui()  # visibility doesn't move the presence markers
 
     def set_color(self, color: tuple[int, int, int]) -> None:
         ann = self._active_annotation()
@@ -230,7 +230,7 @@ class AnnotationController:
             return
         ann.opacity = opacity
         self._mark_dirty()
-        self._refresh()
+        self._sync_ui()  # opacity slider drag: no marker rescan
 
     def set_point_size(self, size: int) -> None:
         ann = self._active_annotation()
@@ -238,7 +238,7 @@ class AnnotationController:
             return
         ann.point_size = size
         self._mark_dirty()
-        self._refresh()
+        self._sync_ui()  # point-size slider drag: no marker rescan
 
     def rename_active(self, title: str) -> None:
         ann = self._active_annotation()
@@ -247,7 +247,7 @@ class AnnotationController:
             return
         ann.title = self._unique_title(title, exclude=self._active)
         self._mark_dirty()
-        self._refresh()
+        self._sync_ui()  # rename doesn't move the presence markers
 
     # ------------------------------------------------------------------
     # Point editing (Annotate canvas: click to add, lasso to remove)
@@ -404,6 +404,48 @@ class AnnotationController:
         self._dirty = True
 
     def _refresh(self) -> None:
+        """Re-sync the manager/view *and* the filmstrip presence markers.
+
+        Used by every edit that can change which sections the active annotation
+        touches, or which annotation is active, or its colour. Cosmetic edits that
+        cannot move the markers (opacity, point size, rename, visibility) call
+        :meth:`_sync_ui` instead, so a slider drag never rescans the point series.
+        """
+        self._sync_ui()
+        self.refresh_filmstrip_markers()
+
+    def _sync_ui(self) -> None:
+        """Push the annotation list + dirty flag to the manager and canvas view."""
         self._window._props.annotate.set_annotations(self._annotations, self._active)
         self._window._props.annotate.set_dirty(self._dirty)
         self._window._annotate.set_annotations(self._annotations, self._active)
+
+    def refresh_filmstrip_markers(self) -> None:
+        """Flag the filmstrip tiles that carry the selected annotation.
+
+        Unlike Prep/Align/Warp (whose per-section status dots are owned by
+        :class:`~verso.gui.widgets.filmstrip_status.FilmstripStatusPresenter`),
+        annotations are project-global: this paints a square marker in the active
+        annotation's colour on every section it appears in, so the user can spot
+        which images to visit without hunting. A no-op outside the Annotate view
+        so it never clobbers another view's dots; the presenter repaints those on
+        the way back in.
+        """
+        if self._window._current_mode != "annotate":
+            return
+        project = self._state.project
+        filmstrip = self._window._filmstrip
+        if project is None:
+            filmstrip.set_statuses([], shape="square")
+            return
+        ann = self._active_annotation()
+        if ann is None:
+            filmstrip.set_statuses([None] * len(project.sections), shape="square")
+            return
+        images = annotation_images(ann)
+        color = "#{:02x}{:02x}{:02x}".format(*ann.color)
+        colors = [
+            color if os.path.basename(s.original_path).lower() in images else None
+            for s in project.sections
+        ]
+        filmstrip.set_statuses(colors, shape="square")

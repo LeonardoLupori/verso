@@ -219,6 +219,10 @@ class MainWindow(QMainWindow):
         self._refresh_reset_enabled()
         self._update_deepslice_enabled()
         self._refresh_filmstrip_dots()
+        # Annotate has no per-section dots; the presenter cleared them above, so
+        # overlay the selected annotation's presence squares instead.
+        if self._current_mode == "annotate":
+            self._annotations.refresh_filmstrip_markers()
 
     # ------------------------------------------------------------------
     # Per-view draft save / clear / discard
