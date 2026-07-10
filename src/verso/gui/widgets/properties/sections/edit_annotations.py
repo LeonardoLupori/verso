@@ -141,10 +141,10 @@ class EditAnnotationsBox(QGroupBox):
         v = QVBoxLayout(box)
         v.setContentsMargins(0, 0, 0, 0)
 
-        self._size_value = QLabel("3")
+        self._size_value = QLabel("4")
         self._size_slider = QSlider(Qt.Orientation.Horizontal)
-        self._size_slider.setRange(1, 20)
-        self._size_slider.setValue(3)
+        self._size_slider.setRange(2, 20)
+        self._size_slider.setValue(4)
         self._size_slider.setMinimumWidth(20)
         self._size_slider.valueChanged.connect(self._emit_point_size)
         v.addLayout(self._slider_row("Point size", self._size_slider, self._size_value))
