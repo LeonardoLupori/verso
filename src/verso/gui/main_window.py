@@ -315,6 +315,8 @@ class MainWindow(QMainWindow):
         self._update_slicing_position()
         self._refresh_reset_enabled()
         self._refresh_filmstrip_dots()
+        if self._current_mode == "annotate":
+            self._annotations.refresh_filmstrip_markers()
         self._update_deepslice_enabled()
         if write and self._state.project is not None and self._state.project_path is not None:
             self._project.write_project(self._state.project_path)
