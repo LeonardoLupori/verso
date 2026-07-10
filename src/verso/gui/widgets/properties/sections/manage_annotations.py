@@ -174,6 +174,14 @@ class ManageAnnotationsBox(QGroupBox):
         btn.setChecked(ann.visible)
         btn.setIcon(eye_icon(ann.visible))
         btn.setToolTip("Show / hide this annotation")
+        # make_eye_btn()'s flat button otherwise picks up the style's sunken
+        # "checked" chrome, which stands out against the table row; strip it
+        # so the visible (checked) state blends in exactly like the hidden one.
+        btn.setStyleSheet(
+            "QPushButton { background: transparent; border: none; }"
+            "QPushButton:checked { background: transparent; border: none; }"
+            "QPushButton:hover { background: rgba(255, 255, 255, 25); border-radius: 4px; }"
+        )
         btn.toggled.connect(lambda checked, r=row: self.visibility_changed.emit(r, checked))
 
         cell = QWidget()
