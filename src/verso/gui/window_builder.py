@@ -207,6 +207,14 @@ def connect_signals(window: MainWindow) -> None:
     window._annotate.undo_requested.connect(window._annotations.undo)
     window._annotate.tool_changed.connect(window._props.annotate.set_tool)
     window._props.annotate.tool_changed.connect(window._annotate.set_tool)
+    # Area mask editing: the view paints in place, bracketed by these so the
+    # controller snapshots undo and marks dirty; tool/size sync both ways.
+    window._annotate.area_edit_started.connect(window._annotations.begin_area_edit)
+    window._annotate.area_edit_committed.connect(window._annotations.commit_area_edit)
+    window._props.annotate.area_tool_changed.connect(window._annotate.set_area_tool)
+    window._annotate.area_tool_changed.connect(window._props.annotate.set_area_tool)
+    window._props.annotate.brush_size_changed.connect(window._annotate.set_brush_size)
+    window._annotate.brush_size_changed.connect(window._props.annotate.set_brush_size)
 
     # A prep save/clear that flips the section invalidates its alignment+warp.
     window._prep.alignment_invalidated.connect(window._project.on_prep_invalidated_alignment)

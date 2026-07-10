@@ -398,21 +398,34 @@ class ImageCanvas(QWidget):
 
     def _on_shift_changed(self) -> None:
         """Called by the app-level filter when Shift state changes."""
-        if self._interaction_mode == "prep" and self.view.underMouse():
-            self._refresh_prep_cursor()
+        # Shift recolours the draw/erase cursor in both Prep and Annotate.
+        if self._interaction_mode in ("prep", "annotate") and self.view.underMouse():
+            self._refresh_cursor()
 
     def set_brush_cursor(self, active: bool, radius_img: int) -> None:
         """Enable the circular brush cursor (``active``) sized to ``radius_img``
         image pixels. When inactive the crosshair cursor is used."""
         self._brush_mode = bool(active)
         self._brush_radius_img = max(int(radius_img), 1)
-        if self._interaction_mode == "prep" and self.view.underMouse():
-            self._refresh_prep_cursor()
+        if self._interaction_mode in ("prep", "annotate") and self.view.underMouse():
+            self._refresh_cursor()
 
     def _on_view_range_changed(self, *_: object) -> None:
-        if self._brush_mode and self._interaction_mode == "prep" and self.view.underMouse():
-            self._refresh_prep_cursor()
+        # Keep the brush circle sized to the footprint as the user zooms.
+        if (
+            self._brush_mode
+            and self._interaction_mode in ("prep", "annotate")
+            and self.view.underMouse()
+        ):
+            self._refresh_cursor()
         self.view_range_changed.emit()
+
+    def _brush_circle_cursor(self):
+        """A circular cursor sized to the brush footprint; red while Shift-erasing."""
+        rgb = (255, 140, 140) if ShiftState.held else (120, 200, 255)
+        px_per_img = 1.0 / max(self._vb.viewPixelSize()[0], 1e-9)
+        diameter = round(2 * self._brush_radius_img * px_per_img)
+        return make_circle_cursor(rgb, diameter)
 
     def image_to_screen_scale(self) -> float:
         """Return screen pixels per image pixel at the current zoom.
@@ -436,11 +449,8 @@ class ImageCanvas(QWidget):
             return
         if self._apply_pan_cursor():
             return
-        rgb = (255, 140, 140) if ShiftState.held else (120, 200, 255)
         if self._brush_mode:
-            px_per_img = 1.0 / max(self._vb.viewPixelSize()[0], 1e-9)
-            diameter = round(2 * self._brush_radius_img * px_per_img)
-            self.view.setCursor(make_circle_cursor(rgb, diameter))
+            self.view.setCursor(self._brush_circle_cursor())
             return
         self.view.setCursor(self._cursor_erase if ShiftState.held else self._cursor_draw)
 
@@ -581,7 +591,11 @@ class ImageCanvas(QWidget):
         elif self._interaction_mode == "prep":
             self._refresh_prep_cursor()
         elif self._interaction_mode == "annotate":
-            if not self._apply_pan_cursor():
+            if self._apply_pan_cursor():
+                return
+            if self._brush_mode:
+                self.view.setCursor(self._brush_circle_cursor())
+            else:
                 self.view.setCursor(Qt.CursorShape.CrossCursor)
         elif not self._apply_pan_cursor():
             self.view.unsetCursor()

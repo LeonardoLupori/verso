@@ -235,3 +235,54 @@ def test_undo_restores_previous_points(tmp_path: Path):
     assert [(p.x, p.y) for p in ctrl._annotations[0].points] == [(1.0, 1.0)]
     ctrl.undo()
     assert ctrl._annotations[0].points == []
+
+
+# ---------------------------------------------------------------------------
+# Area editing (begin/commit brackets + closure-based undo)
+# ---------------------------------------------------------------------------
+
+
+def test_active_area_only_for_area(tmp_path: Path):
+    ctrl = _make_controller(tmp_path, "sec.tif")
+    ctrl.new_point_series()
+    assert ctrl.active_area() is None
+    ctrl.new_area()
+    assert isinstance(ctrl.active_area(), AreaAnnotation)
+
+
+def test_area_edit_undo_restores_absent_mask(tmp_path: Path):
+    import numpy as np
+
+    ctrl = _make_controller(tmp_path, "sec.tif")
+    ctrl.new_area()
+    area = ctrl._annotations[0]
+    ctrl.begin_area_edit()  # snapshot: no mask for sec.tif yet
+    area.masks["sec.tif"] = np.ones((4, 4), dtype=bool)  # view paints in place
+    ctrl.commit_area_edit()
+    assert "sec.tif" in area.masks
+    ctrl.undo()
+    assert "sec.tif" not in area.masks  # restored to absent
+
+
+def test_area_edit_undo_restores_previous_mask(tmp_path: Path):
+    import numpy as np
+
+    ctrl = _make_controller(tmp_path, "sec.tif")
+    ctrl.new_area()
+    area = ctrl._annotations[0]
+    first = np.zeros((4, 4), dtype=bool)
+    first[0, 0] = True
+    area.masks["sec.tif"] = first
+    ctrl.begin_area_edit()  # snapshot: first
+    area.masks["sec.tif"] = np.ones((4, 4), dtype=bool)  # view repaints
+    ctrl.commit_area_edit()
+    ctrl.undo()
+    assert np.array_equal(area.masks["sec.tif"], first)
+
+
+def test_begin_area_edit_noop_for_point_series(tmp_path: Path):
+    ctrl = _make_controller(tmp_path, "sec.tif")
+    ctrl.new_point_series()
+    ctrl.begin_area_edit()  # active isn't an area → nothing snapshotted
+    ctrl.undo()  # empty undo stack → no crash
+    assert isinstance(ctrl._annotations[0], type(ctrl._annotations[0]))

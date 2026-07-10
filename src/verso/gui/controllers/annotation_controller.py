@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import csv
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -54,7 +55,8 @@ class AnnotationController:
         (0, 200, 200),
     )
 
-    # Shallow undo history for point add/remove: (annotation_index, points_copy).
+    # Shallow undo history: each entry is a closure that restores the pre-edit
+    # state (a point series' points, or an area's per-section mask).
     _UNDO_LIMIT = 20
 
     def __init__(self, window: MainWindow) -> None:
@@ -63,7 +65,7 @@ class AnnotationController:
         self._annotations: list[Annotation] = []
         self._active: int = -1
         self._dirty: bool = False
-        self._undo_stack: list[tuple[int, list[AnnotationPoint]]] = []
+        self._undo_stack: list[Callable[[], None]] = []
 
     # ------------------------------------------------------------------
     # Wiring
@@ -246,7 +248,7 @@ class AnnotationController:
         section = self._state.current_section
         if not isinstance(ann, PointSeries) or section is None:
             return
-        self._push_undo()
+        self._push_points_undo(ann)
         image = os.path.basename(section.original_path)
         ann.points.append(AnnotationPoint(x=x, y=y, image=image))
         self._mark_dirty()
@@ -274,28 +276,78 @@ class AnnotationController:
         remove = {on_section[k] for k in range(len(on_section)) if inside[k]}
         if not remove:
             return
-        self._push_undo()
+        self._push_points_undo(ann)
         ann.points = [p for i, p in enumerate(ann.points) if i not in remove]
         self._mark_dirty()
         self._refresh()
         self._state.show_status(f"Removed {len(remove)} point(s)")
 
+    # ------------------------------------------------------------------
+    # Area editing (Annotate canvas: brush / freehand mask painting)
+    # ------------------------------------------------------------------
+
+    def active_area(self) -> AreaAnnotation | None:
+        ann = self._active_annotation()
+        return ann if isinstance(ann, AreaAnnotation) else None
+
+    def begin_area_edit(self) -> None:
+        """Snapshot the active area's current-section mask before a stroke (undo)."""
+        area = self.active_area()
+        section = self._state.current_section
+        if area is None or section is None:
+            return
+        image = os.path.basename(section.original_path)
+        had = image in area.masks
+        old = area.masks.get(image)
+        old_copy = old.copy() if old is not None else None
+        index = self._active
+
+        def restore() -> None:
+            if index < 0 or index >= len(self._annotations):
+                return
+            target = self._annotations[index]
+            if not isinstance(target, AreaAnnotation):
+                return
+            if had and old_copy is not None:
+                target.masks[image] = old_copy
+            else:
+                target.masks.pop(image, None)
+            self._active = index
+
+        self._push_undo(restore)
+
+    def commit_area_edit(self) -> None:
+        """Finalise a stroke the view painted in place: mark dirty + refresh."""
+        if self.active_area() is None:
+            return
+        self._mark_dirty()
+        self._refresh()
+
+    # ------------------------------------------------------------------
+    # Undo (closure-based; unifies point edits and area mask edits)
+    # ------------------------------------------------------------------
+
     def undo(self) -> None:
-        """Restore the active annotation's points from before the last edit."""
+        """Undo the last point or area edit by running its restore closure."""
         if not self._undo_stack:
             return
-        index, points = self._undo_stack.pop()
-        if 0 <= index < len(self._annotations):
-            self._annotations[index].points = points
-            self._active = index
-            self._mark_dirty()
-            self._refresh()
+        restore = self._undo_stack.pop()
+        restore()
+        self._mark_dirty()
+        self._refresh()
 
-    def _push_undo(self) -> None:
-        ann = self._active_annotation()
-        if ann is None:
-            return
-        self._undo_stack.append((self._active, list(ann.points)))
+    def _push_points_undo(self, series: PointSeries) -> None:
+        index = self._active
+        old = list(series.points)
+
+        def restore() -> None:
+            series.points = old
+            self._active = index
+
+        self._push_undo(restore)
+
+    def _push_undo(self, restore: Callable[[], None]) -> None:
+        self._undo_stack.append(restore)
         if len(self._undo_stack) > self._UNDO_LIMIT:
             self._undo_stack.pop(0)
 
