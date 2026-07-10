@@ -31,6 +31,24 @@ from verso.gui.widgets.properties._common import colored_icon, eye_icon, make_ey
 
 _COL_TYPE, _COL_NAME, _COL_VISIBLE = range(3)
 
+# Matches the Overview table's dark-theme styling (see overview_view._TABLE_STYLE).
+_TABLE_STYLE = """
+QTableWidget {
+    background: #1e1e1e;
+    alternate-background-color: #242424;
+    gridline-color: transparent;
+    border-radius: 4px;
+    color: #d6d6d6;
+    font-size: 12px;
+    outline: none;
+}
+
+QTableWidget::item:selected {
+    background: #1e5a8a;
+    color: #ffffff;
+}
+"""
+
 
 class ManageAnnotationsBox(QGroupBox):
     new_point_requested = pyqtSignal()
@@ -43,8 +61,17 @@ class ManageAnnotationsBox(QGroupBox):
     def __init__(self) -> None:
         super().__init__("Annotations")
         v = QVBoxLayout(self)
+        # Zero out the left/right margins so the table runs edge-to-edge with
+        # the group box border instead of leaving a side gutter; the action
+        # row keeps the original inset (applied to its own layout below).
+        margins = v.contentsMargins()
+        v.setContentsMargins(0, margins.top(), 0, 0)
 
-        v.addLayout(self._build_actions_row())
+        actions_row = self._build_actions_row()
+        actions_row.setContentsMargins(margins.left(), 0, margins.right(), 0)
+        v.addLayout(actions_row)
+
+        v.addSpacing(8)
 
         self._table = self._build_table()
         v.addWidget(self._table)
@@ -101,6 +128,8 @@ class ManageAnnotationsBox(QGroupBox):
         table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        table.setAlternatingRowColors(True)
+        table.setStyleSheet(_TABLE_STYLE)
         header = table.horizontalHeader()
         header.setSectionResizeMode(_COL_TYPE, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(_COL_VISIBLE, QHeaderView.ResizeMode.ResizeToContents)
