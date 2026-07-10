@@ -91,12 +91,17 @@ class _OverlayViewBox(pg.ViewBox):
         self._align_handle = handle
 
     def mouseClickEvent(self, ev) -> None:
-        if ev.double() and ev.button() == Qt.MouseButton.LeftButton:
+        editing = self._interaction_mode in ("warp", "prep", "annotate")
+        # Double-click resets the zoom, but only outside the placement modes: in
+        # warp/prep/annotate every click places something, so Qt reporting the
+        # second of a rapid pair as a double-click would otherwise swallow it
+        # (and reset the view). There, treat it as an ordinary click instead.
+        if ev.double() and ev.button() == Qt.MouseButton.LeftButton and not editing:
             self.autoRange()
             ev.accept()
             return
         if (
-            self._interaction_mode in ("warp", "prep", "annotate")
+            editing
             and ev.button() == Qt.MouseButton.LeftButton
             and not SpaceState.held
         ):
@@ -684,7 +689,7 @@ class ImageCanvas(QWidget):
     ) -> None:
         """Draw a live freehand stroke preview in image-pixel coordinates."""
         if len(points) < 2:
-            self.stroke_item.clear()
+            self.clear_stroke_preview()
             return
         xs = [point[0] for point in points]
         ys = [point[1] for point in points]
@@ -692,7 +697,12 @@ class ImageCanvas(QWidget):
         self.stroke_item.setData(x=xs, y=ys)
 
     def clear_stroke_preview(self) -> None:
+        # PlotCurveItem.clear() drops the curve data but, unlike setData(), does
+        # not request a repaint — so force one. Otherwise the stroke lingers on
+        # screen until some unrelated event redraws the scene (e.g. an empty
+        # lasso that removes nothing, so no annotation re-render follows).
         self.stroke_item.clear()
+        self.stroke_item.update()
 
     def set_overlay_opacity(self, opacity: float) -> None:
         """Set overlay opacity in [0, 1]."""

@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
+from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
 from verso.engine.annotations import annotation_images, points_in_polygon
@@ -66,6 +67,13 @@ class AnnotationController:
         self._active: int = -1
         self._dirty: bool = False
         self._undo_stack: list[Callable[[], None]] = []
+        # Coalesces the O(N) filmstrip-marker rescan during a burst of point adds:
+        # markers only change when a section gains its first point for the series,
+        # so a stream of clicks pays the rescan once, after it settles.
+        self._marker_timer = QTimer()
+        self._marker_timer.setSingleShot(True)
+        self._marker_timer.setInterval(1000)
+        self._marker_timer.timeout.connect(self.refresh_filmstrip_markers)
 
     # ------------------------------------------------------------------
     # Wiring
@@ -263,7 +271,10 @@ class AnnotationController:
         image = os.path.basename(section.original_path)
         ann.points.append(AnnotationPoint(x=x, y=y, image=image))
         self._mark_dirty()
-        self._refresh()
+        # Render the new point now (cheap: the view folds it into its cache), but
+        # defer the filmstrip-marker rescan so a burst of clicks coalesces to one.
+        self._sync_ui()
+        self._marker_timer.start()
 
     def remove_in_polygon(self, polygon: list[tuple[float, float]]) -> None:
         """Remove active-annotation points on the current section inside ``polygon``.

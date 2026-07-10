@@ -15,18 +15,18 @@ from __future__ import annotations
 
 from typing import TypedDict
 
+import numpy as np
 import pyqtgraph as pg
 
 
 class AnnotationLayer(TypedDict):
     """One annotation's rendered points (image-pixel coords) plus its style."""
 
-    xs: list[float]
-    ys: list[float]
+    xs: np.ndarray
+    ys: np.ndarray
     color: tuple[int, int, int]
     opacity: float
     size: int
-    active: bool
 
 
 class AnnotationOverlay:
@@ -52,14 +52,6 @@ class AnnotationOverlay:
 
         for item, layer in zip(self._items, layers, strict=False):
             r, g, b = layer["color"]
-            active = layer["active"]
-            # The active annotation gets a white ring so the user can see which
-            # one edits will target; the rest get a thin dark outline.
-            pen = (
-                pg.mkPen(255, 255, 255, 255, width=1.5)
-                if active
-                else pg.mkPen(0, 0, 0, 200, width=1.0)
-            )
             item.setOpacity(max(0.0, min(1.0, layer["opacity"])))
             item.setData(
                 x=layer["xs"],
@@ -67,7 +59,7 @@ class AnnotationOverlay:
                 size=layer["size"],
                 symbol="o",
                 brush=pg.mkBrush(r, g, b, 255),
-                pen=pen,
+                pen=None,
             )
 
     def clear(self) -> None:

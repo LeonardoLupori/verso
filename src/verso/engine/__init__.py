@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING
 _EXPORTS = {
     # annotations
     "annotation_images": "verso.engine.annotations",
+    "point_coords_by_image": "verso.engine.annotations",
     "points_in_polygon": "verso.engine.annotations",
     # atlas
     "AtlasVolume": "verso.engine.atlas",
@@ -114,6 +115,7 @@ __all__ = [
     "load_quicknii",
     "load_visualign",
     "orientation_labels",
+    "point_coords_by_image",
     "points_in_polygon",
     "save_annotations",
     "save_quicknii",
@@ -143,7 +145,11 @@ def __dir__() -> list[str]:
 if TYPE_CHECKING:
     # Give type checkers and IDEs the real symbols (the lazy __getattr__ above is
     # opaque to static analysis). Not executed at runtime, so no import cost.
-    from verso.engine.annotations import annotation_images, points_in_polygon
+    from verso.engine.annotations import (
+        annotation_images,
+        point_coords_by_image,
+        points_in_polygon,
+    )
     from verso.engine.atlas import AtlasVolume, orientation_labels
     from verso.engine.io.annotation_io import (
         annotations_dir,

@@ -14,6 +14,7 @@ plumbing in that base does not apply here.
 from __future__ import annotations
 
 import os
+import weakref
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -21,6 +22,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QGuiApplication, QKeySequence, QShortcut
 from PyQt6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
+from verso.engine.annotations import point_coords_by_image
 from verso.engine.model.annotation import AreaAnnotation, PointSeries
 from verso.engine.preprocessing import apply_brush_stroke, apply_freehand_stroke, mask_to_rgba
 from verso.gui.utils import require
@@ -67,10 +69,26 @@ class AnnotateView(QWidget):
         # one (drawn with a white ring); coordinates are original-resolution px.
         self._annotations: list[Annotation] = []
         self._active_index: int = -1
+        # Per-series cache of points grouped by image basename (original-res
+        # coords). A series can hold 100k+ points across sections; grouping once
+        # keeps each render proportional to the *current* section's points rather
+        # than rescanning the whole series. Keyed by id(series); each entry holds
+        # (series weakref, points-list ref, count, buckets). While the same points
+        # list object grows it can only have gained appends at the end, so those
+        # are folded in incrementally; a new list object or a shrink rebuilds. The
+        # weakref drops deleted series and guards against id reuse.
+        self._point_bucket_cache: dict[
+            int,
+            tuple[weakref.ref, list, int, dict[str, tuple[np.ndarray, np.ndarray]]],
+        ] = {}
         # Point tool + in-progress lasso stroke (display coords).
         self._tool = "add"
         self._stroke_points: list[tuple[float, float]] = []
         self._stroke_active = False
+        # Press position of an add-mode gesture Qt routed as a drag. In add mode
+        # drags carry no gesture of their own, so any such "drag" is treated as a
+        # click here and lands a point at this position on release.
+        self._add_drag_start: tuple[float, float] | None = None
         # Area tool (brush/freehand) + in-progress mask stroke state.
         self._area_tool = "brush"
         self._brush_radius = 20
@@ -240,71 +258,148 @@ class AnnotateView(QWidget):
         )
 
     def _render_annotations(self) -> None:
-        """Draw the current section's annotations onto the canvas.
-
-        Point series are filtered to the current section, scaled to working
-        resolution, and mirrored to match the displayed (possibly flipped) image.
-        Area masks (working resolution, mirrored the same way) render as coloured
-        overlays below the points.
-        """
-        section = self._section
-        project = self._state.project
-        if self._raw_image is None or section is None or project is None:
+        """Draw the current section's point and area annotations onto the canvas."""
+        ctx = self._render_context()
+        if ctx is None:
             self._canvas.clear_annotations()
             self._canvas.clear_area_masks()
             return
+        self._canvas.set_annotations(self._build_point_layers(ctx))
+        self._canvas.set_area_masks(self._build_area_layers(ctx))
 
+    def _render_area_masks(self) -> None:
+        """Re-render only the area overlays (used mid-stroke while brushing).
+
+        Point layers cannot change during an area stroke, so skipping them avoids
+        re-pushing a potentially huge scatter to the GPU on every brush tick.
+        """
+        ctx = self._render_context()
+        if ctx is None:
+            self._canvas.clear_area_masks()
+            return
+        self._canvas.set_area_masks(self._build_area_layers(ctx))
+
+    def _render_context(self) -> tuple | None:
+        """Shared per-render geometry, or ``None`` when there is nothing to draw."""
+        section = self._section
+        project = self._state.project
+        if self._raw_image is None or section is None or project is None:
+            return None
         filename = os.path.basename(section.original_path).lower()
         h, w = self._raw_image.shape[:2]
-        scale = project.working_scale
-        flip_h = section.preprocessing.flip_horizontal
-        flip_v = section.preprocessing.flip_vertical
+        return (
+            filename,
+            w,
+            h,
+            project.working_scale,
+            section.preprocessing.flip_horizontal,
+            section.preprocessing.flip_vertical,
+        )
 
-        point_layers = []
-        area_layers = []
-        for i, ann in enumerate(self._annotations):
-            if not ann.visible:
+    def _build_point_layers(self, ctx: tuple) -> list:
+        """Point layers for the current section, scaled + mirrored to display.
+
+        Uses the cached per-image coordinate buckets so only the current
+        section's points are transformed (a vectorised scale + flip), never the
+        whole series.
+        """
+        filename, w, h, scale, flip_h, flip_v = ctx
+        layers = []
+        for ann in self._annotations:
+            if not ann.visible or not isinstance(ann, PointSeries):
                 continue
-            if isinstance(ann, PointSeries):
-                xs: list[float] = []
-                ys: list[float] = []
-                for p in ann.points:
-                    if os.path.basename(p.image).lower() != filename:
-                        continue
-                    x = p.x * scale
-                    y = p.y * scale
-                    if flip_h:
-                        x = (w - 1) - x
-                    if flip_v:
-                        y = (h - 1) - y
-                    xs.append(x)
-                    ys.append(y)
-                point_layers.append(
-                    {
-                        "xs": xs,
-                        "ys": ys,
-                        "color": ann.color,
-                        "opacity": ann.opacity,
-                        "size": ann.point_size,
-                        "active": i == self._active_index,
-                    }
-                )
-            elif isinstance(ann, AreaAnnotation):
-                mask = self._section_mask(ann, filename)
-                if mask is None or not mask.any():
-                    continue
-                disp = mask
-                if flip_h:
-                    disp = np.fliplr(disp)
-                if flip_v:
-                    disp = np.flipud(disp)
-                rgba = mask_to_rgba(
-                    np.ascontiguousarray(disp), negative=False, opacity=1.0, color=ann.color
-                )
-                area_layers.append({"rgba": rgba, "w": w, "h": h, "opacity": ann.opacity})
+            coords = self._series_buckets(ann).get(filename)
+            if coords is None:
+                xs = ys = np.empty(0, dtype=np.float64)
+            else:
+                xo, yo = coords
+                xs = (w - 1) - xo * scale if flip_h else xo * scale
+                ys = (h - 1) - yo * scale if flip_v else yo * scale
+            layers.append(
+                {
+                    "xs": xs,
+                    "ys": ys,
+                    "color": ann.color,
+                    "opacity": ann.opacity,
+                    "size": ann.point_size,
+                }
+            )
+        return layers
 
-        self._canvas.set_annotations(point_layers)
-        self._canvas.set_area_masks(area_layers)
+    def _build_area_layers(self, ctx: tuple) -> list:
+        """Area-mask overlays for the current section, mirrored to display."""
+        filename, w, h, _scale, flip_h, flip_v = ctx
+        layers = []
+        for ann in self._annotations:
+            if not ann.visible or not isinstance(ann, AreaAnnotation):
+                continue
+            mask = self._section_mask(ann, filename)
+            if mask is None or not mask.any():
+                continue
+            disp = mask
+            if flip_h:
+                disp = np.fliplr(disp)
+            if flip_v:
+                disp = np.flipud(disp)
+            rgba = mask_to_rgba(
+                np.ascontiguousarray(disp), negative=False, opacity=1.0, color=ann.color
+            )
+            layers.append({"rgba": rgba, "w": w, "h": h, "opacity": ann.opacity})
+        return layers
+
+    def _series_buckets(self, series: PointSeries) -> dict[str, tuple[np.ndarray, np.ndarray]]:
+        """Cached ``{image: (xs, ys)}`` for a series, updated incrementally on add.
+
+        Points are only ever appended in place (``add_point``); removal and undo
+        reassign ``series.points`` to a new list. So while the cached entry holds
+        the *same* list object, any growth is new points at the tail: those are
+        folded into the buckets instead of rescanning the whole (100k+ point)
+        series. A changed list object, or a shrink, triggers a full rebuild. The
+        weakref guards against ``id`` reuse after a series is deleted.
+        """
+        key = id(series)
+        points = series.points
+        n = len(points)
+        cached = self._point_bucket_cache.get(key)
+        if cached is not None and cached[0]() is series and cached[1] is points and cached[2] <= n:
+            buckets = cached[3]
+            if cached[2] < n:
+                self._append_to_buckets(buckets, points[cached[2] : n])
+                self._point_bucket_cache[key] = (cached[0], points, n, buckets)
+            return buckets
+        buckets = point_coords_by_image(series)
+        self._point_bucket_cache[key] = (
+            weakref.ref(series, lambda _ref, k=key: self._point_bucket_cache.pop(k, None)),
+            points,
+            n,
+            buckets,
+        )
+        return buckets
+
+    @staticmethod
+    def _append_to_buckets(
+        buckets: dict[str, tuple[np.ndarray, np.ndarray]],
+        new_points: list,
+    ) -> None:
+        """Fold appended points into existing image buckets (see ``_series_buckets``).
+
+        Mirrors :func:`point_coords_by_image`'s basename-lower keying so the
+        incremental result is identical to a full rebuild.
+        """
+        by_key: dict[str, tuple[list[float], list[float]]] = {}
+        for p in new_points:
+            k = os.path.basename(p.image).lower()
+            xs, ys = by_key.setdefault(k, ([], []))
+            xs.append(p.x)
+            ys.append(p.y)
+        for k, (xs, ys) in by_key.items():
+            nx = np.asarray(xs, dtype=np.float64)
+            ny = np.asarray(ys, dtype=np.float64)
+            if k in buckets:
+                px, py = buckets[k]
+                buckets[k] = (np.concatenate((px, nx)), np.concatenate((py, ny)))
+            else:
+                buckets[k] = (nx, ny)
 
     @staticmethod
     def _section_mask(area: AreaAnnotation, filename_lower: str) -> np.ndarray | None:
@@ -350,6 +445,8 @@ class AnnotateView(QWidget):
             self._point_drag_ended(x, y)
         elif self._area_stroke_active:
             self._area_drag_ended(x, y)
+        elif self._add_drag_start is not None:
+            self._point_add_drag_ended()
 
     # -- point series (click to add, lasso to remove) ------------------
 
@@ -368,11 +465,28 @@ class AnnotateView(QWidget):
         self.point_added.emit(ox, oy)
 
     def _point_drag_started(self, x: float, y: float) -> None:
-        if self._tool != "remove" or not self._point_editable():
+        if not self._point_editable():
+            return
+        if self._tool == "add":
+            # Add mode has no drag gesture: Qt only routes a click here as a drag
+            # when the press jittered a few pixels. Remember where it began so the
+            # release still lands a point (see _point_add_drag_ended).
+            self._add_drag_start = (x, y)
             return
         self._stroke_points = [(x, y)]
         self._stroke_active = True
         self._canvas.clear_stroke_preview()
+
+    def _point_add_drag_ended(self) -> None:
+        """Land a point for an add-mode gesture Qt classified as a drag.
+
+        In add mode a drag carries no gesture of its own, so it is treated exactly
+        like a click at the press position — no movement threshold to tune.
+        """
+        start = self._add_drag_start
+        self._add_drag_start = None
+        if start is not None and self._tool == "add":
+            self._point_click(*start)
 
     def _point_dragged(self, x: float, y: float) -> None:
         self._stroke_points.append((x, y))
@@ -392,6 +506,7 @@ class AnnotateView(QWidget):
     def _cancel_stroke(self) -> None:
         self._stroke_points = []
         self._stroke_active = False
+        self._add_drag_start = None
         self._canvas.clear_stroke_preview()
 
     # -- area (brush / freehand mask painting) -------------------------
@@ -469,7 +584,7 @@ class AnnotateView(QWidget):
             mask, pts, radius=self._brush_radius, add=not self._area_stroke_erase
         )
         self._store_area_mask(new)
-        self._render_annotations()
+        self._render_area_masks()
 
     def _fill_area_freehand(self, display_points: list[tuple[float, float]]) -> None:
         mask = self._active_area_buffer()
@@ -478,7 +593,7 @@ class AnnotateView(QWidget):
         pts = self._stroke_to_mask_coords(display_points)
         new = apply_freehand_stroke(mask, pts, add=not self._area_stroke_erase)
         self._store_area_mask(new)
-        self._render_annotations()
+        self._render_area_masks()
 
     def _active_area_buffer(self) -> np.ndarray | None:
         """The active area's mask for the current section, created empty if absent."""

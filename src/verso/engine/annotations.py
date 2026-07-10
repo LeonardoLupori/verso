@@ -48,6 +48,51 @@ def points_in_polygon(points: ArrayLike, polygon: ArrayLike) -> np.ndarray:
     return inside
 
 
+def point_coords_by_image(series: PointSeries) -> dict[str, tuple[np.ndarray, np.ndarray]]:
+    """Group a point series' coordinates by lower-cased image basename.
+
+    Returns ``{image_lower: (xs, ys)}`` where ``xs``/``ys`` are ``float64`` arrays
+    of original-resolution pixel coordinates for the points on that image.
+
+    A series can hold hundreds of thousands of points spanning many sections, but
+    the Annotate view only ever renders one section at a time. Grouping the whole
+    series once lets each render touch just the current section's points instead
+    of rescanning (and re-``basename``-ing) every point — the costly
+    ``basename``+lower-case runs once per *distinct* image string, mirroring the
+    optimisation in :func:`annotation_images`. Callers should cache the result and
+    rebuild it only when the point list changes.
+
+    Args:
+        series: The point series to group.
+
+    Returns:
+        A dict mapping each covered image basename (lower-cased) to a
+        ``(xs, ys)`` pair of parallel float arrays. Empty for a series with no
+        points.
+    """
+    points = series.points
+    n = len(points)
+    if n == 0:
+        return {}
+    xs = np.fromiter((p.x for p in points), dtype=np.float64, count=n)
+    ys = np.fromiter((p.y for p in points), dtype=np.float64, count=n)
+    # Bucket point indices by the raw image string (a cheap dict insert per
+    # point), then normalise only the handful of distinct keys.
+    idx_by_raw: dict[str, list[int]] = {}
+    for i, p in enumerate(points):
+        idx_by_raw.setdefault(p.image, []).append(i)
+    out: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+    for raw, idxs in idx_by_raw.items():
+        key = os.path.basename(raw).lower()
+        sel = np.asarray(idxs, dtype=np.intp)
+        bx, by = xs[sel], ys[sel]
+        if key in out:  # two raw spellings that collapse to the same basename
+            px, py = out[key]
+            bx, by = np.concatenate((px, bx)), np.concatenate((py, by))
+        out[key] = (bx, by)
+    return out
+
+
 def annotation_images(annotation: Annotation) -> set[str]:
     """Return the section image basenames a single annotation covers.
 
