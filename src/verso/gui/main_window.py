@@ -24,6 +24,7 @@ from verso.gui.controllers.export_controller import ExportController
 from verso.gui.controllers.job_controller import JobController
 from verso.gui.controllers.project_controller import ProjectController
 from verso.gui.controllers.save_controller import SaveController
+from verso.gui.dialogs.about import show_about_dialog
 from verso.gui.dialogs.brightness import BrightnessDialog
 from verso.gui.dialogs.info import show_info_dialog
 from verso.gui.state import AppState
@@ -761,3 +762,6 @@ class MainWindow(QMainWindow):
                 ("Thumbnail scale", f"{project.working_scale:.2f}×"),
             ],
         )
+
+    def _show_about(self) -> None:
+        show_about_dialog(self)

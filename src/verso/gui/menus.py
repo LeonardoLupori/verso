@@ -166,6 +166,10 @@ def build_menus(window: MainWindow) -> None:
     act_project_info = QAction("&Project info…", window)
     act_project_info.triggered.connect(window._show_project_info)
     help_menu.addAction(act_project_info)
+    help_menu.addSeparator()
+    act_about = QAction("&About VERSO…", window)
+    act_about.triggered.connect(window._show_about)
+    help_menu.addAction(act_about)
 
 
 def build_toolbar(window: MainWindow) -> None:
