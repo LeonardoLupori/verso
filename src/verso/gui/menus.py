@@ -25,6 +25,7 @@ VIEW_OVERVIEW = 0
 VIEW_PREP = 1
 VIEW_ALIGN = 2
 VIEW_WARP = 3
+VIEW_ANNOTATE = 4
 
 
 def build_menus(window: MainWindow) -> None:
@@ -184,6 +185,7 @@ def build_toolbar(window: MainWindow) -> None:
         ("Preprocess", VIEW_PREP),
         ("Align", VIEW_ALIGN),
         ("Warp", VIEW_WARP),
+        ("Annotate", VIEW_ANNOTATE),
     ]
     for label, idx in view_specs:
         btn = QPushButton(label)

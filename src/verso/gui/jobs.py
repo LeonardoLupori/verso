@@ -56,6 +56,35 @@ class DeepSliceWorker(QObject):
             self.error.emit(str(exc))
 
 
+class AnnotationLoadWorker(QObject):
+    """Parse a project's annotations off the UI thread.
+
+    ``load_annotations`` builds one object per point, so a series with hundreds
+    of thousands of points takes a couple of seconds — long enough to freeze the
+    window if run on project open. This worker does it in a thread and hands the
+    parsed list back; see the annotation controller's ``load_for_project_async``.
+
+    ``done`` carries the load generation the controller stamped this worker with,
+    so a result that arrives after a newer (re)load started can be ignored.
+    """
+
+    done = pyqtSignal(object, int)  # (list[Annotation], generation)
+
+    def __init__(self, project_dir: Path, generation: int) -> None:
+        super().__init__()
+        self._project_dir = project_dir
+        self._generation = generation
+
+    def run(self) -> None:
+        from verso.engine.io.annotation_io import load_annotations
+
+        try:
+            annotations = load_annotations(self._project_dir)
+        except Exception:
+            annotations = []
+        self.done.emit(annotations, self._generation)
+
+
 class BatchMaskWorker(QObject):
     done = pyqtSignal(int, list)
 
@@ -167,6 +196,10 @@ class BackgroundJob[W: JobWorker]:
     ``done`` signal → quit, and ``thread.finished`` → ``deleteLater`` plus
     dialog teardown. The worker must expose a ``done`` signal; an optional
     ``error`` signal is routed to quit (and to ``on_error`` if given) too.
+
+    Pass ``silent=True`` for a job with no progress dialog — used when the work
+    should run without the user noticing (e.g. loading annotations on project
+    open); ``title``/``message``/``modal``/``min_width`` are then ignored.
     """
 
     def __init__(
@@ -174,25 +207,28 @@ class BackgroundJob[W: JobWorker]:
         parent: QWidget,
         worker: W,
         *,
-        title: str,
-        message: str,
+        title: str = "",
+        message: str = "",
         modal: bool = False,
         min_width: int | None = None,
+        silent: bool = False,
     ) -> None:
         self.worker: W = worker
         self._thread = QThread(parent)
         worker.moveToThread(self._thread)
 
-        progress = QProgressDialog(message, "", 0, 0, parent)
-        progress.setWindowTitle(title)
-        progress.setCancelButton(None)
-        progress.setMinimumDuration(0)
-        progress.setAutoClose(False)
-        progress.setAutoReset(False)
-        progress.setModal(modal)
-        if min_width is not None:
-            progress.setMinimumWidth(min_width)
-        self._progress = progress
+        self._progress: QProgressDialog | None = None
+        if not silent:
+            progress = QProgressDialog(message, "", 0, 0, parent)
+            progress.setWindowTitle(title)
+            progress.setCancelButton(None)
+            progress.setMinimumDuration(0)
+            progress.setAutoClose(False)
+            progress.setAutoReset(False)
+            progress.setModal(modal)
+            if min_width is not None:
+                progress.setMinimumWidth(min_width)
+            self._progress = progress
 
     def start(
         self,
@@ -222,12 +258,19 @@ class BackgroundJob[W: JobWorker]:
         thread.finished.connect(worker.deleteLater)
         thread.finished.connect(self._teardown)
         thread.finished.connect(on_finished)
-        self._progress.show()
+        if self._progress is not None:
+            self._progress.show()
         thread.start()
 
     def is_running(self) -> bool:
         return self._thread.isRunning()
 
+    def stop(self) -> None:
+        """Quit the worker thread and block until it has finished."""
+        self._thread.quit()
+        self._thread.wait()
+
     def _teardown(self) -> None:
-        self._progress.close()
-        self._progress.deleteLater()
+        if self._progress is not None:
+            self._progress.close()
+            self._progress.deleteLater()

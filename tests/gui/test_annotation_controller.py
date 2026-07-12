@@ -1,0 +1,369 @@
+"""Tests for AnnotationController's create/edit/delete/save/load flow.
+
+Uses lightweight fakes for the window/state/page/view so the controller logic is
+exercised without constructing real widgets. Interactive dialogs (delete confirm,
+save-without-path notice) are monkeypatched.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from types import SimpleNamespace
+
+from PyQt6.QtWidgets import QMessageBox
+
+from verso.engine.io.annotation_io import load_annotations
+from verso.engine.model.annotation import AnnotationPoint, AreaAnnotation, PointSeries
+from verso.gui.controllers.annotation_controller import AnnotationController
+
+
+class _FakePage:
+    def __init__(self) -> None:
+        self.annotations: list = []
+        self.active = -1
+        self.dirty = False
+
+    def set_annotations(self, annotations, active_index) -> None:
+        self.annotations = annotations
+        self.active = active_index
+
+    def set_dirty(self, dirty) -> None:
+        self.dirty = dirty
+
+
+class _FakeView:
+    def __init__(self) -> None:
+        self.annotations: list = []
+        self.active = -1
+
+    def set_annotations(self, annotations, active_index) -> None:
+        self.annotations = annotations
+        self.active = active_index
+
+
+class _FakeFilmstrip:
+    def __init__(self) -> None:
+        self.colors: list | None = None
+        self.shape: str | None = None
+        self.calls = 0
+
+    def set_statuses(self, colors, shape="dot") -> None:
+        self.colors = list(colors)
+        self.shape = shape
+        self.calls += 1
+
+
+def _make_controller(
+    tmp_path: Path,
+    section_name: str | None = None,
+    mode: str = "overview",
+    project=None,
+) -> AnnotationController:
+    section = None
+    if section_name is not None:
+        section = SimpleNamespace(original_path=str(tmp_path / section_name))
+    state = SimpleNamespace(
+        project=object() if project is None else project,
+        project_path=tmp_path / "project-verso.json",
+        current_section=section,
+        show_status=lambda _msg: None,
+    )
+    window = SimpleNamespace(
+        _state=state,
+        _props=SimpleNamespace(annotate=_FakePage()),
+        _annotate=_FakeView(),
+        _filmstrip=_FakeFilmstrip(),
+        _current_mode=mode,
+    )
+    return AnnotationController(window)  # type: ignore[arg-type]
+
+
+def test_new_annotation_marks_dirty_and_refreshes(tmp_path: Path):
+    ctrl = _make_controller(tmp_path)
+    ctrl.new_point_series()
+    assert ctrl.is_dirty()
+    page = ctrl._window._props.annotate  # type: ignore[attr-defined]
+    assert len(page.annotations) == 1
+    assert page.active == 0
+    assert page.dirty is True
+    # View got the same list pushed for rendering.
+    assert len(ctrl._window._annotate.annotations) == 1  # type: ignore[attr-defined]
+
+
+def test_new_annotations_get_distinct_titles_and_colors(tmp_path: Path):
+    ctrl = _make_controller(tmp_path)
+    ctrl.new_point_series()
+    ctrl.new_point_series()
+    titles = [a.title for a in ctrl._annotations]
+    colors = [a.color for a in ctrl._annotations]
+    assert len(set(titles)) == 2
+    assert colors[0] != colors[1]
+
+
+def test_new_area_creates_area_annotation(tmp_path: Path):
+    ctrl = _make_controller(tmp_path)
+    ctrl.new_area()
+    assert len(ctrl._annotations) == 1
+    assert isinstance(ctrl._annotations[0], AreaAnnotation)
+    assert ctrl.is_dirty()
+
+
+def test_new_area_then_save_reload_round_trip(tmp_path: Path):
+    import numpy as np
+
+    ctrl = _make_controller(tmp_path)
+    ctrl.new_area()
+    ctrl.rename_active("injection")
+    ctrl._annotations[0].masks["sec.tif"] = np.ones((6, 6), dtype=bool)
+    assert ctrl.save() is True
+
+    ctrl2 = _make_controller(tmp_path)
+    ctrl2.load_for_project()
+    assert isinstance(ctrl2._annotations[0], AreaAnnotation)
+    assert ctrl2._annotations[0].title == "injection"
+    assert "sec.tif" in ctrl2._annotations[0].masks
+
+
+def test_edit_active_updates_model(tmp_path: Path):
+    ctrl = _make_controller(tmp_path)
+    ctrl.new_point_series()
+    ctrl.set_color((1, 2, 3))
+    ctrl.set_visibility(0, False)
+    ctrl.rename_active("my cells")
+    ann = ctrl._annotations[0]
+    assert ann.color == (1, 2, 3)
+    assert ann.visible is False
+    assert ann.title == "my cells"
+
+
+def test_opacity_is_area_only(tmp_path: Path):
+    ctrl = _make_controller(tmp_path)
+    # Point series have no opacity: setting it is a harmless no-op.
+    ctrl.new_point_series()
+    ctrl.set_opacity(0.25)
+    assert not hasattr(ctrl._annotations[0], "opacity")
+    # Areas keep an editable opacity.
+    ctrl.new_area()
+    ctrl.set_opacity(0.25)
+    assert ctrl._annotations[1].opacity == 0.25
+
+
+def test_rename_dedupes_against_other_titles(tmp_path: Path):
+    ctrl = _make_controller(tmp_path)
+    ctrl.new_point_series()  # "points"
+    ctrl.new_point_series()  # "points 2", active
+    ctrl.rename_active("points")  # collides with the first
+    assert ctrl._annotations[1].title != "points"
+
+
+def test_delete_active_removes_and_prompts(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
+    ctrl = _make_controller(tmp_path)
+    ctrl.new_point_series()
+    ctrl.new_point_series()
+    ctrl.delete_active()
+    assert len(ctrl._annotations) == 1
+
+
+def test_set_active_does_not_dirty(tmp_path: Path):
+    ctrl = _make_controller(tmp_path)
+    ctrl.new_point_series()
+    ctrl.save()  # clears dirty (path exists)
+    assert not ctrl.is_dirty()
+    ctrl.new_point_series()
+    ctrl.save()
+    ctrl.set_active(0)
+    assert not ctrl.is_dirty()
+
+
+def test_save_and_reload_round_trip(tmp_path: Path):
+    ctrl = _make_controller(tmp_path)
+    ctrl.new_point_series()
+    ctrl.rename_active("cells")
+    ctrl.set_color((10, 20, 30))
+    assert ctrl.save() is True
+    assert not ctrl.is_dirty()
+
+    # On disk under annotations/, and re-loadable.
+    on_disk = load_annotations(tmp_path)
+    assert [a.title for a in on_disk] == ["cells"]
+    assert on_disk[0].color == (10, 20, 30)
+
+    # A fresh controller loads the same set.
+    ctrl2 = _make_controller(tmp_path)
+    ctrl2.load_for_project()
+    assert [a.title for a in ctrl2._annotations] == ["cells"]
+    assert not ctrl2.is_dirty()
+
+
+def test_save_without_project_path_is_noop(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: None)
+    ctrl = _make_controller(tmp_path)
+    ctrl._state.project_path = None  # type: ignore[attr-defined]
+    ctrl.new_point_series()
+    assert ctrl.save() is False
+    # Still dirty (nothing was written).
+    assert ctrl.is_dirty()
+
+
+def test_load_for_project_clears_when_no_annotations(tmp_path: Path):
+    ctrl = _make_controller(tmp_path)
+    ctrl.load_for_project()
+    assert ctrl._annotations == []
+    assert not ctrl.is_dirty()
+
+
+# ---------------------------------------------------------------------------
+# Point editing (add / lasso-remove / undo)
+# ---------------------------------------------------------------------------
+
+_SQUARE = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)]
+
+
+def test_add_point_appends_to_active_with_section_filename(tmp_path: Path):
+    ctrl = _make_controller(tmp_path, "sec.tif")
+    ctrl.new_point_series()
+    ctrl.add_point(100.0, 200.0)
+    pts = ctrl._annotations[0].points
+    assert len(pts) == 1
+    assert (pts[0].x, pts[0].y, pts[0].image) == (100.0, 200.0, "sec.tif")
+
+
+def test_add_point_without_active_is_noop(tmp_path: Path):
+    ctrl = _make_controller(tmp_path, "sec.tif")
+    ctrl.add_point(1.0, 2.0)
+    assert ctrl._annotations == []
+
+
+def test_remove_in_polygon_removes_enclosed(tmp_path: Path):
+    ctrl = _make_controller(tmp_path, "sec.tif")
+    ctrl.new_point_series()
+    ctrl.add_point(5.0, 5.0)  # inside the square
+    ctrl.add_point(50.0, 50.0)  # outside
+    ctrl.remove_in_polygon(_SQUARE)
+    pts = ctrl._annotations[0].points
+    assert [(p.x, p.y) for p in pts] == [(50.0, 50.0)]
+
+
+def test_remove_only_affects_current_section(tmp_path: Path):
+    ctrl = _make_controller(tmp_path, "sec.tif")
+    ctrl.new_point_series()
+    # A point on a *different* image, inside the polygon, must survive.
+    ctrl._annotations[0].points.append(AnnotationPoint(5.0, 5.0, "other.tif"))
+    ctrl.add_point(5.0, 5.0)  # on sec.tif, inside
+    ctrl.remove_in_polygon(_SQUARE)
+    assert [p.image for p in ctrl._annotations[0].points] == ["other.tif"]
+
+
+def test_undo_restores_previous_points(tmp_path: Path):
+    ctrl = _make_controller(tmp_path, "sec.tif")
+    ctrl.new_point_series()
+    ctrl.add_point(1.0, 1.0)
+    ctrl.add_point(2.0, 2.0)
+    ctrl.undo()
+    assert [(p.x, p.y) for p in ctrl._annotations[0].points] == [(1.0, 1.0)]
+    ctrl.undo()
+    assert ctrl._annotations[0].points == []
+
+
+# ---------------------------------------------------------------------------
+# Area editing (begin/commit brackets + closure-based undo)
+# ---------------------------------------------------------------------------
+
+
+def test_active_area_only_for_area(tmp_path: Path):
+    ctrl = _make_controller(tmp_path, "sec.tif")
+    ctrl.new_point_series()
+    assert ctrl.active_area() is None
+    ctrl.new_area()
+    assert isinstance(ctrl.active_area(), AreaAnnotation)
+
+
+def test_area_edit_undo_restores_absent_mask(tmp_path: Path):
+    import numpy as np
+
+    ctrl = _make_controller(tmp_path, "sec.tif")
+    ctrl.new_area()
+    area = ctrl._annotations[0]
+    ctrl.begin_area_edit()  # snapshot: no mask for sec.tif yet
+    area.masks["sec.tif"] = np.ones((4, 4), dtype=bool)  # view paints in place
+    ctrl.commit_area_edit()
+    assert "sec.tif" in area.masks
+    ctrl.undo()
+    assert "sec.tif" not in area.masks  # restored to absent
+
+
+def test_area_edit_undo_restores_previous_mask(tmp_path: Path):
+    import numpy as np
+
+    ctrl = _make_controller(tmp_path, "sec.tif")
+    ctrl.new_area()
+    area = ctrl._annotations[0]
+    first = np.zeros((4, 4), dtype=bool)
+    first[0, 0] = True
+    area.masks["sec.tif"] = first
+    ctrl.begin_area_edit()  # snapshot: first
+    area.masks["sec.tif"] = np.ones((4, 4), dtype=bool)  # view repaints
+    ctrl.commit_area_edit()
+    ctrl.undo()
+    assert np.array_equal(area.masks["sec.tif"], first)
+
+
+def test_begin_area_edit_noop_for_point_series(tmp_path: Path):
+    ctrl = _make_controller(tmp_path, "sec.tif")
+    ctrl.new_point_series()
+    ctrl.begin_area_edit()  # active isn't an area → nothing snapshotted
+    ctrl.undo()  # empty undo stack → no crash
+    assert isinstance(ctrl._annotations[0], type(ctrl._annotations[0]))
+
+
+def test_filmstrip_markers_flag_sections_with_active_annotation(tmp_path: Path):
+    project = SimpleNamespace(
+        sections=[
+            SimpleNamespace(original_path=str(tmp_path / "a.tif")),
+            SimpleNamespace(original_path=str(tmp_path / "b.tif")),
+            SimpleNamespace(original_path=str(tmp_path / "c.tif")),
+        ]
+    )
+    ctrl = _make_controller(tmp_path, mode="annotate", project=project)
+    ctrl._annotations = [
+        PointSeries(
+            title="pts",
+            color=(10, 20, 30),
+            points=[AnnotationPoint(1.0, 1.0, "A.TIF")],  # section a, other casing
+        )
+    ]
+    ctrl._active = 0
+    ctrl.refresh_filmstrip_markers()
+
+    fs = ctrl._window._filmstrip  # type: ignore[attr-defined]
+    assert fs.shape == "square"
+    assert fs.colors == ["#0a141e", None, None]
+
+
+def test_filmstrip_markers_skipped_outside_annotate_view(tmp_path: Path):
+    ctrl = _make_controller(tmp_path, mode="prep")
+    ctrl._annotations = [PointSeries(title="pts", points=[AnnotationPoint(0, 0, "x.tif")])]
+    ctrl._active = 0
+    ctrl.refresh_filmstrip_markers()  # must not touch the filmstrip in other views
+    assert ctrl._window._filmstrip.colors is None  # type: ignore[attr-defined]
+
+
+def test_cosmetic_edits_do_not_repaint_filmstrip_markers(tmp_path: Path):
+    # Point-size slider drags (and, for areas, opacity) fire on every tick; they
+    # change neither coverage nor colour, so they must not repaint (and rescan)
+    # the markers. set_opacity here is also a no-op on a point series.
+    project = SimpleNamespace(sections=[SimpleNamespace(original_path=str(tmp_path / "a.tif"))])
+    ctrl = _make_controller(tmp_path, mode="annotate", project=project)
+    ctrl.new_point_series()  # structural change → one marker repaint
+    fs = ctrl._window._filmstrip  # type: ignore[attr-defined]
+    baseline = fs.calls
+
+    ctrl.set_opacity(0.3)
+    ctrl.set_point_size(15)
+    ctrl.rename_active("renamed")
+    ctrl.set_visibility(0, False)
+    assert fs.calls == baseline  # no marker repaint from cosmetic edits
+
+    ctrl.set_color((1, 2, 3))  # colour, on the other hand, must repaint
+    assert fs.calls == baseline + 1

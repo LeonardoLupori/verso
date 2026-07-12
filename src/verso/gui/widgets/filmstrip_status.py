@@ -27,9 +27,17 @@ class FilmstripStatusPresenter:
         self._filmstrip = filmstrip
 
     def refresh_all(self, step: str) -> None:
-        """Recompute every dot for ``step`` (no-op outside Prep/Align/Warp)."""
+        """Recompute every dot for ``step``.
+
+        Steps without per-section status (e.g. Annotate, whose annotations are a
+        project-global resource) clear the dots so a previous view's colours do
+        not linger.
+        """
         project = self._state.project
-        if project is None or step not in _STEPS:
+        if project is None:
+            return
+        if step not in _STEPS:
+            self._filmstrip.set_statuses([None] * len(project.sections))
             return
         self._filmstrip.set_statuses([self._color(s, step) for s in project.sections])
 

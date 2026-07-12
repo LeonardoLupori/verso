@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import QDockWidget, QStackedWidget, QWidget
 
 from verso.gui.utils import require
 from verso.gui.views.align_view import AlignView
+from verso.gui.views.annotate_view import AnnotateView
 from verso.gui.views.overview_view import OverviewView
 from verso.gui.views.prep_view import PrepView
 from verso.gui.views.warp_view import WarpView
@@ -43,11 +44,13 @@ def build_central(window: MainWindow) -> None:
     window._panel = SectionCanvasPanel()
     window._align = AlignView(window._panel, window._state)
     window._warp = WarpView(window._panel, window._state)
+    window._annotate = AnnotateView(window._state)
 
     window._stack.addWidget(window._overview)  # 0
     window._stack.addWidget(window._prep)  # 1
     window._stack.addWidget(window._align)  # 2
     window._stack.addWidget(window._warp)  # 3
+    window._stack.addWidget(window._annotate)  # 4
 
     # Park the panel inside AlignView's slot immediately.  If we left it as
     # a free-floating child of MainWindow (the default when ``SectionCanvasPanel``
@@ -194,6 +197,24 @@ def connect_signals(window: MainWindow) -> None:
         page.save_bar.save_requested.connect(lambda s=step: window._saves.on_save(s))
         page.save_bar.revert_requested.connect(lambda s=step: window._saves.on_revert(s))
         page.save_bar.reset_requested.connect(lambda s=step: window._saves.on_clear(s))
+
+    # Annotation manager (project-global; its own controller + save model).
+    window._annotations.connect_page(window._props.annotate)
+    # Point editing: the view emits intents, the controller mutates; the tool
+    # state is mirrored both ways so the page buttons and canvas stay in sync.
+    window._annotate.point_added.connect(window._annotations.add_point)
+    window._annotate.points_lassoed.connect(window._annotations.remove_in_polygon)
+    window._annotate.undo_requested.connect(window._annotations.undo)
+    window._annotate.tool_changed.connect(window._props.annotate.selected.set_tool)
+    window._props.annotate.selected.tool_changed.connect(window._annotate.set_tool)
+    # Area mask editing: the view paints in place, bracketed by these so the
+    # controller snapshots undo and marks dirty; tool/size sync both ways.
+    window._annotate.area_edit_started.connect(window._annotations.begin_area_edit)
+    window._annotate.area_edit_committed.connect(window._annotations.commit_area_edit)
+    window._props.annotate.selected.area_tool_changed.connect(window._annotate.set_area_tool)
+    window._annotate.area_tool_changed.connect(window._props.annotate.selected.set_area_tool)
+    window._props.annotate.selected.brush_size_changed.connect(window._annotate.set_brush_size)
+    window._annotate.brush_size_changed.connect(window._props.annotate.selected.set_brush_size)
 
     # A prep save/clear that flips the section invalidates its alignment+warp.
     window._prep.alignment_invalidated.connect(window._project.on_prep_invalidated_alignment)

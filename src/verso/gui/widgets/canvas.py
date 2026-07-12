@@ -40,6 +40,8 @@ from PyQt6.QtWidgets import (
 
 from verso.gui.utils import require
 from verso.gui.widgets.align_handle import AlignHandle
+from verso.gui.widgets.annotation_overlay import AnnotationLayer, AnnotationOverlay
+from verso.gui.widgets.area_overlay import AreaLayer, AreaOverlay
 from verso.gui.widgets.control_points import ControlPointOverlay
 from verso.gui.widgets.cursors import (
     make_circle_cursor,
@@ -75,7 +77,7 @@ class _OverlayViewBox(pg.ViewBox):
     canvas_dragged = pyqtSignal(float, float)  # drag update
     canvas_drag_ended = pyqtSignal(float, float)  # drag finish
 
-    _InteractionMode = Literal["align", "warp", "prep", "view"]
+    _InteractionMode = Literal["align", "warp", "prep", "annotate", "view"]
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -89,12 +91,16 @@ class _OverlayViewBox(pg.ViewBox):
         self._align_handle = handle
 
     def mouseClickEvent(self, ev) -> None:
-        if ev.double() and ev.button() == Qt.MouseButton.LeftButton:
+        # Middle-click resets the zoom (auto-range) in every mode. This replaces
+        # left double-click, which only worked outside the placement modes (in
+        # warp/prep/annotate a double-click's second press places a point) and so
+        # was inconsistent across views.
+        if ev.button() == Qt.MouseButton.MiddleButton:
             self.autoRange()
             ev.accept()
             return
         if (
-            self._interaction_mode in ("warp", "prep")
+            self._interaction_mode in ("warp", "prep", "annotate")
             and ev.button() == Qt.MouseButton.LeftButton
             and not SpaceState.held
         ):
@@ -142,7 +148,7 @@ class _OverlayViewBox(pg.ViewBox):
                 # Default: drag anywhere else translates the atlas overlay.
                 self.overlay_panned.emit(p2.x() - p1.x(), p2.y() - p1.y())
         elif (
-            self._interaction_mode in ("warp", "prep")
+            self._interaction_mode in ("warp", "prep", "annotate")
             and not SpaceState.held
             and ev.button() == Qt.MouseButton.LeftButton
         ):
@@ -188,7 +194,7 @@ class ImageCanvas(QWidget):
     # content (e.g. the atlas outline) so it stays ~1 screen-pixel wide.
     view_range_changed = pyqtSignal()
 
-    _InteractionMode = Literal["align", "warp", "prep", "view"]
+    _InteractionMode = Literal["align", "warp", "prep", "annotate", "view"]
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -249,6 +255,13 @@ class ImageCanvas(QWidget):
         # Control-point dots + displacement vectors (Warp mode). Owns its own
         # graphics items; the canvas adds them to the plot at their z-values.
         self._cp_overlay = ControlPointOverlay()
+
+        # Point-annotation layers (Annotate mode). Manages its own scatter items
+        # dynamically, so it needs the plot to add/remove them.
+        self._annotation_overlay = AnnotationOverlay(self.plot)
+
+        # Area-mask layers (Annotate mode), rendered below the point overlay.
+        self._area_overlay = AreaOverlay(self.plot)
 
         # Live freehand stroke preview (Prep mode)
         self.stroke_item = pg.PlotCurveItem(
@@ -389,21 +402,34 @@ class ImageCanvas(QWidget):
 
     def _on_shift_changed(self) -> None:
         """Called by the app-level filter when Shift state changes."""
-        if self._interaction_mode == "prep" and self.view.underMouse():
-            self._refresh_prep_cursor()
+        # Shift recolours the draw/erase cursor in both Prep and Annotate.
+        if self._interaction_mode in ("prep", "annotate") and self.view.underMouse():
+            self._refresh_cursor()
 
     def set_brush_cursor(self, active: bool, radius_img: int) -> None:
         """Enable the circular brush cursor (``active``) sized to ``radius_img``
         image pixels. When inactive the crosshair cursor is used."""
         self._brush_mode = bool(active)
         self._brush_radius_img = max(int(radius_img), 1)
-        if self._interaction_mode == "prep" and self.view.underMouse():
-            self._refresh_prep_cursor()
+        if self._interaction_mode in ("prep", "annotate") and self.view.underMouse():
+            self._refresh_cursor()
 
     def _on_view_range_changed(self, *_: object) -> None:
-        if self._brush_mode and self._interaction_mode == "prep" and self.view.underMouse():
-            self._refresh_prep_cursor()
+        # Keep the brush circle sized to the footprint as the user zooms.
+        if (
+            self._brush_mode
+            and self._interaction_mode in ("prep", "annotate")
+            and self.view.underMouse()
+        ):
+            self._refresh_cursor()
         self.view_range_changed.emit()
+
+    def _brush_circle_cursor(self):
+        """A circular cursor sized to the brush footprint; red while Shift-erasing."""
+        rgb = (255, 140, 140) if ShiftState.held else (120, 200, 255)
+        px_per_img = 1.0 / max(self._vb.viewPixelSize()[0], 1e-9)
+        diameter = round(2 * self._brush_radius_img * px_per_img)
+        return make_circle_cursor(rgb, diameter)
 
     def image_to_screen_scale(self) -> float:
         """Return screen pixels per image pixel at the current zoom.
@@ -427,11 +453,8 @@ class ImageCanvas(QWidget):
             return
         if self._apply_pan_cursor():
             return
-        rgb = (255, 140, 140) if ShiftState.held else (120, 200, 255)
         if self._brush_mode:
-            px_per_img = 1.0 / max(self._vb.viewPixelSize()[0], 1e-9)
-            diameter = round(2 * self._brush_radius_img * px_per_img)
-            self.view.setCursor(make_circle_cursor(rgb, diameter))
+            self.view.setCursor(self._brush_circle_cursor())
             return
         self.view.setCursor(self._cursor_erase if ShiftState.held else self._cursor_draw)
 
@@ -571,6 +594,13 @@ class ImageCanvas(QWidget):
             self._refresh_align_cursor()
         elif self._interaction_mode == "prep":
             self._refresh_prep_cursor()
+        elif self._interaction_mode == "annotate":
+            if self._apply_pan_cursor():
+                return
+            if self._brush_mode:
+                self.view.setCursor(self._brush_circle_cursor())
+            else:
+                self.view.setCursor(Qt.CursorShape.CrossCursor)
         elif not self._apply_pan_cursor():
             self.view.unsetCursor()
 
@@ -637,6 +667,20 @@ class ImageCanvas(QWidget):
     def clear_control_points(self) -> None:
         self._cp_overlay.clear()
 
+    def set_annotations(self, layers: list[AnnotationLayer]) -> None:
+        """Draw point-annotation layers (Annotate mode). See AnnotationOverlay."""
+        self._annotation_overlay.set(layers)
+
+    def clear_annotations(self) -> None:
+        self._annotation_overlay.clear()
+
+    def set_area_masks(self, layers: list[AreaLayer]) -> None:
+        """Draw area-mask layers (Annotate mode). See AreaOverlay."""
+        self._area_overlay.set(layers)
+
+    def clear_area_masks(self) -> None:
+        self._area_overlay.clear()
+
     def set_stroke_preview(
         self,
         points: list[tuple[float, float]],
@@ -644,7 +688,7 @@ class ImageCanvas(QWidget):
     ) -> None:
         """Draw a live freehand stroke preview in image-pixel coordinates."""
         if len(points) < 2:
-            self.stroke_item.clear()
+            self.clear_stroke_preview()
             return
         xs = [point[0] for point in points]
         ys = [point[1] for point in points]
@@ -652,7 +696,12 @@ class ImageCanvas(QWidget):
         self.stroke_item.setData(x=xs, y=ys)
 
     def clear_stroke_preview(self) -> None:
+        # PlotCurveItem.clear() drops the curve data but, unlike setData(), does
+        # not request a repaint — so force one. Otherwise the stroke lingers on
+        # screen until some unrelated event redraws the scene (e.g. an empty
+        # lasso that removes nothing, so no annotation re-render follows).
         self.stroke_item.clear()
+        self.stroke_item.update()
 
     def set_overlay_opacity(self, opacity: float) -> None:
         """Set overlay opacity in [0, 1]."""
@@ -668,4 +717,6 @@ class ImageCanvas(QWidget):
         self._overlay_present = False
         self._update_handle_visibility()
         self._cp_overlay.clear()
+        self._annotation_overlay.clear()
+        self._area_overlay.clear()
         self.stroke_item.clear()

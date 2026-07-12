@@ -10,6 +10,7 @@ from __future__ import annotations
 from PyQt6.QtWidgets import QStackedWidget, QVBoxLayout, QWidget
 
 from verso.gui.widgets.properties.align_page import AlignPage
+from verso.gui.widgets.properties.annotate_page import AnnotatePage
 from verso.gui.widgets.properties.overview_page import OverviewPage
 from verso.gui.widgets.properties.prep_page import PrepPage
 from verso.gui.widgets.properties.warp_page import WarpPage
@@ -18,7 +19,7 @@ from verso.gui.widgets.properties.warp_page import WarpPage
 class PropertiesPanel(QWidget):
     """Stack of per-mode pages; routes mode switching and section updates."""
 
-    _MODES = ("overview", "prep", "align", "warp")
+    _MODES = ("overview", "prep", "align", "warp", "annotate")
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -32,8 +33,9 @@ class PropertiesPanel(QWidget):
         self.prep = PrepPage()
         self.align = AlignPage()
         self.warp = WarpPage()
+        self.annotate = AnnotatePage()
 
-        for page in (self.overview, self.prep, self.align, self.warp):
+        for page in (self.overview, self.prep, self.align, self.warp, self.annotate):
             self._stack.addWidget(page)
         layout.addWidget(self._stack)
 
