@@ -46,19 +46,21 @@ def build_menus(window: MainWindow) -> None:
 
     file_menu.addSeparator()
 
-    act_open_qn = QAction("Import &QuickNII…", window)
+    import_menu = require(file_menu.addMenu("&Import"))
+
+    act_open_qn = QAction("&QuickNII XML file…", window)
     act_open_qn.triggered.connect(window._project.open_quicknii)
-    file_menu.addAction(act_open_qn)
+    import_menu.addAction(act_open_qn)
 
-    act_open_va = QAction("Open &VisuAlign…", window)
+    act_open_va = QAction("&VisuAlign JSON file…", window)
     act_open_va.triggered.connect(window._project.open_visualign)
-    file_menu.addAction(act_open_va)
+    import_menu.addAction(act_open_va)
 
-    file_menu.addSeparator()
+    import_menu.addSeparator()
 
-    act_import_settings = QAction("Import &settings from project…", window)
+    act_import_settings = QAction("&Settings from VERSO project file…", window)
     act_import_settings.triggered.connect(window._project.import_settings_from_project)
-    file_menu.addAction(act_import_settings)
+    import_menu.addAction(act_import_settings)
 
     file_menu.addSeparator()
 
@@ -137,27 +139,29 @@ def build_menus(window: MainWindow) -> None:
     warp_menu.addAction(window._act_clear_auto_cps)
 
     export_menu = require(mb.addMenu("&Export"))
-    act_export_images = QAction("Export images with atlas &overlay…", window)
+    act_export_images = QAction("Images with atlas &overlay…", window)
     act_export_images.triggered.connect(window._export.export_images_with_overlay)
     export_menu.addAction(act_export_images)
 
-    act_export_stack = QAction("Export aligned section &stack…", window)
+    act_export_stack = QAction("Aligned section &stack…", window)
     act_export_stack.triggered.connect(window._export.export_aligned_stack)
     export_menu.addAction(act_export_stack)
 
     export_menu.addSeparator()
 
-    act_export_qn_xml = QAction("Export QuickNII &XML…", window)
+    quint_menu = require(export_menu.addMenu("For &QUINT"))
+
+    act_export_qn_xml = QAction("QuickNII &XML…", window)
     act_export_qn_xml.triggered.connect(window._export.export_quicknii_xml)
-    export_menu.addAction(act_export_qn_xml)
+    quint_menu.addAction(act_export_qn_xml)
 
-    act_export_qn = QAction("Export &QuickNII JSON…", window)
+    act_export_qn = QAction("QuickNII &JSON…", window)
     act_export_qn.triggered.connect(window._export.export_quicknii)
-    export_menu.addAction(act_export_qn)
+    quint_menu.addAction(act_export_qn)
 
-    act_export_va = QAction("Export &VisuAlign JSON…", window)
+    act_export_va = QAction("&VisuAlign JSON…", window)
     act_export_va.triggered.connect(window._export.export_visualign)
-    export_menu.addAction(act_export_va)
+    quint_menu.addAction(act_export_va)
 
     help_menu = require(mb.addMenu("&Help"))
     act_atlas_info = QAction("&Atlas info…", window)
