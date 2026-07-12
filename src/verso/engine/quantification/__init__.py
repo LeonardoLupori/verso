@@ -217,9 +217,7 @@ def _write_pooled(options: QuantifyOptions, files: dict[str, list[dict]]) -> Non
     write_result_tables(root, files)
 
 
-def _write_per_slice(
-    options: QuantifyOptions, file_map: dict[str, dict[str, list[dict]]]
-) -> None:
+def _write_per_slice(options: QuantifyOptions, file_map: dict[str, dict[str, list[dict]]]) -> None:
     if options.out_dir is None:
         return
     from verso.engine.io.quant_export import make_output_dir, write_result_tables
