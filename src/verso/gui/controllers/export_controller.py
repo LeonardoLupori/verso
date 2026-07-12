@@ -27,6 +27,7 @@ class ExportController:
     def __init__(self, window: MainWindow) -> None:
         self._window = window
         self._state = window._state
+        self._quant_job = None  # type: ignore[var-annotated]  # BackgroundJob[QuantifyWorker]
 
     # ------------------------------------------------------------------
     # QuickNII / VisuAlign
@@ -331,6 +332,143 @@ class ExportController:
             QMessageBox.warning(self._window, "Export", "No sections selected.")
             return None
         return sections
+
+    # ------------------------------------------------------------------
+    # Quantification (Export ▸ Quantify)
+    # ------------------------------------------------------------------
+
+    def quantify_intensity(self) -> None:
+        """Open the intensity-quantification dialog and run it in the background."""
+        self._quantify("intensity")
+
+    def quantify_dots(self) -> None:
+        self._quantify("dots")
+
+    def quantify_area(self) -> None:
+        self._quantify("area")
+
+    def _quantify(self, kind: str) -> None:
+        from verso.engine import quantify_area, quantify_dots, quantify_intensity
+        from verso.gui.dialogs.quantify_dialog import QuantifyDialog
+
+        preflight = self._export_preflight()
+        if preflight is None:
+            return
+        project, atlas, project_path = preflight
+        project_dir = project_path.parent
+
+        titles = None
+        if kind in ("area", "dots"):
+            titles = self._annotation_titles(project_dir, kind)
+            if not titles:
+                label = "area annotations" if kind == "area" else "point series"
+                QMessageBox.information(
+                    self._window,
+                    "Quantify",
+                    f"This project has no {label} to quantify.\n\n"
+                    "Create one in the Annotate view first.",
+                )
+                return
+
+        dlg = QuantifyDialog(
+            kind,
+            channel_names=[c.name for c in project.channels],
+            annotation_titles=titles,
+            parent=self._window,
+        )
+        if dlg.exec() != dlg.DialogCode.Accepted:
+            return
+        problem = dlg.validate()
+        if problem:
+            QMessageBox.warning(self._window, "Quantify", problem)
+            return
+
+        out_base = project_dir / "exports"
+        options = dlg.quant_options()
+        options.out_dir = str(out_base)
+
+        if kind == "intensity":
+
+            def run_fn():
+                return quantify_intensity(
+                    project, project_dir=project_dir, atlas=atlas, options=options
+                )
+        elif kind == "area":
+            annotation = dlg.annotation()
+
+            def run_fn():
+                return quantify_area(
+                    project, annotation, project_dir=project_dir, atlas=atlas, options=options
+                )
+        else:  # dots
+            annotation = dlg.annotation()
+            intensity_channels = dlg.intensity_channels()
+            diameter = dlg.dot_diameter()
+
+            def run_fn():
+                return quantify_dots(
+                    project,
+                    annotation,
+                    intensity_channels=intensity_channels,
+                    dot_diameter_px=diameter,
+                    project_dir=project_dir,
+                    atlas=atlas,
+                    options=options,
+                )
+
+        self._launch_quantify(run_fn, out_base, kind)
+
+    def _launch_quantify(self, run_fn, out_base: Path, kind: str) -> None:
+        from verso.gui.jobs import BackgroundJob, QuantifyWorker
+
+        self._quant_job = BackgroundJob(
+            self._window,
+            QuantifyWorker(run_fn),
+            title="Quantification",
+            message=f"Running {kind} quantification…",
+            modal=True,
+            min_width=320,
+        )
+        self._quant_job.start(
+            lambda _result: self._show_export_done(
+                out_base,
+                f"{kind.capitalize()} quantification complete.\n\n"
+                f"CSV files were written under:\n{out_base}",
+            ),
+            self._on_quantify_finished,
+            self._on_quantify_error,
+        )
+
+    def _on_quantify_finished(self) -> None:
+        self._quant_job = None
+
+    def _on_quantify_error(self, message: str) -> None:
+        QMessageBox.warning(self._window, "Quantification could not run", message)
+
+    @staticmethod
+    def _annotation_titles(project_dir: Path, kind: str) -> list[str]:
+        """Titles of annotations of ``kind`` (``"area"``/``"dots"``) without loading points."""
+        import json
+
+        from verso.engine.io.annotation_io import annotations_dir
+        from verso.engine.model.annotation import AREA, POINT_SERIES
+
+        want = AREA if kind == "area" else POINT_SERIES
+        root = annotations_dir(project_dir)
+        titles: list[str] = []
+        if not root.exists():
+            return titles
+        for child in sorted(root.iterdir()):
+            meta_path = child / "annotation.json"
+            if not (child.is_dir() and meta_path.exists()):
+                continue
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if str(meta.get("type", POINT_SERIES)) == want and meta.get("title"):
+                titles.append(str(meta["title"]))
+        return titles
 
     def _show_export_done(self, out_dir: Path, message: str) -> None:
         """Completion box with an "Open folder" shortcut to the export dir."""

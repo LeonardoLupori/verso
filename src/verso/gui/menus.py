@@ -163,6 +163,22 @@ def build_menus(window: MainWindow) -> None:
     act_export_va.triggered.connect(window._export.export_visualign)
     quint_menu.addAction(act_export_va)
 
+    export_menu.addSeparator()
+
+    quantify_menu = require(export_menu.addMenu("&Quantify"))
+
+    act_q_intensity = QAction("&Intensity…", window)
+    act_q_intensity.triggered.connect(window._export.quantify_intensity)
+    quantify_menu.addAction(act_q_intensity)
+
+    act_q_dots = QAction("&Dots annotations…", window)
+    act_q_dots.triggered.connect(window._export.quantify_dots)
+    quantify_menu.addAction(act_q_dots)
+
+    act_q_area = QAction("&Area annotations…", window)
+    act_q_area.triggered.connect(window._export.quantify_area)
+    quantify_menu.addAction(act_q_area)
+
     help_menu = require(mb.addMenu("&Help"))
     act_atlas_info = QAction("&Atlas info…", window)
     act_atlas_info.triggered.connect(window._show_atlas_info)

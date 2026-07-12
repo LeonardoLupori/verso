@@ -14,8 +14,18 @@ my_experiment/
     project-verso.json     # all project state, settings, metadata
     thumbnails/            # working-resolution OME-TIFFs + filmstrip PNGs
     masks/                 # slice masks as 1-bit PNGs
-    exports/               # export outputs (images with overlays, etc.)
+    annotations/           # point series (points.csv) + area masks, one folder each
+    exports/               # export outputs (images with overlays, aligned stacks, etc.)
+        quantification_<YYYYMMDD-HHMMSS>/   # one folder per Export ▸ Quantify run
+            intensity.csv / area.csv / dots.csv / dots_regions.csv   # pooled tables
+            <image-slug>/  # only when "Separate output per slice" is on: same files per section
 ```
+
+Quantification CSVs are written by `engine/io/quant_export.py`; each run gets its
+own timestamped folder. Pooled runs write the tables at the top level; per-slice
+runs write one `<slugified-image-stem>/` subfolder per section instead. Aggregated
+levels add `*_mid.csv` / `*_coarse.csv` companions. See
+[quantification.md](quantification.md).
 
 Original full-resolution images are **not copied**. `project.json` stores
 their absolute paths in `section.original_path`. Only working copies

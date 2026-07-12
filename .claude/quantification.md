@@ -1,10 +1,12 @@
-# Quantification — Implementation Plan
+# Quantification — Implementation Notes
 
-> **Status: plan / not implemented.** Supersedes the quantification portion of
-> [analysis-view.md](analysis-view.md) (which assumed a built-in cell *detector*).
-> This feature instead quantifies data that already lives in a VERSO project:
+> **Status: implemented.** This feature quantifies data that already lives in a
+> VERSO project (superseding an earlier cell-*detector* proposal):
 > raw image pixels and user-drawn **annotations** (point series = "dots", area
-> annotations). All design decisions below were confirmed with the user.
+> annotations). Engine: `engine/quantification/` (public API
+> `quantify_intensity` / `quantify_area` / `quantify_dots` / `QuantifyOptions`).
+> GUI: Export ▸ Quantify. Tests: `tests/engine/test_quantification.py`. This
+> document is both the design record and the implementation reference.
 
 ---
 
@@ -29,7 +31,7 @@ quantification from their own pipeline using only `project-verso.json`.
 
 | Topic | Decision |
 |---|---|
-| **Resolution** | Pixel quantification runs at **full-resolution original** images. Memory is bounded by streaming the per-pixel label map in row-tiles (as `VersoRegistration.image_to_atlas` already does). |
+| **Resolution** | Pixel quantification runs at **full-resolution original** images, all channels loaded at once. Peak RAM (~4 GB/section) is acceptable on an analysis machine. |
 | **The RULE mask** | "Quantify only within the mask" ⇒ the **Prep slice mask** (`Preprocessing.slice_mask_path`), *not* area-annotation masks. |
 | **No slice mask** | If a section has no slice mask and the "use sections without a mask" box is ticked, its scope is the **whole image frame** (every pixel; pixels whose atlas voxel is out-of-brain or out-of-atlas simply fall under `region_id 0`). If the box is **unticked** and any included section lacks a mask, the run **aborts** (parity with the warp gate below). |
 | **The slice mask is the *only* silent filter** | Scope masks contain **no `label > 0` constraint**. The slice mask is the single thing that removes pixels/dots from quantification; everything else is quantified. Pixels/dots with no atlas region are pooled under `region_id 0` (a real output row, acronym/name = `background`). |
@@ -37,13 +39,13 @@ quantification from their own pipeline using only `project-verso.json`.
 | **Public API return type** | **`list[dict]` records** (stdlib only). Trivially `pd.DataFrame(rows)` for pandas users; CSV written with stdlib `csv`. No new dependency. |
 | **Annotation selection** | GUI: dropdown of existing annotations of that type. API: pass the annotation **name**. One annotation per run. |
 | **Dots density** | `dots_density = n_dots / n_pixels` (per pixel). No pixel-size value is added to the model. |
-| **Output granularity** | **Pooled project-wide** — one row per region, aggregated across all included slices. No per-slice files. |
+| **Output granularity** | **Pooled project-wide** by default — one row per region, aggregated across all included slices. A dialog checkbox **"Separate output per slice"** (default off) instead emits one independent output per section: every file (and every returned records list) is produced once per slice rather than pooled. |
 | **Dot CCF coords** | **Allen CCFv3 microns**, axis order `x=AP, y=DV, z=LR` (PyNutil/QUINT convention). |
 | **Precondition gates** | Alignment is mandatory (no checkbox): abort if any included section is unaligned. **"Use sections without warping control points"** (default off): ticked ⇒ affine-only mapping for CP-less sections; unticked ⇒ abort if any lacks CPs. **"Use sections without a slice mask"** (default off): as above. |
-| **Channel columns** | `mean_ch_<Name>`, `median_ch_<Name>`, `tot_ch_<Name>` where `<Name>` is the slugified `ChannelSpec.name`. All channels quantified. |
+| **Channel columns** | `mean_ch_<Name>` and `tot_ch_<Name>` where `<Name>` is the slugified `ChannelSpec.name`. All channels quantified. **No median** — mean is sufficient. |
 | **Dot intensity** | Optional `mean_intensity_ch_<Name>` for **one or more user-chosen channels**; circle **diameter in original px** (default 1 px = the single pixel under the dot). |
 | **Missing originals** | Verify every section's `original_path` is reachable before running; if any is missing, **report the list and abort**. |
-| **Outputs** | Written to `<project>/exports/quantification_<YYYYMMDD-HHMMSS>/*.csv`. |
+| **Outputs** | Written to `<project>/exports/quantification_<YYYYMMDD-HHMMSS>/*.csv`. With "Separate output per slice" on, the timestamped folder instead holds one subfolder per section — named by the **slugified image stem** (`slugify(Path(original_path).stem)`, de-duplicated with `_unique_slug` on collision, reusing the helpers from `io/annotation_io.py`) — each with the same filenames inside, no pooled files at the top level. CSV rows carry **no** `section_id`/`image` column: the folder name (and, from the API, the dict key) identifies the slice. |
 
 ---
 
@@ -104,9 +106,11 @@ with `cv2.INTER_NEAREST` internally).
 
 ## 4. Per-analysis algorithm
 
-All three pool across slices region-by-region. Region metadata (`acronym`,
-`name`) comes from brainglobe (`AtlasVolume` gains a small public accessor over
-`self._bg.structures`).
+All three pool across slices region-by-region (the default). With `per_slice=True`
+the same region accumulator is simply kept per section instead of merged, so every
+description below applies unchanged to a single slice's pixels/dots. Region
+metadata (`acronym`, `name`) comes from brainglobe (`AtlasVolume` gains a small
+public accessor over `self._bg.structures`).
 
 ### 4.1 Image intensity
 
@@ -114,22 +118,21 @@ For each included section: compute `labels`, `scope`, and load raw pixels
 `(H, W, C)`. For each channel `c`, over pixels where `scope` is true, accumulate
 **per region** into a project-wide accumulator:
 
-- `n_pixels` — running count,
-- `tot_ch_c` — running `sum` (via `np.bincount(labels[scope], weights=pixels_c)`),
-- for the **median** — a per-region integer **histogram** (bins = observed global
-  max + 1 for integer dtypes). Mean = `tot / n_pixels`; median read off the
-  histogram. This gives an **exact** pooled median for integer image data with
-  bounded memory (processed one channel at a time), avoiding materialising every
-  region's pixel list. Float images (rare) fall back to an approximate binned
-  median (documented).
+- `n_pixels` — running count, `np.bincount(labels[scope])`,
+- `tot_ch_c` — running `sum`, `np.bincount(labels[scope], weights=pixels_c)`.
 
-Output rows: `region_id, acronym, name, n_pixels, {mean,median,tot}_ch_<Name>…`.
+Mean is derived at the end as `tot / n_pixels`. That's the whole computation —
+two `bincount`s per channel, no per-region value storage. (No median: means and
+sums are exact from running accumulators, so nothing needs to hold pixel lists or
+histograms.)
+
+Output rows: `region_id, acronym, name, n_pixels, {mean,tot}_ch_<Name>…`.
 
 ### 4.2 Area annotations
 
-Identical to intensity, but `scope = slice_mask ∧ area_mask ∧ (labels>0)` for the
-user-selected `AreaAnnotation`. Same columns; rows are the regions the annotation
-touches.
+Identical to intensity, but `scope = slice_mask ∧ area_mask` for the user-selected
+`AreaAnnotation`. Same columns (`n_pixels`, `{mean,tot}_ch_<Name>`); rows are the
+regions the annotation touches.
 
 ### 4.3 Dots annotations
 
@@ -210,8 +213,7 @@ Aggregated outputs, produced on request (none / mid / coarse / both):
 
 - **Intensity, area, dots-per-region**: one additional CSV per requested level,
   rows = grouped regions (`n_pixels`/`tot`/`n_dots` summed; `mean` recomputed as
-  `Σtot/Σn_pixels`; median re-derived from **summed histograms**; density
-  recomputed as `Σn_dots/Σn_pixels`).
+  `Σtot/Σn_pixels`; density recomputed as `Σn_dots/Σn_pixels`).
 - **Per-dot table**: add columns `mid_region_id, mid_acronym, coarse_region_id,
   coarse_acronym` (no separate file).
 
@@ -236,7 +238,7 @@ engine/quantification/
     __init__.py        # public: quantify_intensity, quantify_area, quantify_dots,
                        #         QuantifyOptions, check_originals_reachable
     region_map.py      # region_map(): full-res labels + reconciled scope mask
-    intensity.py       # per-region, per-channel stats via running sum + histogram
+    intensity.py       # per-region, per-channel mean + tot via running bincount sums
     area.py            # intensity restricted to (slice ∧ area) scope
     dots.py            # dot→region assignment, per-dot + per-region tables, circle intensity
     aggregate.py       # load region_sets.json; fine→set representative; regroup rows
@@ -272,17 +274,25 @@ rows = quantify_intensity(
         include_unmasked_wholeframe=False,
         channels=None,                  # None = all
         aggregate=("mid", "coarse"),    # or ()
+        per_slice=False,                # True = one independent output per section
         out_dir=None,                   # None = don't write; return records only
     ),
-)   # -> {"regions": [ {region_id, acronym, name, n_pixels, mean_ch_…}, … ],
-    #     "regions_mid": [...], "regions_coarse": [...] }
+)   # per_slice=False -> {"regions": [ {region_id, acronym, name, n_pixels, mean_ch_…}, … ],
+    #                     "regions_mid": [...], "regions_coarse": [...] }
+    # per_slice=True  -> {image_name: {"regions": [...], "regions_mid": [...], …}, …}
+    #                     (image_name = slugified unique image stem)
 
 quantify_dots("…/project-verso.json", annotation="cells_ch1",
               intensity_channels=["cfos"], dot_diameter_px=3, options=…)
 ```
 
 `out_dir=None` returns records only (pipeline use); a path writes CSVs **and**
-returns them.
+returns them. With `per_slice=True` the return value is keyed by the **slugified
+unique image name** (each value the same shape as the pooled result), and CSVs are
+written into a like-named subfolder directly under the timestamped export folder —
+one independent set of files per section, no pooling. Because the API caller gets
+the image name as the dict key, the CSVs deliberately omit any `section_id`/`image`
+column; keeping separate files straight is the caller's responsibility.
 
 ---
 
@@ -294,8 +304,9 @@ returns them.
 Each opens a modal dialog (`gui/dialogs/quantify_dialog.py`):
 
 - **Common**: precondition checkboxes ("Use sections without a slice mask", "Use
-  sections without warping control points"), aggregation choice (none / mid /
-  coarse / both), output-folder note (defaults under `exports/`).
+  sections without warping control points"), **"Separate output per slice"**
+  (default off), aggregation choice (none / mid / coarse / both), output-folder
+  note (defaults under `exports/`).
 - **Intensity**: channel multi-select (all by default).
 - **Area**: area-annotation dropdown + channel multi-select.
 - **Dots**: point-series dropdown; "add mean intensity" toggle → channel
@@ -315,7 +326,6 @@ output folder. Reuses `require`, the existing job/progress plumbing.
 - `.claude/data-model.md`: document `exports/quantification_<ts>/` outputs.
 - `CLAUDE.md`: add this file to Reference docs; note the `region_sets.json` +
   `scripts/generate_region_sets.py` provenance.
-- Retire the quantification claims in `analysis-view.md` (point it here).
 
 ---
 
@@ -329,8 +339,8 @@ under `tests/engine/` (`test_region_map`, `test_intensity`, `test_area`,
 
 **Modify**: `engine/__init__.py`, `engine/io/image_io.py` (raw loader),
 `engine/atlas.py` (region metadata accessor), `gui/menus.py`,
-`gui/main_window.py` (dialog wiring + worker), `.claude/data-model.md`,
-`.claude/analysis-view.md`, `CLAUDE.md`.
+`gui/jobs.py` (QuantifyWorker), `gui/controllers/export_controller.py` (dialog
+wiring + worker), `.claude/data-model.md`, `CLAUDE.md`.
 
 ---
 
@@ -341,8 +351,8 @@ Engine unit tests (headless, `uv run pytest tests/engine/`):
 - `region_map`: on a synthetic anchoring, labels match `sample_labels`; the
   reconciled slice mask restricts scope; flips + warp reconcile so mask, labels,
   and raw pixels index the same pixels.
-- `intensity`: exact mean/median/tot on a 2-region synthetic image; verify **raw**
-  (non-stretched) pixels are used; histogram median matches `np.median`.
+- `intensity`: exact mean/tot on a 2-region synthetic image; verify **raw**
+  (non-stretched) pixels are used.
 - `area`: scope is the intersection of slice and area masks.
 - `dots`: known dots bin into the right regions; CCF axis order/units correct;
   out-of-mask dots dropped from counts; circle mean over a known patch is exact.
@@ -351,8 +361,12 @@ Engine unit tests (headless, `uv run pytest tests/engine/`):
   asserted to be independent of member-list ordering (shuffle the members and get
   the same result); a region that is itself a member maps to itself; a fibre-tract
   region resolves via `1009` at **both** mid and coarse; a region with no member
-  ancestor → `unassigned`; summed-histogram median after regrouping is consistent
-  with the pooled fine-level median.
+  ancestor → `unassigned`; regrouped `mean = Σtot/Σn_pixels` is consistent with the
+  pooled fine-level means.
+- `per_slice`: with `per_slice=True`, results are keyed by the slugified unique
+  image name, CSVs land in a like-named subfolder of the export folder, two
+  sections with the same basename get de-duplicated folder names, and summing the
+  per-slice `n_pixels`/`tot`/`n_dots` across sections reproduces the pooled result.
 - `quant_export`: CSV headers + timestamped folder; `list[dict]` round-trips.
 
 Lint/format: `uv run ruff check src/ tests/` + `ruff format`.
@@ -365,32 +379,23 @@ writes the expected CSVs; confirm intensity works with no annotations at all.
 
 ## 12. Critique & open risks
 
-1. **Full-res memory.** Peak per section ≈ raw `(H,W,C)` + int32 label map — for a
-   20000×15000×4 uint16 image that's ~2.4 GB + ~1.2 GB. Mitigations: process one
-   channel at a time; free the label map before loading pixels where possible;
-   the label map already tiles. Still the biggest risk — worth a memory guard /
-   optional working-res fast path if it bites. (User chose full-res knowingly.)
-2. **Exact pooled median.** The histogram approach is exact only for integer
-   dtypes and assumes a modest dynamic range (bins = global max + 1). A pathological
-   16-bit image with values near 65535 → 64 K-bin histograms per region. Guard by
-   capping bin count and falling back to binned-approximate median with a warning.
-3. **Median cost vs. value.** Mean/tot are cheap; median forces the histogram
-   pass. If median proves expensive at scale, consider making it opt-in.
-4. **Slice-mask gate default.** Treating "unticked box ∧ some section unmasked" as
-   an **abort** (not silent skip) is inferred from parity with the warp gate. If
-   you'd rather *skip* unmasked sections silently, that's a one-line change — flag
-   if so.
-5. **Frame assumptions — verified.** Points and masks are stored in the on-disk
-   frame (see §3.2), so no flip reconciliation is needed. This was the biggest
-   correctness risk and is now resolved by reading the GUI render paths; the unit
-   tests still assert it on a flipped synthetic section.
-6. **`unassigned` aggregation bucket.** Regions with no ancestor in a set (fibre
-   tracts, ventricles, root) are pooled into one `unassigned` row. Acceptable, but
-   worth surfacing in the CSV rather than dropping silently.
-7. **`region_id 0` rows.** Because the slice mask is the only silent filter, an
-   unmasked (or box-ticked whole-frame) run pools all out-of-brain/out-of-atlas
-   pixels into a single large `region_id 0` row. This is intended, but the row can
-   dominate `n_pixels`/`tot` — surfaced clearly (acronym `background`) so it's easy
-   to ignore downstream. The aggregation `unassigned` bucket is the analogous case
-   at mid/coarse level.
+1. **Full-res memory — accepted.** Peak per section ≈ raw `(H,W,C)` + int32 label
+   map (~4 GB for a 20000×15000×4 uint16 image), fine on an analysis machine. All
+   channels are loaded at once; no RAM-minimizing / per-channel split — the script
+   stays simple.
+2–3. **No median.** Removed everywhere — only mean and `tot` are emitted, computed
+   from running `bincount` sums with no per-region value storage or histograms.
+   This drops the plan's most expensive/fiddly piece entirely.
+4. **Slice-mask gate — confirmed.** "Unticked box ∧ some section unmasked" **aborts**
+   (parity with the warp gate), same as missing CPs.
+5. **Frame assumptions — resolved.** Points and masks are stored in the on-disk
+   frame (verified in the GUI render paths, §3.2), so no flip reconciliation is
+   needed. Unit tests still assert it on a flipped synthetic section.
+6. **`unassigned` aggregation bucket — accepted.** Regions with no member ancestor
+   are pooled into one `unassigned` row, surfaced in the CSV (transparency over
+   silent dropping).
+7. **`region_id 0` rows — accepted.** Because the slice mask is the only silent
+   filter, an unmasked / whole-frame run pools all out-of-brain/out-of-atlas pixels
+   into one `region_id 0` row (acronym `background`). Intentional and surfaced
+   clearly so it's easy to ignore downstream — same transparency principle as #6.
 ```

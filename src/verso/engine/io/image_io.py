@@ -229,10 +229,10 @@ def _stretch_per_channel(image: np.ndarray) -> np.ndarray:
     return out
 
 
-def to_multichannel(image: np.ndarray) -> np.ndarray:
-    """Normalise any raw array into uint8 ``(H, W, C)`` channels-last layout.
+def _normalize_layout(image: np.ndarray) -> np.ndarray:
+    """Normalise any raw array to channels-last ``(H, W, C)`` — dtype preserved.
 
-    Handles:
+    Layout only (no contrast stretch, no dtype change). Handles:
       * 2-D grayscale → ``(H, W, 1)``
       * Channels-last RGB / RGBA ``(H, W, 3 | 4)`` → drops alpha if present
       * Channels-first ``(C, H, W)`` (typical OME-TIFF) → transposed
@@ -256,7 +256,34 @@ def to_multichannel(image: np.ndarray) -> np.ndarray:
             # Channels-last RGBA → drop alpha.
             img = img[:, :, :3]
 
-    return _stretch_per_channel(img)
+    return img
+
+
+def to_multichannel(image: np.ndarray) -> np.ndarray:
+    """Normalise any raw array into uint8 ``(H, W, C)`` channels-last, contrast-stretched.
+
+    Layout via :func:`_normalize_layout`, then a per-channel percentile stretch to
+    uint8 for display. **Not** for quantification — use :func:`load_full_res_raw`
+    when you need the untouched pixel values.
+    """
+    return _stretch_per_channel(_normalize_layout(image))
+
+
+def load_full_res_raw(path: str | Path) -> np.ndarray:
+    """Load an original image as ``(H, W, C)`` in its **native dtype**, un-stretched.
+
+    Unlike :func:`ensure_working_copy` / :func:`to_multichannel` (which percentile-
+    stretch to uint8 for display), this preserves the raw pixel values so intensity
+    quantification is faithful. Reads the full-resolution file every call — callers
+    that need it repeatedly should cache the result.
+
+    Args:
+        path: Path to the original image file.
+
+    Returns:
+        ``(H, W, C)`` array in the file's native dtype and channel layout.
+    """
+    return _normalize_layout(load_image(path))
 
 
 # ---------------------------------------------------------------------------

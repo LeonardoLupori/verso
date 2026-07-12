@@ -332,6 +332,47 @@ class AtlasVolume:
         color = self._color_dict.get(label, (128, 128, 128))
         return name, color
 
+    def region_meta(self, region_id: int) -> tuple[str, str]:
+        """Return ``(acronym, name)`` for an atlas region ID.
+
+        Region ``0`` (out-of-brain / out-of-atlas) maps to
+        ``("background", "background")``. Unknown IDs fall back to the numeric ID.
+
+        Args:
+            region_id: Atlas annotation label.
+
+        Returns:
+            ``(acronym, name)`` strings.
+        """
+        rid = int(region_id)
+        if rid == 0:
+            return "background", "background"
+        info = self._bg.structures.get(rid)
+        if not info:
+            return str(rid), str(rid)
+        return str(info.get("acronym", rid)), str(info.get("name", rid))
+
+    def structure_id_path(self, region_id: int) -> list[int]:
+        """Return the ancestry path ``[root, …, region_id]`` for a region ID.
+
+        Ordered from the root of the structure tree down to the region itself
+        (brainglobe's ``structure_id_path``). Region ``0`` and unknown IDs return
+        an empty list.
+
+        Args:
+            region_id: Atlas annotation label.
+
+        Returns:
+            List of ancestor region IDs, root first, ``region_id`` last.
+        """
+        rid = int(region_id)
+        if rid == 0:
+            return []
+        info = self._bg.structures.get(rid)
+        if not info:
+            return []
+        return [int(x) for x in info.get("structure_id_path", [])]
+
     # ------------------------------------------------------------------
     # Reference slice (navigator views)
 

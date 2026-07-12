@@ -162,6 +162,29 @@ class AutoCPWorker(QObject):
             self.done.emit(0, [str(exc)])
 
 
+class QuantifyWorker(QObject):
+    """Runs a quantification call off the UI thread.
+
+    Takes a zero-argument ``run_fn`` (a closure over the chosen
+    ``quantify_*`` function and its arguments). Emits the result on ``done`` or the
+    error message on ``error`` (precondition failures raise ``QuantificationError``,
+    whose message is user-facing).
+    """
+
+    done = pyqtSignal(object)  # result dict
+    error = pyqtSignal(str)
+
+    def __init__(self, run_fn: Callable[[], object]) -> None:
+        super().__init__()
+        self._run_fn = run_fn
+
+    def run(self) -> None:
+        try:
+            self.done.emit(self._run_fn())
+        except Exception as exc:  # QuantificationError + any I/O failure
+            self.error.emit(str(exc))
+
+
 class JobWorker(Protocol):
     """Structural type for workers driven by :class:`BackgroundJob`.
 

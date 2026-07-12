@@ -66,6 +66,12 @@ _EXPORTS = {
     "PointSeries": "verso.engine.model.annotation",
     # model.elastix
     "ElastixParams": "verso.engine.model.elastix",
+    # quantification
+    "QuantifyOptions": "verso.engine.quantification",
+    "QuantificationError": "verso.engine.quantification",
+    "quantify_area": "verso.engine.quantification",
+    "quantify_dots": "verso.engine.quantification",
+    "quantify_intensity": "verso.engine.quantification",
     # model.project
     "AtlasRef": "verso.engine.model.project",
     "ChannelSpec": "verso.engine.model.project",
@@ -102,6 +108,8 @@ __all__ = [
     "PointSeries",
     "Preprocessing",
     "Project",
+    "QuantificationError",
+    "QuantifyOptions",
     "Section",
     "VersoRegistration",
     "WarpState",
@@ -117,6 +125,9 @@ __all__ = [
     "orientation_labels",
     "point_coords_by_image",
     "points_in_polygon",
+    "quantify_area",
+    "quantify_dots",
+    "quantify_intensity",
     "save_annotations",
     "save_quicknii",
     "save_visualign",
@@ -180,6 +191,13 @@ if TYPE_CHECKING:
         Preprocessing,
         Project,
         Section,
+    )
+    from verso.engine.quantification import (
+        QuantificationError,
+        QuantifyOptions,
+        quantify_area,
+        quantify_dots,
+        quantify_intensity,
     )
     from verso.engine.registration import AtlasToImageResult, VersoRegistration
     from verso.engine.warping import (
