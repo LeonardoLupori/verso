@@ -31,20 +31,32 @@ def points_in_polygon(points: ArrayLike, polygon: ArrayLike) -> np.ndarray:
     """
     pts = np.asarray(points, dtype=float).reshape(-1, 2)
     poly = np.asarray(polygon, dtype=float).reshape(-1, 2)
+    inside = np.zeros(len(pts), dtype=bool)
     if len(pts) == 0 or len(poly) < 3:
-        return np.zeros(len(pts), dtype=bool)
+        return inside
 
     x = pts[:, 0]
     y = pts[:, 1]
-    inside = np.zeros(len(pts), dtype=bool)
+
+    # Bounding-box prefilter.Points outside the bbox cannot be
+    # inside the polygon, so they stay False.
+    (xmin, ymin), (xmax, ymax) = poly.min(axis=0), poly.max(axis=0)
+    cand = (x >= xmin) & (x <= xmax) & (y >= ymin) & (y <= ymax)
+    if not cand.any():
+        return inside
+    cx = x[cand]
+    cy = y[cand]
+
+    hits = np.zeros(len(cx), dtype=bool)
     j = len(poly) - 1
     for i in range(len(poly)):
         xi, yi = poly[i]
         xj, yj = poly[j]
-        crosses = (yi > y) != (yj > y)
-        x_at_y = (xj - xi) * (y - yi) / (yj - yi + 1e-12) + xi
-        inside ^= crosses & (x < x_at_y)
+        crosses = (yi > cy) != (yj > cy)
+        x_at_y = (xj - xi) * (cy - yi) / (yj - yi + 1e-12) + xi
+        hits ^= crosses & (cx < x_at_y)
         j = i
+    inside[cand] = hits
     return inside
 
 
