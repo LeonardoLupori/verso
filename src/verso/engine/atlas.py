@@ -107,6 +107,9 @@ class AtlasVolume:
         self.resolution_um: float = float(self._bg.resolution[0])
         self._annotation: np.ndarray = self._bg.annotation  # (AP, DV, LR)
         self._reference: np.ndarray = self._bg.reference  # (AP, DV, LR)
+        self._hemispheres: np.ndarray = self._bg.hemispheres  # (AP, DV, LR), 1=left 2=right
+        self._left_val: int = int(getattr(self._bg, "left_hemisphere_value", 1))
+        self._right_val: int = int(getattr(self._bg, "right_hemisphere_value", 2))
         ref_max = float(self._reference.max())
         self._reference_scale: float = 255.0 / ref_max if ref_max > 0 else 1.0
         self._color_dict: dict[int, tuple[int, int, int]] = self._build_color_dict()
@@ -151,6 +154,53 @@ class AtlasVolume:
         dv = np.clip(dv_f, 0, dv_max - 1).astype(np.int32)
         lr = np.clip(lr_f, 0, lr_max - 1).astype(np.int32)
         return self._annotation[ap, dv, lr], in_bounds
+
+    def sample_hemispheres_at(self, grid: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Sample the hemisphere volume at arbitrary atlas voxel coordinates.
+
+        Uses the same VisuAlign/QUINT-matching voxel selection as
+        :meth:`sample_labels_at`, so the per-pixel hemisphere map is aligned 1:1
+        with the region-label map produced by the same warp.
+
+        Args:
+            grid: (..., 3) array of atlas voxel (x=LR, y=AP, z=DV) coordinates.
+
+        Returns:
+            hemi:      same leading shape, uint8 — brainglobe hemisphere value
+                (``left_hemisphere_value`` / ``right_hemisphere_value``, typically
+                ``1`` / ``2``); ``0`` where the voxel is outside the atlas volume.
+            in_bounds: same leading shape, bool — True where the voxel is inside
+                the atlas volume.
+        """
+        lr_f, ap_f, dv_f = _sample_voxel_indices(grid[..., 0], grid[..., 1], grid[..., 2])
+        ap_max, dv_max, lr_max = self._hemispheres.shape
+        in_bounds: np.ndarray = (
+            (ap_f >= 0)
+            & (ap_f < ap_max)
+            & (dv_f >= 0)
+            & (dv_f < dv_max)
+            & (lr_f >= 0)
+            & (lr_f < lr_max)
+        )
+        ap = np.clip(ap_f, 0, ap_max - 1).astype(np.int32)
+        dv = np.clip(dv_f, 0, dv_max - 1).astype(np.int32)
+        lr = np.clip(lr_f, 0, lr_max - 1).astype(np.int32)
+        hemi = self._hemispheres[ap, dv, lr].astype(np.uint8)
+        hemi[~in_bounds] = 0
+        return hemi, in_bounds
+
+    def hemisphere_label(self, value: int) -> str:
+        """Map a hemisphere volume value to its short code.
+
+        ``left_hemisphere_value -> "l"``, ``right_hemisphere_value -> "r"``, and
+        ``0`` (out-of-atlas, hemisphere undefined) -> ``"none"``.
+        """
+        v = int(value)
+        if v == self._left_val:
+            return "l"
+        if v == self._right_val:
+            return "r"
+        return "none"
 
     def sample_labels(
         self, anchoring: list[float], out_w: int, out_h: int

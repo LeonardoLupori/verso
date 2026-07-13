@@ -40,6 +40,7 @@ quantification from their own pipeline using only `project-verso.json`.
 | **Annotation selection** | GUI: dropdown of existing annotations of that type. API: pass the annotation **name**. One annotation per run. |
 | **Dots density** | `dots_density = n_dots / n_pixels` (per pixel). No pixel-size value is added to the model. |
 | **Output granularity** | **Pooled project-wide** by default — one row per region, aggregated across all included slices. A dialog checkbox **"Separate output per slice"** (default off) instead emits one independent output per section: every file (and every returned records list) is produced once per slice rather than pooled. |
+| **Hemisphere split** | Dialog checkbox **"Separate left/right hemispheres"** (default off; `QuantifyOptions.split_hemispheres`). When on, every per-region row (intensity, area, dots-per-region, and their mid/coarse variants) and each per-dot row gain a `hemisphere` column valued `l` / `r` (or `none` for out-of-atlas background). See §4.4. |
 | **Dot CCF coords** | **Allen CCFv3 microns**, axis order `x=AP, y=DV, z=LR` (PyNutil/QUINT convention). |
 | **Precondition gates** | Alignment is mandatory (no checkbox): abort if any included section is unaligned. **"Use sections without warping control points"** (default off): ticked ⇒ affine-only mapping for CP-less sections; unticked ⇒ abort if any lacks CPs. **"Use sections without a slice mask"** (default off): as above. |
 | **Channel columns** | `mean_ch_<Name>` and `tot_ch_<Name>` where `<Name>` is the slugified `ChannelSpec.name`. All channels quantified. **No median** — mean is sufficient. |
@@ -160,6 +161,44 @@ a `region_id 0` per-region row (the slice mask is the only silent filter).
 
 ---
 
+### 4.4 Hemisphere split (L / R)
+
+Optional per-hemisphere breakdown, driven by `QuantifyOptions.split_hemispheres`
+(default off). The L/R source is **BrainGlobe's authoritative `hemispheres`
+volume** (same shape as the annotation; `left_hemisphere_value` /
+`right_hemisphere_value`, typically `1` / `2`), **not** a midline threshold — so
+it is correct for asymmetric atlases too.
+
+- **Sampling.** A new `AtlasVolume.sample_hemispheres_at` mirrors
+  `sample_labels_at` (identical VisuAlign/QUINT voxel selection), and
+  `VersoRegistration.image_to_atlas` gained a `kind="hemisphere"` that carries it
+  through the **same** affine + Delaunay + flip warp as the region labels. The
+  per-pixel hemisphere map is therefore pixel-matched 1:1 with the label map — no
+  separate binary subvolumes, no separate warp geometry. `region_map(...,
+  split_hemispheres=True)` returns `(labels, scope, hemi)`; otherwise `hemi` is
+  `None` and every output is byte-identical to the unsplit run (no new column).
+- **Keys.** The pixel/dot accumulators key on `(region_id, hemi)` where `hemi` is
+  `None` (unsplit) or the raw atlas value (`1`/`2`/`0`). The `l`/`r`/`none` label
+  conversion (`AtlasVolume.hemisphere_label`) is deferred to the row builders,
+  which hold the atlas, so the accumulators stay atlas-free.
+- **Aggregation is orthogonal.** Mid/coarse regrouping rewrites only the
+  `region_id` component of the key to its representative; the hemisphere is
+  preserved, so a split survives aggregation.
+- **`none` bucket.** Out-of-atlas pixels/dots (`region_id 0`, voxel outside the
+  atlas bounds → hemisphere undefined) get `hemisphere = "none"`. In-brain regions
+  (`region_id > 0`) always have an in-bounds voxel, so they split cleanly into
+  `l`/`r`; only background can carry `none`. Nothing is dropped — the slice mask
+  remains the only silent filter.
+- **One-sided regions & non-AP projects — no special-casing.** Rows are emitted
+  only for `(region, hemi)` keys that actually accumulate, so a region seen on
+  only one side yields a single row (no zero-filled partner, no symmetry
+  assumption). Hemisphere is read per-pixel from the warped voxel, never from the
+  project's interpolation axis, so an ML/sagittal project whose sections are each
+  wholly one side flows through identically. For dots, the per-region footprint
+  (density denominator) and each dot's hemisphere are read from the **same** `hemi`
+  map under the **same** scope, so any bucket with a dot necessarily has a nonzero
+  footprint (no divide-by-zero).
+
 ## 5. Aggregation (mid / coarse)
 
 The granularity is defined by two Allen structure sets (pinned, matching the
@@ -275,6 +314,7 @@ rows = quantify_intensity(
         channels=None,                  # None = all
         aggregate=("mid", "coarse"),    # or ()
         per_slice=False,                # True = one independent output per section
+        split_hemispheres=False,        # True = add an l/r hemisphere column
         out_dir=None,                   # None = don't write; return records only
     ),
 )   # per_slice=False -> {"regions": [ {region_id, acronym, name, n_pixels, mean_ch_…}, … ],
@@ -305,8 +345,9 @@ Each opens a modal dialog (`gui/dialogs/quantify_dialog.py`):
 
 - **Common**: precondition checkboxes ("Use sections without a slice mask", "Use
   sections without warping control points"), **"Separate output per slice"**
-  (default off), aggregation choice (none / mid / coarse / both), output-folder
-  note (defaults under `exports/`).
+  (default off), **"Separate left/right hemispheres"** (default off; §4.4),
+  aggregation choice (none / mid / coarse / both), output-folder note (defaults
+  under `exports/`).
 - **Intensity**: channel multi-select (all by default).
 - **Area**: area-annotation dropdown + channel multi-select.
 - **Dots**: point-series dropdown; "add mean intensity" toggle → channel

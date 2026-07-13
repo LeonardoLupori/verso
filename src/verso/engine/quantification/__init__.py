@@ -70,6 +70,11 @@ class QuantifyOptions:
         aggregate: Subset of ``("mid", "coarse")`` — extra aggregated outputs.
         per_slice: If True, produce one independent output per section instead of
             a pooled project-wide result.
+        split_hemispheres: If True, split every region into left/right buckets
+            (a ``hemisphere`` column, ``l``/``r``, or ``none`` for out-of-atlas
+            background). Hemisphere is sampled per-pixel from the atlas through the
+            same warp as the region labels. Regions present on only one side yield a
+            single row; no assumption of symmetry or of the interpolation axis.
         out_dir: Base directory to write CSVs under (a timestamped
             ``quantification_<ts>/`` folder is created inside). ``None`` = return
             records only, write nothing.
@@ -80,6 +85,7 @@ class QuantifyOptions:
     channels: list[str] | None = None
     aggregate: tuple[str, ...] = ()
     per_slice: bool = False
+    split_hemispheres: bool = False
     out_dir: str | Path | None = None
 
     def __post_init__(self) -> None:
@@ -249,11 +255,13 @@ def _pixel_unit(
 
     acc = IntensityAccumulator(len(idxs))
     for section in sections:
-        labels, slice_sc = region_map(reg, atlas, section)
+        labels, slice_sc, hemi = region_map(
+            reg, atlas, section, split_hemispheres=options.split_hemispheres
+        )
         scope = scope_fn(section, slice_sc)
         raw = load_full_res_raw(_resolve_original(section, project_dir))
-        labels, scope = match_to_raw(labels, scope, raw.shape[:2])
-        acc.add(labels, scope, raw[..., idxs])
+        labels, scope, hemi = match_to_raw(labels, scope, raw.shape[:2], hemi)
+        acc.add(labels, scope, raw[..., idxs], hemi)
 
     totals = acc.totals_as_lists()
     regions = intensity_rows(acc.counts, totals, atlas, names)
@@ -392,17 +400,19 @@ def _dots_unit(
     """Quantify dots for ``sections`` and build (return_dict, file_tables)."""
     from verso.engine.io.image_io import load_full_res_raw
 
-    counts: dict[int, int] = {}
-    n_dots: dict[int, int] = {}
+    counts: dict[tuple[int, int | None], int] = {}
+    n_dots: dict[tuple[int, int | None], int] = {}
     per_dot: list[dict] = []
 
     for section in sections:
-        labels, scope = region_map(reg, atlas, section)
+        labels, scope, hemi = region_map(
+            reg, atlas, section, split_hemispheres=options.split_hemispheres
+        )
         raw = None
         if intensity_idxs:
             raw = load_full_res_raw(_resolve_original(section, project_dir))
-            labels, scope = match_to_raw(labels, scope, raw.shape[:2])
-        add_region_counts(counts, labels, scope)
+            labels, scope, hemi = match_to_raw(labels, scope, raw.shape[:2], hemi)
+        add_region_counts(counts, labels, scope, hemi)
 
         key = Path(section.original_path).name.lower()
         pts = coords_by_image.get(key)
@@ -416,6 +426,7 @@ def _dots_unit(
             xy,
             labels,
             scope,
+            hemi=hemi,
             raw=raw,
             intensity_channels=intensity_idxs,
             channel_names=all_names,

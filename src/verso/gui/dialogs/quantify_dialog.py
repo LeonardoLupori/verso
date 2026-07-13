@@ -86,9 +86,11 @@ class QuantifyDialog(QDialog):
         out_box = QGroupBox("Output")
         out_layout = QVBoxLayout(out_box)
         self._cb_per_slice = QCheckBox("Separate output per slice")
+        self._cb_hemispheres = QCheckBox("Separate left/right hemispheres")
         self._cb_mid = QCheckBox("Also aggregate to mid ontology")
         self._cb_coarse = QCheckBox("Also aggregate to coarse ontology")
         out_layout.addWidget(self._cb_per_slice)
+        out_layout.addWidget(self._cb_hemispheres)
         out_layout.addWidget(self._cb_mid)
         out_layout.addWidget(self._cb_coarse)
         out_layout.addWidget(
@@ -177,6 +179,7 @@ class QuantifyDialog(QDialog):
             channels=channels,
             aggregate=tuple(aggregate),
             per_slice=self._cb_per_slice.isChecked(),
+            split_hemispheres=self._cb_hemispheres.isChecked(),
         )
 
     def annotation(self) -> str | None:

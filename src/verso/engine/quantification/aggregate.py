@@ -80,42 +80,64 @@ class RegionAggregator:
         return rep
 
 
-def _sorted_group_keys(keys) -> list:
-    """Sort group keys with ``None`` (unassigned) last."""
-    return sorted(keys, key=lambda k: (k is None, k if k is not None else 0))
+def _sorted_group_keys(keys) -> list[tuple[int | None, int | None]]:
+    """Sort ``(rep, hemi)`` group keys: unassigned (rep ``None``) last, hemi first.
+
+    ``rep`` is an int representative or ``None`` (unassigned); ``hemi`` is ``None``
+    (not splitting) or an int atlas hemisphere value.
+    """
+    return sorted(
+        keys,
+        key=lambda k: (k[0] is None, k[0] if k[0] is not None else 0, -1 if k[1] is None else k[1]),
+    )
 
 
-def _meta(atlas: AtlasVolume, key: int | None) -> tuple[object, str, str]:
-    """Return ``(region_id_out, acronym, name)`` for a group key (``None`` = unassigned)."""
-    if key is None:
+def _meta(atlas: AtlasVolume, rep: int | None) -> tuple[object, str, str]:
+    """Return ``(region_id_out, acronym, name)`` for a representative (``None`` = unassigned)."""
+    if rep is None:
         return "", "unassigned", "unassigned"
-    acronym, name = atlas.region_meta(key)
-    return key, acronym, name
+    acronym, name = atlas.region_meta(rep)
+    return rep, acronym, name
+
+
+def _group_head(atlas: AtlasVolume, key: tuple[int | None, int | None]) -> dict:
+    """Leading ``region_id``/``acronym``/``name`` (+ ``hemisphere`` when split)."""
+    rep, hemi = key
+    rid_out, acronym, name = _meta(atlas, rep)
+    head: dict = {"region_id": rid_out, "acronym": acronym, "name": name}
+    if hemi is not None:
+        head["hemisphere"] = atlas.hemisphere_label(hemi)
+    return head
 
 
 def regroup_intensity(
-    counts: dict[int, int],
-    totals: dict[int, list[float]],
+    counts: dict[tuple[int, int | None], int],
+    totals: dict[tuple[int, int | None], list[float]],
     agg: RegionAggregator,
     level: str,
     atlas: AtlasVolume,
     channel_names: list[str],
 ) -> list[dict]:
-    """Regroup pooled intensity accumulators to ``level`` (means recomputed)."""
-    gc: dict[int | None, int] = {}
-    gt: dict[int | None, np.ndarray] = {}
-    for rid, n in counts.items():
-        key = agg.representative(level, rid)
+    """Regroup pooled intensity accumulators to ``level`` (means recomputed).
+
+    Aggregation rewrites only the region component of each ``(region_id, hemi)``
+    key to its representative; the hemisphere is preserved, so the split (if any)
+    survives aggregation.
+    """
+    gc: dict[tuple[int | None, int | None], int] = {}
+    gt: dict[tuple[int | None, int | None], np.ndarray] = {}
+    for (rid, hemi), n in counts.items():
+        key = (agg.representative(level, rid), hemi)
         gc[key] = gc.get(key, 0) + n
-        arr = np.asarray(totals[rid], dtype=np.float64)
+        arr = np.asarray(totals[(rid, hemi)], dtype=np.float64)
         gt[key] = gt[key] + arr if key in gt else arr.copy()
 
     rows: list[dict] = []
     for key in _sorted_group_keys(gc):
         n = gc[key]
         tot = gt[key]
-        rid_out, acronym, name = _meta(atlas, key)
-        row: dict = {"region_id": rid_out, "acronym": acronym, "name": name, "n_pixels": n}
+        row = _group_head(atlas, key)
+        row["n_pixels"] = n
         for c, cname in enumerate(channel_names):
             row[channel_column("mean", cname)] = (float(tot[c]) / n) if n else 0.0
             row[channel_column("tot", cname)] = float(tot[c])
@@ -124,35 +146,33 @@ def regroup_intensity(
 
 
 def regroup_dots_region(
-    counts: dict[int, int],
-    n_dots: dict[int, int],
+    counts: dict[tuple[int, int | None], int],
+    n_dots: dict[tuple[int, int | None], int],
     agg: RegionAggregator,
     level: str,
     atlas: AtlasVolume,
 ) -> list[dict]:
-    """Regroup the per-region dots table to ``level`` (density recomputed)."""
-    gc: dict[int | None, int] = {}
-    gd: dict[int | None, int] = {}
-    for rid in set(counts) | set(n_dots):
-        key = agg.representative(level, rid)
-        gc[key] = gc.get(key, 0) + counts.get(rid, 0)
-        gd[key] = gd.get(key, 0) + n_dots.get(rid, 0)
+    """Regroup the per-region dots table to ``level`` (density recomputed).
+
+    As with intensity, only the region component of each ``(region_id, hemi)`` key
+    is rewritten to its representative; the hemisphere is preserved.
+    """
+    gc: dict[tuple[int | None, int | None], int] = {}
+    gd: dict[tuple[int | None, int | None], int] = {}
+    for rid, hemi in set(counts) | set(n_dots):
+        key = (agg.representative(level, rid), hemi)
+        gc[key] = gc.get(key, 0) + counts.get((rid, hemi), 0)
+        gd[key] = gd.get(key, 0) + n_dots.get((rid, hemi), 0)
 
     rows: list[dict] = []
     for key in _sorted_group_keys(set(gc) | set(gd)):
         n_px = gc.get(key, 0)
         nd = gd.get(key, 0)
-        rid_out, acronym, name = _meta(atlas, key)
-        rows.append(
-            {
-                "region_id": rid_out,
-                "acronym": acronym,
-                "name": name,
-                "n_pixels": n_px,
-                "n_dots": nd,
-                "dots_density": (nd / n_px) if n_px else 0.0,
-            }
-        )
+        row = _group_head(atlas, key)
+        row["n_pixels"] = n_px
+        row["n_dots"] = nd
+        row["dots_density"] = (nd / n_px) if n_px else 0.0
+        rows.append(row)
     return rows
 
 

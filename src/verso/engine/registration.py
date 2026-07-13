@@ -43,7 +43,7 @@ from verso.engine.warping import (
 
 _SPACES = ("full", "working")
 _UNITS = ("voxel", "um", "mm")
-_KINDS = ("annotation", "template", "boundary")
+_KINDS = ("annotation", "template", "boundary", "hemisphere")
 
 # Row-chunk size (in output pixels) used when resampling a whole atlas volume
 # onto a section's own pixel grid, so full-resolution images (which can be
@@ -378,8 +378,15 @@ class VersoRegistration:
         Args:
             slice: Section id, original-image file stem, or basename.
             kind: ``"annotation"`` (region-ID labels, default), ``"template"``
-                (reference/Nissl grayscale intensity), or ``"boundary"``
-                (region-boundary edge mask).
+                (reference/Nissl grayscale intensity), ``"boundary"``
+                (region-boundary edge mask), or ``"hemisphere"`` (per-pixel L/R
+                hemisphere value, ``1``/``2`` in-brain, ``0`` out-of-atlas).
+
+        Note:
+            The ``"hemisphere"`` kind is an intentional Python-only extension used
+            by per-hemisphere quantification; it has no MATLAB mirror in
+            ``matlab/+verso/VersoRegistration.m`` because quantification (its only
+            consumer) is not mirrored in MATLAB. See ``.claude/matlab-port.md``.
             space: ``"full"`` (original full-resolution pixels, default) or
                 ``"working"`` (working/thumbnail-resolution pixels).
             return_valid: If True, also return an ``(H, W)`` boolean mask that
@@ -392,6 +399,8 @@ class VersoRegistration:
             ``kind="template"``: ``(H, W)`` uint8 grayscale array (``0``
             outside the atlas volume).
             ``kind="boundary"``: ``(H, W)`` bool edge mask.
+            ``kind="hemisphere"``: ``(H, W)`` uint8 hemisphere map (``1``/``2``
+            in-brain, ``0`` out-of-atlas).
             Or ``(array, in_bounds)`` when ``return_valid`` is True.
         """
         if kind not in _KINDS:
@@ -408,6 +417,7 @@ class VersoRegistration:
         needs_labels = kind in ("annotation", "boundary")
         labels = np.zeros((out_h, out_w), dtype=np.int32) if needs_labels else None
         gray = np.zeros((out_h, out_w), dtype=np.uint8) if kind == "template" else None
+        hemi = np.zeros((out_h, out_w), dtype=np.uint8) if kind == "hemisphere" else None
         in_bounds = np.zeros((out_h, out_w), dtype=bool)
 
         xs = (np.arange(out_w, dtype=np.float64) + 0.5) / out_w
@@ -434,6 +444,9 @@ class VersoRegistration:
             if kind == "template":
                 chunk_gray, chunk_inside = atlas.sample_reference_at(voxel)
                 gray[r0:r1] = chunk_gray
+            elif kind == "hemisphere":
+                chunk_hemi, chunk_inside = atlas.sample_hemispheres_at(voxel)
+                hemi[r0:r1] = chunk_hemi
             else:
                 chunk_labels, chunk_inside = atlas.sample_labels_at(voxel)
                 chunk_labels = chunk_labels.copy()
@@ -445,6 +458,8 @@ class VersoRegistration:
             result = boundary_mask(labels, in_bounds)
         elif kind == "template":
             result = gray
+        elif kind == "hemisphere":
+            result = hemi
         else:
             result = labels
 

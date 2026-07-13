@@ -50,6 +50,21 @@ def full_res_labels(reg: VersoRegistration, atlas: AtlasVolume, section: Section
     return np.asarray(labels, dtype=np.int32)
 
 
+def full_res_hemispheres(
+    reg: VersoRegistration, atlas: AtlasVolume, section: Section
+) -> np.ndarray:
+    """Full-resolution ``(H, W)`` per-pixel hemisphere map for ``section``.
+
+    Samples brainglobe's ``hemispheres`` volume through the identical warp used by
+    :func:`full_res_labels` (via ``image_to_atlas(kind="hemisphere")``), so the
+    returned map is pixel-matched 1:1 with the region-label map. Values are the
+    atlas hemisphere codes (``1``/``2`` in-brain, ``0`` out-of-atlas).
+    """
+    reg._atlas_volume = atlas  # reuse the already-loaded atlas (avoids re-download)
+    hemi = reg.image_to_atlas(section.id, kind="hemisphere", space="full")
+    return np.asarray(hemi, dtype=np.uint8)
+
+
 def slice_scope(section: Section, shape: tuple[int, int]) -> np.ndarray:
     """Boolean scope mask for a section at full-resolution ``shape`` ``(H, W)``.
 
@@ -68,15 +83,24 @@ def slice_scope(section: Section, shape: tuple[int, int]) -> np.ndarray:
 
 
 def region_map(
-    reg: VersoRegistration, atlas: AtlasVolume, section: Section
-) -> tuple[np.ndarray, np.ndarray]:
-    """Return ``(labels, scope)`` for a section, both full-resolution ``(H, W)``.
+    reg: VersoRegistration,
+    atlas: AtlasVolume,
+    section: Section,
+    *,
+    split_hemispheres: bool = False,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
+    """Return ``(labels, scope, hemi)`` for a section, all full-resolution ``(H, W)``.
 
     ``labels`` is the int32 atlas region-ID map (0 = out-of-brain/out-of-atlas,
     kept as a real bucket). ``scope`` is the slice-mask scope (whole frame when the
     section has no slice mask). Callers intersect ``scope`` with an area mask as
     needed.
+
+    ``hemi`` is the per-pixel hemisphere map (uint8, ``1``/``2`` in-brain, ``0``
+    out-of-atlas) when ``split_hemispheres`` is True, else ``None``. It is sampled
+    through the same warp as ``labels`` so the two are pixel-matched.
     """
     labels = full_res_labels(reg, atlas, section)
     scope = slice_scope(section, labels.shape)
-    return labels, scope
+    hemi = full_res_hemispheres(reg, atlas, section) if split_hemispheres else None
+    return labels, scope, hemi

@@ -69,8 +69,16 @@ def _fake_atlas() -> AtlasVolume:
     # Paint a coronal-ish partition: left LR half = 10, right half = 20, a strip = 0.
     ann[:, :, :4] = 10
     ann[:, :, 4:] = 20
-    ann[:, 0, :] = 0  # a background strip so region 0 appears in scope
+    ann[:, 0, :] = 0  # a background strip (spans all LR → straddles both hemispheres)
     atlas._annotation = ann
+    # Hemisphere volume: left half (LR < 4) = 1, right half (LR >= 4) = 2. This
+    # aligns with the region partition, so region 10 is entirely left and region 20
+    # entirely right (exercising single-hemisphere regions), while the LR-spanning
+    # background strip (region 0) straddles both.
+    hemi_row = np.where(np.arange(_LR) < _LR // 2, 1, 2).astype(np.uint8)
+    atlas._hemispheres = np.broadcast_to(hemi_row, (_AP, _DV, _LR)).copy()
+    atlas._left_val = 1
+    atlas._right_val = 2
     atlas._bg = SimpleNamespace(structures=_STRUCTURES)
     return atlas
 
@@ -157,12 +165,12 @@ def test_accumulator_exact_mean_and_tot():
     acc = IntensityAccumulator(1)
     acc.add(labels, scope, raw)
 
-    assert acc.counts == {1: 2, 2: 3}
+    assert acc.counts == {(1, None): 2, (2, None): 3}
     tot = acc.totals_as_lists()
-    assert tot[1] == [30.0]  # 10 + 20
-    assert tot[2] == [5.0 + 7.0 + 3.0]  # 15
+    assert tot[(1, None)] == [30.0]  # 10 + 20
+    assert tot[(2, None)] == [5.0 + 7.0 + 3.0]  # 15
     # out-of-scope 999 never contributes
-    assert 0 not in acc.counts
+    assert (0, None) not in acc.counts
 
 
 def test_accumulator_pools_across_sections():
@@ -174,17 +182,43 @@ def test_accumulator_pools_across_sections():
     acc = IntensityAccumulator(2)
     acc.add(labels, scope, raw)
     acc.add(labels, scope, raw)
-    assert acc.counts == {1: 2, 2: 2}
-    assert acc.totals_as_lists()[1] == [8.0, 80.0]
+    assert acc.counts == {(1, None): 2, (2, None): 2}
+    assert acc.totals_as_lists()[(1, None)] == [8.0, 80.0]
+
+
+def test_accumulator_hemisphere_split():
+    labels = np.array([[1, 1, 2, 2]], dtype=np.int32)
+    scope = np.ones((1, 4), dtype=bool)
+    hemi = np.array([[1, 2, 1, 2]], dtype=np.uint8)  # region 1 and 2 each straddle
+    raw = np.zeros((1, 4, 1), dtype=np.uint16)
+    raw[..., 0] = [[10, 20, 30, 40]]
+
+    acc = IntensityAccumulator(1)
+    acc.add(labels, scope, raw, hemi)
+    # Each region splits into a left (hemi 1) and right (hemi 2) bucket.
+    assert acc.counts == {(1, 1): 1, (1, 2): 1, (2, 1): 1, (2, 2): 1}
+    tot = acc.totals_as_lists()
+    assert tot[(1, 1)] == [10.0]
+    assert tot[(1, 2)] == [20.0]
+    # Splitting conserves totals: the two hemispheres of region 1 sum to the whole.
+    unsplit = IntensityAccumulator(1)
+    unsplit.add(labels, scope, raw)
+    assert tot[(1, 1)][0] + tot[(1, 2)][0] == unsplit.totals_as_lists()[(1, None)][0]
 
 
 def test_match_to_raw_resizes_labels_nearest():
     labels = np.array([[1, 2], [3, 4]], dtype=np.int32)
     scope = np.ones((2, 2), dtype=bool)
-    lab2, sc2 = match_to_raw(labels, scope, (4, 4))
+    hemi = np.array([[1, 1], [2, 2]], dtype=np.uint8)
+    lab2, sc2, hemi2 = match_to_raw(labels, scope, (4, 4), hemi)
     assert lab2.shape == (4, 4)
     assert sc2.shape == (4, 4)
+    assert hemi2.shape == (4, 4)
     assert set(np.unique(lab2)).issubset({1, 2, 3, 4})  # nearest, no interpolation
+    assert set(np.unique(hemi2)).issubset({1, 2})
+    # hemi stays None when not splitting
+    _, _, none_hemi = match_to_raw(labels, scope, (4, 4), None)
+    assert none_hemi is None
 
 
 def test_channel_column_naming():
@@ -230,8 +264,8 @@ def test_representative_unassigned_and_fiber_tracts():
 
 def test_regroup_intensity_sums_and_recomputes_mean():
     agg = _agg([385], [315])
-    counts = {33385: 4, 385: 6}
-    totals = {33385: [40.0], 385: [60.0]}
+    counts = {(33385, None): 4, (385, None): 6}
+    totals = {(33385, None): [40.0], (385, None): [60.0]}
     rows = regroup_intensity(counts, totals, agg, "mid", _fake_atlas(), ["C0"])
     assert len(rows) == 1
     row = rows[0]
@@ -239,11 +273,25 @@ def test_regroup_intensity_sums_and_recomputes_mean():
     assert row["n_pixels"] == 10
     assert row["tot_ch_C0"] == 100.0
     assert row["mean_ch_C0"] == 10.0  # 100 / 10
+    assert "hemisphere" not in row  # not splitting
+
+
+def test_regroup_intensity_preserves_hemisphere():
+    agg = _agg([385], [315])
+    # VISp1 pixels split across both hemispheres regroup to VISp per hemisphere.
+    counts = {(33385, 1): 4, (33385, 2): 6}
+    totals = {(33385, 1): [40.0], (33385, 2): [90.0]}
+    rows = regroup_intensity(counts, totals, agg, "mid", _fake_atlas(), ["C0"])
+    assert len(rows) == 2
+    by_hemi = {r["hemisphere"]: r for r in rows}
+    assert by_hemi["l"]["region_id"] == 385 and by_hemi["l"]["n_pixels"] == 4
+    assert by_hemi["r"]["region_id"] == 385 and by_hemi["r"]["n_pixels"] == 6
+    assert by_hemi["r"]["mean_ch_C0"] == pytest.approx(15.0)  # 90 / 6
 
 
 def test_regroup_unassigned_bucket():
     agg = _agg([385], [315])
-    rows = regroup_intensity({8: 5}, {8: [50.0]}, agg, "mid", _fake_atlas(), ["C0"])
+    rows = regroup_intensity({(8, None): 5}, {(8, None): [50.0]}, agg, "mid", _fake_atlas(), ["C0"])
     assert rows[0]["region_id"] == ""
     assert rows[0]["acronym"] == "unassigned"
 
@@ -258,10 +306,11 @@ def test_region_map_scope_from_mask(tmp_path):
 
     project, _pdir, atlas = _make_project(tmp_path, n_sections=1, with_mask=True)
     reg = VersoRegistration.from_project(project)
-    labels, scope = region_map(reg, atlas, project.sections[0])
+    labels, scope, hemi = region_map(reg, atlas, project.sections[0])
     full_w, full_h = project.sections[0].resolution_original_wh
     assert labels.shape == (full_h, full_w)
     assert scope.shape == (full_h, full_w)
+    assert hemi is None  # not requested
     assert 0 < scope.sum() < scope.size  # mask restricts but doesn't erase
 
 
@@ -270,8 +319,22 @@ def test_region_map_wholeframe_when_no_mask(tmp_path):
 
     project, _pdir, atlas = _make_project(tmp_path, n_sections=1, with_mask=False)
     reg = VersoRegistration.from_project(project)
-    _labels, scope = region_map(reg, atlas, project.sections[0])
+    _labels, scope, _hemi = region_map(reg, atlas, project.sections[0])
     assert scope.all()  # whole frame
+
+
+def test_region_map_hemisphere_aligned_with_labels(tmp_path):
+    from verso.engine.registration import VersoRegistration
+
+    project, _pdir, atlas = _make_project(tmp_path, n_sections=1, with_mask=False)
+    reg = VersoRegistration.from_project(project)
+    labels, _scope, hemi = region_map(reg, atlas, project.sections[0], split_hemispheres=True)
+    assert hemi is not None
+    assert hemi.shape == labels.shape
+    # In the fake atlas region 10 is entirely left (hemi 1) and 20 entirely right
+    # (hemi 2); assert the per-pixel maps agree where the region is annotated.
+    assert set(np.unique(hemi[labels == 10])).issubset({1})
+    assert set(np.unique(hemi[labels == 20])).issubset({2})
 
 
 # ---------------------------------------------------------------------------
@@ -293,7 +356,7 @@ def test_quantify_intensity_invariants(tmp_path):
     total_px = 0
     total_c0 = 0.0
     for s in project.sections:
-        _labels, scope = region_map(reg, atlas, s)
+        _labels, scope, _hemi = region_map(reg, atlas, s)
         raw = load_full_res_raw(s.original_path)
         total_px += int(scope.sum())
         total_c0 += float(raw[..., 0][scope].sum())
@@ -348,6 +411,45 @@ def test_intensity_aggregate_levels(tmp_path):
     )
     assert "regions_mid" in res
     assert "regions_coarse" in res
+
+
+def test_intensity_hemisphere_split_conserves_and_labels(tmp_path):
+    project, pdir, atlas = _make_project(tmp_path)
+    pooled = quantify_intensity(project, project_dir=pdir, atlas=atlas)["regions"]
+    split = quantify_intensity(
+        project, project_dir=pdir, atlas=atlas, options=QuantifyOptions(split_hemispheres=True)
+    )["regions"]
+
+    # Every split row carries an l/r/none hemisphere label.
+    assert all(r["hemisphere"] in {"l", "r", "none"} for r in split)
+    assert all("hemisphere" not in r for r in pooled)
+
+    # Splitting conserves pixels/totals per region (sum of hemispheres == pooled).
+    def by_region(rows):
+        out: dict = {}
+        for r in rows:
+            out.setdefault(r["region_id"], {"n": 0, "tot": 0.0})
+            out[r["region_id"]]["n"] += r["n_pixels"]
+            out[r["region_id"]]["tot"] += r["tot_ch_C0"]
+        return out
+
+    ps, ss = by_region(pooled), by_region(split)
+    assert set(ps) == set(ss)
+    for rid in ps:
+        assert ss[rid]["n"] == ps[rid]["n"]
+        assert ss[rid]["tot"] == pytest.approx(ps[rid]["tot"])
+
+    # Region 10 is annotated only in the left hemisphere, region 20 only in the
+    # right — each yields a single hemisphere row (the one-sided-region case).
+    hemis = {}
+    for r in split:
+        hemis.setdefault(r["region_id"], set()).add(r["hemisphere"])
+    assert hemis[10] == {"l"}
+    assert hemis[20] == {"r"}
+    # Out-of-atlas pixels (region 0, edge pixels whose voxel is out of bounds) have
+    # no defined hemisphere and pool into the "none" bucket — nothing is dropped.
+    if 0 in hemis:
+        assert hemis[0] == {"none"}
 
 
 # ---------------------------------------------------------------------------
@@ -444,6 +546,37 @@ def test_dots_ccf_axis_order(tmp_path):
     assert row["x_ccf"] == pytest.approx(ccf[1])  # AP
     assert row["y_ccf"] == pytest.approx(ccf[2])  # DV
     assert row["z_ccf"] == pytest.approx(ccf[0])  # LR
+
+
+def test_quantify_dots_hemisphere_split(tmp_path):
+    project, pdir, atlas = _make_project(tmp_path, n_sections=1, with_mask=False)
+    s = project.sections[0]
+    full_w, full_h = s.resolution_original_wh
+    # One dot in the left half (region 10 / hemi l), one in the right (region 20 / r).
+    left = (2.0, full_h / 2)
+    right = (full_w - 2.0, full_h / 2)
+    _add_points(pdir, s, [left, right])
+
+    res = quantify_dots(
+        project,
+        "cells",
+        project_dir=pdir,
+        atlas=atlas,
+        options=QuantifyOptions(split_hemispheres=True, include_unmasked_wholeframe=True),
+    )
+    per_dot = res["dots"]
+    assert len(per_dot) == 2
+    assert {r["hemisphere"] for r in per_dot} == {"l", "r"}
+
+    # Per-region table splits by hemisphere; density denominator is per-hemisphere,
+    # so every bucket that has a dot also has a pixel footprint (never zero-div).
+    regions = res["regions"]
+    assert all(r["hemisphere"] in {"l", "r", "none"} for r in regions)
+    for r in regions:
+        if r["n_dots"]:
+            assert r["n_pixels"] > 0
+            assert r["dots_density"] == pytest.approx(r["n_dots"] / r["n_pixels"])
+    assert sum(r["n_dots"] for r in regions) == 2
 
 
 def test_dots_aggregation_columns(tmp_path):

@@ -12,6 +12,14 @@ public operations:
 - `image_to_atlas` — resample a whole atlas volume (`annotation` /
   `template` / `boundary`) onto a section's own pixel grid
 
+> **Intentional divergence — `image_to_atlas(kind="hemisphere")`.** The Python
+> `image_to_atlas` gained a `"hemisphere"` kind (samples BrainGlobe's
+> `hemispheres` volume through the same warp to produce a per-pixel L/R map). It
+> is **not** mirrored in `VersoRegistration.m`: its only consumer is
+> per-hemisphere quantification, and quantification is deliberately not ported to
+> MATLAB (see `.claude/quantification.md` §7). This is the documented exception to
+> the parity rule below — the three original kinds remain in strict parity.
+
 The MATLAB class is a from-scratch reimplementation (no Python interop, no
 `py.*` bridge) so it works on a machine with only MATLAB + Image Processing
 Toolbox installed. This doc records the facts that reimplementation depends
