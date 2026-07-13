@@ -414,6 +414,12 @@ class JobController:
                 "Align this section before generating control points.",
             )
             return
+        # Registration reads the section's mask + manual points from disk, so any
+        # unsaved prep-mask / warp draft must be flushed first — otherwise the run
+        # uses stale on-disk state (an empty mask crashes elastix; see
+        # prepare_registration_inputs). The batch path does the same.
+        if not self._window.confirm_discard_active_draft():
+            return
         self._auto_cp_batch = False
         self._run_auto_cp([section], "Generating control points…", self._on_single_auto_cp_done)
 

@@ -253,13 +253,17 @@ def auto_control_points(
     moving_itk.SetSpacing(spacing)
 
     # Dilated tissue mask gates the image metric so edge tissue still contributes.
+    # A mask with no foreground is dropped rather than attached: an all-empty
+    # fixed mask leaves the sampler with no voxels to draw and elastix aborts with
+    # a generic "Internal elastix error", so register without a mask instead.
     fixed_mask_itk = None
-    if mask is not None:
+    if mask is not None and np.any(mask):
         reg_mask = morph_mask(mask, params.mask_dilation_register, "expand")
         reg_mask_small = _resize(reg_mask.astype(np.float32)) > 0.5 if scale != 1.0 else reg_mask
-        mask_itk = itk.image_from_array(np.ascontiguousarray(reg_mask_small, dtype=np.uint8))
-        mask_itk.SetSpacing(spacing)
-        fixed_mask_itk = mask_itk
+        if np.any(reg_mask_small):
+            mask_itk = itk.image_from_array(np.ascontiguousarray(reg_mask_small, dtype=np.uint8))
+            mask_itk.SetSpacing(spacing)
+            fixed_mask_itk = mask_itk
 
     po = _make_parameter_map(params, with_points=bool(manual_cps))
 

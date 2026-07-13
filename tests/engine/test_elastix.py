@@ -237,3 +237,35 @@ def test_auto_cps_outside_image_are_dropped(monkeypatch):
     cps = elastix.auto_control_points(section, template, _CORONAL_25UM, _SHAPE_25UM)
 
     assert cps == []
+
+
+def test_empty_mask_is_not_passed_to_elastix(monkeypatch):
+    # An all-empty fixed mask makes the real elastix sampler abort with a generic
+    # "Internal elastix error"; the guard must register without a mask instead of
+    # attaching one. A non-empty mask is still attached.
+    w, h = 120, 100
+    section = np.zeros((h, w), dtype=np.float32)
+    template = np.zeros((h, w), dtype=np.float32)
+    captured: list[dict] = []
+
+    class _Transform:
+        def SetParameter(self, idx, key, val):
+            pass
+
+    def _record(fixed, moving, parameter_object=None, **kw):
+        captured.append(kw)
+        return None, _Transform()
+
+    fake = _make_fake_itk(0.0)
+    fake.elastix_registration_method = _record
+    monkeypatch.setitem(sys.modules, "itk", fake)
+
+    empty_mask = np.zeros((h, w), dtype=bool)
+    elastix.auto_control_points(section, template, _CORONAL_25UM, _SHAPE_25UM, mask=empty_mask)
+    assert captured and "fixed_mask" not in captured[-1]
+
+    captured.clear()
+    tissue_mask = np.zeros((h, w), dtype=bool)
+    tissue_mask[40:60, 50:70] = True
+    elastix.auto_control_points(section, template, _CORONAL_25UM, _SHAPE_25UM, mask=tissue_mask)
+    assert captured and "fixed_mask" in captured[-1]
