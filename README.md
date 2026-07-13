@@ -16,9 +16,7 @@
 
 VERSO is a desktop application for registering serial histological brain sections to 3D reference atlases.
 
-<div align="center">
-<img src="docs/screen_1.png" alt="mainGUI" width="512">
-</div>
+<img width="1075" height="832" alt="image" src="https://github.com/user-attachments/assets/0ccc00c9-9d51-48be-9bee-4b335aa482f7" />
 
 ## What it does
 
@@ -53,18 +51,34 @@ That means VERSO works equally well across the experience spectrum:
 - **A newly joined intern** who just needs to align two histological images can open the app, drop in their files, and get a clean registration with minimal training.
 - **An experienced scientist** reconstructing an entire brain from a full serial dataset can lean on DeepSlice, progressive interpolation, and automatic control points to register hundreds of sections quickly.
 
-## GUI overview
+## How to align with the GUI
 
-The interface has four views, switchable from the toolbar:
+### 1.Preprocess
 
-| View | Purpose |
-|---|---|
-| **Overview** | Table of all sections with pipeline status at a glance |
-| **Prep** | Canvas for preprocessing — masks and flipping |
-| **Align** | Canvas for affine atlas registration (AP position, rotation, scale), with DeepSlice proposals |
-| **Warp** | Canvas for nonlinear refinement using automatic or manually placed control points |
+- Correct horizontal or vertical flips
+- Create a mask for the section
 
-A filmstrip of section thumbnails runs along the bottom of the Prep, Align, and Warp views for quick navigation.
+https://github.com/user-attachments/assets/7ebf3b83-0da9-4613-a8cf-8039b80e4fe0
+
+### 2.Align
+
+- Interactively align your sections
+- It's faster with automatic interpolation, or by using the integrated DeepSlice
+
+https://github.com/user-attachments/assets/7a98b2d7-8476-4804-895f-cd6c9b5584f2
+
+### 3.Warp
+- Refine local deformation with control points
+- You can automatically register with Elastix and edit the registration output
+
+
+https://github.com/user-attachments/assets/600ac753-da5b-4986-b0f2-4f8a03d09b46
+
+### 4.Annotate
+- Define regions of interest that you want to quantify
+- Import cell locations from CSV
+
+https://github.com/user-attachments/assets/508459f4-92ff-4030-955d-810cd7acdbc0
 
 ## Compatibility
 
