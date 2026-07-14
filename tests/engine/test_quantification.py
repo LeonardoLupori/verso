@@ -71,11 +71,13 @@ def _fake_atlas() -> AtlasVolume:
     ann[:, :, 4:] = 20
     ann[:, 0, :] = 0  # a background strip (spans all LR → straddles both hemispheres)
     atlas._annotation = ann
-    # Hemisphere volume: left half (LR < 4) = 1, right half (LR >= 4) = 2. This
-    # aligns with the region partition, so region 10 is entirely left and region 20
-    # entirely right (exercising single-hemisphere regions), while the LR-spanning
-    # background strip (region 0) straddles both.
-    hemi_row = np.where(np.arange(_LR) < _LR // 2, 1, 2).astype(np.uint8)
+    # Hemisphere volume, matching the real brainglobe Allen "asr" orientation: the
+    # LOW-LR half (index < 4) is brainglobe's RIGHT value (2), the HIGH-LR half is
+    # its LEFT value (1) — i.e. brainglobe's raw values run opposite to VERSO's
+    # display/QuickNII axis (see issue #40 and AtlasVolume.hemisphere_label). So the
+    # low-LR region 10 sits on brainglobe-right (reported user-facing as 'l', the
+    # screen-left side) and the high-LR region 20 on brainglobe-left (user 'r').
+    hemi_row = np.where(np.arange(_LR) < _LR // 2, 2, 1).astype(np.uint8)
     atlas._hemispheres = np.broadcast_to(hemi_row, (_AP, _DV, _LR)).copy()
     atlas._left_val = 1
     atlas._right_val = 2
@@ -279,14 +281,16 @@ def test_regroup_intensity_sums_and_recomputes_mean():
 def test_regroup_intensity_preserves_hemisphere():
     agg = _agg([385], [315])
     # VISp1 pixels split across both hemispheres regroup to VISp per hemisphere.
+    # brainglobe raw value 1 (its left) -> user-facing 'r'; value 2 -> 'l' (see
+    # hemisphere_label / issue #40).
     counts = {(33385, 1): 4, (33385, 2): 6}
     totals = {(33385, 1): [40.0], (33385, 2): [90.0]}
     rows = regroup_intensity(counts, totals, agg, "mid", _fake_atlas(), ["C0"])
     assert len(rows) == 2
     by_hemi = {r["hemisphere"]: r for r in rows}
-    assert by_hemi["l"]["region_id"] == 385 and by_hemi["l"]["n_pixels"] == 4
-    assert by_hemi["r"]["region_id"] == 385 and by_hemi["r"]["n_pixels"] == 6
-    assert by_hemi["r"]["mean_ch_C0"] == pytest.approx(15.0)  # 90 / 6
+    assert by_hemi["r"]["region_id"] == 385 and by_hemi["r"]["n_pixels"] == 4
+    assert by_hemi["l"]["region_id"] == 385 and by_hemi["l"]["n_pixels"] == 6
+    assert by_hemi["l"]["mean_ch_C0"] == pytest.approx(15.0)  # 90 / 6
 
 
 def test_regroup_unassigned_bucket():
@@ -331,10 +335,12 @@ def test_region_map_hemisphere_aligned_with_labels(tmp_path):
     labels, _scope, hemi = region_map(reg, atlas, project.sections[0], split_hemispheres=True)
     assert hemi is not None
     assert hemi.shape == labels.shape
-    # In the fake atlas region 10 is entirely left (hemi 1) and 20 entirely right
-    # (hemi 2); assert the per-pixel maps agree where the region is annotated.
-    assert set(np.unique(hemi[labels == 10])).issubset({1})
-    assert set(np.unique(hemi[labels == 20])).issubset({2})
+    # In the fake atlas region 10 is the low-LR half (brainglobe raw hemi value 2)
+    # and region 20 the high-LR half (raw value 1); assert the per-pixel maps agree
+    # where the region is annotated. (These are brainglobe's raw asr values, before
+    # the user-facing l/r conversion in hemisphere_label.)
+    assert set(np.unique(hemi[labels == 10])).issubset({2})
+    assert set(np.unique(hemi[labels == 20])).issubset({1})
 
 
 # ---------------------------------------------------------------------------
@@ -450,6 +456,84 @@ def test_intensity_hemisphere_split_conserves_and_labels(tmp_path):
     # no defined hemisphere and pool into the "none" bucket — nothing is dropped.
     if 0 in hemis:
         assert hemis[0] == {"none"}
+
+
+def _bright_left_project(
+    tmp_path: Path, *, flip_horizontal: bool = False, flip_vertical: bool = False
+) -> tuple[Project, Path, AtlasVolume]:
+    """One aligned section whose on-disk image is bright on the LEFT half.
+
+    The section is anchored to a full-LR coronal plane (``u = +LR``), so an on-disk
+    column maps monotonically across the atlas LR axis. Used to check which
+    hemisphere the bright side is quantified into under each flip combination.
+    """
+    atlas = _fake_atlas()
+    full_w, full_h = 16, 12
+    work_w, work_h = 8, 6
+    hi = tmp_path / "hiRes"
+    hi.mkdir(exist_ok=True)
+    orig = hi / "s1.tif"
+    arr = np.zeros((1, full_h, full_w), dtype=np.uint16)  # (C, H, W)
+    arr[0, :, : full_w // 2] = 1000  # bright on the on-disk LEFT half
+    tifffile.imwrite(str(orig), arr)
+    section = Section(
+        id="s1",
+        slice_index=1,
+        original_path=str(orig),
+        thumbnail_path=str(tmp_path / "thumbnails" / "s1-thumb.ome.tif"),
+        resolution_original_wh=(full_w, full_h),
+        resolution_thumbnail_wh=(work_w, work_h),
+        preprocessing=Preprocessing(flip_horizontal=flip_horizontal, flip_vertical=flip_vertical),
+        alignment=Alignment(current_anchoring=_anchoring(3.0)),
+        warp=WarpState(control_points=[]),
+    )
+    project = Project(
+        name="t",
+        atlas=AtlasRef(name="fake", resolution_um=_RES_UM, shape=(_AP, _DV, _LR)),
+        sections=[section],
+        channels=[ChannelSpec(name="C0")],
+        working_scale=work_w / full_w,
+    )
+    return project, tmp_path, atlas
+
+
+@pytest.mark.parametrize(
+    ("flip_horizontal", "flip_vertical", "expected"),
+    [
+        # Unflipped: bright on-disk-left -> display-left -> atlas low-LR. That side is
+        # reported 'l' (VERSO display / QuickNII convention), even though brainglobe's
+        # raw hemispheres value there is its "right" (asr). This is issue #40.
+        (False, False, "l"),
+        # Horizontal flip mirrors LR -> bright moves to the high-LR side -> 'r'.
+        (True, False, "r"),
+        # Vertical flip is DV only and must NOT change the hemisphere -> still 'l'.
+        (False, True, "l"),
+        # Both flips: only the horizontal one affects L/R -> 'r'.
+        (True, True, "r"),
+    ],
+)
+def test_hemisphere_follows_display_convention_under_flips(
+    tmp_path, flip_horizontal, flip_vertical, expected
+):
+    project, pdir, atlas = _bright_left_project(
+        tmp_path, flip_horizontal=flip_horizontal, flip_vertical=flip_vertical
+    )
+    rows = quantify_intensity(
+        project,
+        project_dir=pdir,
+        atlas=atlas,
+        options=QuantifyOptions(
+            split_hemispheres=True,
+            include_unmasked_wholeframe=True,
+            include_unwarped_affine=True,
+        ),
+    )["regions"]
+    tot_by_hemi: dict[str, float] = {}
+    for r in rows:
+        tot_by_hemi[r["hemisphere"]] = tot_by_hemi.get(r["hemisphere"], 0.0) + r["tot_ch_C0"]
+    assert tot_by_hemi, "no hemisphere rows produced"
+    brightest = max(tot_by_hemi, key=lambda h: tot_by_hemi[h])
+    assert brightest == expected
 
 
 # ---------------------------------------------------------------------------

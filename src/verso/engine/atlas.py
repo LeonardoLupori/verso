@@ -190,15 +190,23 @@ class AtlasVolume:
         return hemi, in_bounds
 
     def hemisphere_label(self, value: int) -> str:
-        """Map a hemisphere volume value to its short code.
+        """Map a brainglobe ``hemispheres`` value to VERSO's user-facing L/R code.
 
-        ``left_hemisphere_value -> "l"``, ``right_hemisphere_value -> "r"``, and
-        ``0`` (out-of-atlas, hemisphere undefined) -> ``"none"``.
+        VERSO's user-facing left/right follows the **display / QuickNII (RAS)**
+        axis: the side shown on the left of the canvas — which is also exported to
+        QuickNII ``LR = 0`` and quantified as "left" by PyNutil — is reported as
+        ``"l"``. For the ``asr``-oriented Allen/Kim atlases VERSO targets,
+        brainglobe's ``hemispheres`` volume marks that same (low-LR) side with its
+        *right* value, i.e. its raw values run opposite to VERSO's display axis. We
+        therefore map ``right_hemisphere_value -> "l"`` and
+        ``left_hemisphere_value -> "r"`` so the quantified hemisphere agrees with
+        what the user sees and with QuickNII/PyNutil (see issue #40). ``0``
+        (out-of-atlas, hemisphere undefined) -> ``"none"``.
         """
         v = int(value)
-        if v == self._left_val:
-            return "l"
         if v == self._right_val:
+            return "l"
+        if v == self._left_val:
             return "r"
         return "none"
 
