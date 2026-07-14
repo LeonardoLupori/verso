@@ -169,6 +169,15 @@ volume** (same shape as the annotation; `left_hemisphere_value` /
 `right_hemisphere_value`, typically `1` / `2`), **not** a midline threshold — so
 it is correct for asymmetric atlases too.
 
+> **L/R convention (issue #40).** The reported `l`/`r` follows VERSO's
+> **display / QuickNII (RAS)** axis — the canvas-left side (exported to QuickNII
+> `LR = 0`, quantified "left" by PyNutil) is `l`. For the `asr`-oriented Allen/Kim
+> atlases VERSO targets, brainglobe's raw `hemispheres` values run *opposite* to
+> that axis (low-LR = its `right_hemisphere_value`), so `AtlasVolume.hemisphere_label`
+> maps `right_hemisphere_value -> "l"` and `left_hemisphere_value -> "r"`. This
+> keeps quantification consistent with what the user sees and with QuickNII/PyNutil;
+> the QuickNII import/export path (`quint_io._to_quicknii_convention`) is unchanged.
+
 - **Sampling.** A new `AtlasVolume.sample_hemispheres_at` mirrors
   `sample_labels_at` (identical VisuAlign/QUINT voxel selection), and
   `VersoRegistration.image_to_atlas` gained a `kind="hemisphere"` that carries it
