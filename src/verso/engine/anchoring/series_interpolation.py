@@ -440,10 +440,11 @@ def initialize_default_anchorings(
     """Seed not-yet-aligned sections with default series proposals.
 
     Like :func:`interpolate_anchorings`, but *preserves* existing manual work:
-    a section keeps its current plane unless it is still a
-    ``"series_interpolation"``, has no plane at all, or shares a ``slice_index``
-    with a stored (COMPLETE) section — a physical duplicate that must show the
-    same plane.
+    a section keeps its current plane unless it is still an untouched
+    ``"series_interpolation"`` proposal or has no plane at all. A section that
+    was saved or hand-edited is never overwritten — including a same-index
+    sibling of a stored section, whose own manual plane would otherwise be
+    silently reset to mirror the sibling.
 
     Args:
         sections: The project's sections (in series order).
@@ -468,22 +469,16 @@ def initialize_default_anchorings(
         center_proposals=True,
     )
 
-    stored_indices = {
-        section.slice_index
-        for section, anch in zip(sections, stored_anchorings, strict=False)
-        if anch is not None
-    }
-
     for section, anchoring, anch in zip(sections, propagated, stored_anchorings, strict=False):
         if anch is not None:
             continue
         # Keep a section's own manual edit; only (re)seed sections that are
-        # still a default proposal, have no plane, or must mirror a stored
-        # section that shares their slice index.
-        is_index_duplicate = section.slice_index in stored_indices
+        # still an untouched default proposal or have no plane at all. A
+        # same-index sibling of a stored section is not special-cased here:
+        # forcing it to mirror the stored plane would clobber a plane the user
+        # had hand-placed but not yet saved.
         if (
-            not is_index_duplicate
-            and section.alignment.is_anchored
+            section.alignment.is_anchored
             and section.alignment.status != AlignmentStatus.NOT_STARTED
             and section.alignment.source != "series_interpolation"
         ):

@@ -558,6 +558,63 @@ def test_initialize_default_anchorings_preserves_manual_edits(tmp_path):
     assert sections[2].alignment.is_anchored
 
 
+def test_initialize_default_anchorings_keeps_manual_edit_of_same_index_sibling(tmp_path):
+    """A hand-placed, unsaved plane on a duplicate slice_index must survive.
+
+    Regression: saving one section used to silently reset a same-index
+    sibling's in-progress manual plane to mirror the stored one.
+    """
+    from PIL import Image
+
+    paths = []
+    for i in range(3):
+        path = tmp_path / f"s{i + 1}.png"
+        Image.new("RGB", (1000, 800)).save(path)
+        paths.append(path)
+
+    def _section(sid: str, slice_index: int, path_idx: int, **align_kwargs) -> Section:
+        return Section(
+            id=sid,
+            slice_index=slice_index,
+            original_path=str(paths[path_idx]),
+            thumbnail_path=str(paths[path_idx]),
+            resolution_thumbnail_wh=(1000, 800),
+            alignment=Alignment(**align_kwargs),
+        )
+
+    saved = list(SAMPLE_ANCHORING)
+    manual = rotate_anchoring(SAMPLE_ANCHORING, math.radians(12.0))
+    sections = [
+        # Two sections share slice_index 5: one saved, one hand-edited but unsaved.
+        _section(
+            "a",
+            5,
+            0,
+            current_anchoring=saved,
+            status=AlignmentStatus.COMPLETE,
+            stored_anchoring=saved,
+            source="manual",
+        ),
+        _section(
+            "b",
+            5,
+            1,
+            current_anchoring=list(manual),
+            status=AlignmentStatus.IN_PROGRESS,
+            source="manual",
+        ),
+        _section("c", 7, 2),  # NOT_STARTED → gets a default proposal
+    ]
+
+    initialize_default_anchorings(sections, atlas_shape=(528, 320, 456))
+
+    # The saved sibling is untouched.
+    assert sections[0].alignment.stored_anchoring == saved
+    # The hand-edited sibling keeps its own plane instead of mirroring the saved one.
+    assert sections[1].alignment.current_anchoring == list(manual)
+    assert sections[1].alignment.source == "manual"
+
+
 def test_interpolate_anchorings_handles_horizontally_flipped_stored_keyframe(
     tmp_path,
 ):
