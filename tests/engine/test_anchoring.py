@@ -708,13 +708,17 @@ def test_sample_grid_shape():
 
 
 def test_sample_grid_corners():
-    grid = make_atlas_sample_grid(SAMPLE_ANCHORING, out_width=10, out_height=8)
+    w, h = 10, 8
+    grid = make_atlas_sample_grid(SAMPLE_ANCHORING, out_width=w, out_height=h)
     o, u, v = anchoring_to_vectors(SAMPLE_ANCHORING)
 
+    # ``i / N`` convention (VisuAlign getInt32Slice): pixel i maps to fraction
+    # i/N, so the first pixel sits at the origin and the last pixel stops one
+    # step short of s=1 (the far edge is never sampled). NOT linspace's i/(N-1).
     np.testing.assert_allclose(grid[0, 0], o, atol=1e-9)
-    np.testing.assert_allclose(grid[0, -1], o + u, atol=1e-9)
-    np.testing.assert_allclose(grid[-1, 0], o + v, atol=1e-9)
-    np.testing.assert_allclose(grid[-1, -1], o + u + v, atol=1e-9)
+    np.testing.assert_allclose(grid[0, -1], o + (w - 1) / w * u, atol=1e-9)
+    np.testing.assert_allclose(grid[-1, 0], o + (h - 1) / h * v, atol=1e-9)
+    np.testing.assert_allclose(grid[-1, -1], o + (w - 1) / w * u + (h - 1) / h * v, atol=1e-9)
 
 
 # ---------------------------------------------------------------------------

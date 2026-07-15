@@ -305,14 +305,14 @@ def test_image_to_atlas_annotation_matches_pointwise_lookup():
     assert labels.shape == (64, 96)
     assert labels.dtype == np.int32
 
-    # Spot-check a handful of full-res pixels (queried at their pixel *centers*,
-    # matching image_to_atlas's own sampling convention) against the pointwise
-    # coordinate mapping + the same nearest-voxel (floor/ceil) convention.
+    # Spot-check a handful of full-res pixels (queried at their pixel *left/top
+    # edge*, i/N, matching image_to_atlas's own sampling convention) against the
+    # pointwise coordinate mapping + the same nearest-voxel (floor/ceil) convention.
     from verso.engine.atlas import _sample_voxel_indices
 
     cols = np.array([5, 50, 90])
     rows = np.array([5, 10, 60])
-    pts = np.column_stack([cols + 0.5, rows + 0.5])
+    pts = np.column_stack([cols, rows])
     xyz = reg.coord_image_to_atlas("s1", pts)
     lr_f, ap_f, dv_f = _sample_voxel_indices(xyz[:, 0], xyz[:, 1], xyz[:, 2])
     ap_max, dv_max, lr_max = (_AP, _DV, _LR)

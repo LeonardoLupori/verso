@@ -157,7 +157,7 @@ classdef tVersoRegistration < matlab.unittest.TestCase
 
             cols = [5, 50, 90];
             rows = [5, 10, 60];
-            pts = [cols' + 0.5, rows' + 0.5];
+            pts = [cols', rows'];
             xyz = reg.coord_image_to_atlas("s1", pts);
             expected = testCase.expectedLabelsAt(xyz);
             actual = zeros(1, 3, "int32");
@@ -328,7 +328,7 @@ classdef tVersoRegistration < matlab.unittest.TestCase
             % And each output pixel still agrees with a pointwise coordinate lookup.
             cols = [5, 50, 90];
             rows = [5, 10, 60];
-            pts = [cols' + 0.5, rows' + 0.5];
+            pts = [cols', rows'];
             xyz = regFlip.coord_image_to_atlas("s1", pts);
             expected = testCase.expectedLabelsAt(xyz);
             actual = zeros(1, 3, "int32");

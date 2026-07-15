@@ -128,8 +128,17 @@ def make_atlas_sample_grid(
 
     The grid covers the full section plane at the given output resolution.
     Each cell ``grid[row, col]`` contains the atlas voxel (x, y, z) that
-    corresponds to the normalized section coordinate
-    ``(col / (W-1), row / (H-1))``.
+    corresponds to the normalized section coordinate ``(col / W, row / H)``.
+
+    This ``i / N`` mapping (pixel *left/top edge*, so the far edge ``s = 1`` is
+    never sampled) is VisuAlign/QUINT's ``getInt32Slice`` convention. It is the
+    single pixel→plane convention used throughout VERSO — display slice,
+    quantification (``registration.image_to_atlas``), and warp
+    (``warping.build_backward_remap``) — so the atlas overlay the user sees and
+    quantifies matches what VisuAlign/PyNutil reconstruct from an exported
+    anchoring. (Do **not** use ``linspace(0, 1, N)`` here: that is ``i / (N-1)``,
+    which stretches the plane so the last pixel reaches ``s = 1`` and diverges
+    from VisuAlign by up to ~1 pixel at the far edge.)
 
     This grid is passed to the atlas volume sampler (in ``atlas.py``) to
     extract a 2D slice image.
@@ -143,8 +152,8 @@ def make_atlas_sample_grid(
         Float64 array of shape (out_height, out_width, 3).
     """
     o, u, v = anchoring_to_vectors(anchoring)
-    s = np.linspace(0.0, 1.0, out_width)
-    t = np.linspace(0.0, 1.0, out_height)
+    s = np.arange(out_width, dtype=np.float64) / out_width
+    t = np.arange(out_height, dtype=np.float64) / out_height
     ss, tt = np.meshgrid(s, t)  # (H, W) each
     grid = o + ss[..., np.newaxis] * u + tt[..., np.newaxis] * v  # (H, W, 3)
     return grid

@@ -420,11 +420,18 @@ class VersoRegistration:
         hemi = np.zeros((out_h, out_w), dtype=np.uint8) if kind == "hemisphere" else None
         in_bounds = np.zeros((out_h, out_w), dtype=bool)
 
-        xs = (np.arange(out_w, dtype=np.float64) + 0.5) / out_w
+        # Pixel index -> normalized plane coord uses the ``i / N`` (pixel
+        # left/top edge) convention — VisuAlign/QUINT's ``getInt32Slice`` — so
+        # this per-pixel region map matches what VisuAlign/PyNutil reconstruct
+        # from the exported anchoring, and matches VERSO's own display slice and
+        # point-mapping (``_image_px_to_st`` also divides by ``work_w``). Not
+        # ``(i + 0.5) / N``: pixel centers would bias every boundary half a pixel
+        # off the downstream tools.
+        xs = np.arange(out_w, dtype=np.float64) / out_w
         rows_per_chunk = max(1, _IMAGE_TO_ATLAS_CHUNK_PIXELS // out_w)
         for r0 in range(0, out_h, rows_per_chunk):
             r1 = min(out_h, r0 + rows_per_chunk)
-            ys = (np.arange(r0, r1, dtype=np.float64) + 0.5) / out_h
+            ys = np.arange(r0, r1, dtype=np.float64) / out_h
             ss, tt = np.meshgrid(xs, ys)  # (rows, out_w)
             if snap.flip_h:
                 ss = 1.0 - ss

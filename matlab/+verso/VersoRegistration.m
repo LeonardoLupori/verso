@@ -242,13 +242,16 @@ classdef VersoRegistration < handle
             % Row-chunked so full-resolution images (tens of thousands of px
             % per side) don't require an all-at-once (H*W, 2) warp-lookup buffer.
             rowsPerChunk = max(1, floor(obj.ChunkPixelBudget / outW));
-            xs = ((0:outW - 1) + 0.5) / outW;
+            % Pixel index -> normalized plane coord uses ``i / N`` (pixel
+            % left/top edge), VisuAlign/QUINT's getInt32Slice convention, so the
+            % region map matches VisuAlign/PyNutil. Mirrors registration.py.
+            xs = (0:outW - 1) / outW;
 
             row0 = 0;
             while row0 < outH
                 row1 = min(outH - 1, row0 + rowsPerChunk - 1);   % 0-based, inclusive
                 rows0 = (row0:row1)';                             % 0-based row indices
-                ys = (rows0 + 0.5) / outH;
+                ys = rows0 / outH;
 
                 [ssGrid, ttGrid] = meshgrid(xs, ys);   % (chunkRows, outW)
                 if snap.FlipH

@@ -84,12 +84,13 @@ def test_build_backward_remap_matches_visualign_when_aspect_set():
 
     map_x, map_y = build_backward_remap(h, w, src_px, dst_px, width, height)
 
-    # Spot-check pixel centres against the VisuAlign reference (atlas coords).
+    # Spot-check pixels against the VisuAlign reference (atlas coords). The remap
+    # samples at the pixel left/top edge (i/N), matching VisuAlign's grid.
     max_err = 0.0
     for j in range(2, h, 11):
         for i in range(2, w, 11):
-            s = (i + 0.5) / w
-            t = (j + 0.5) / h
+            s = i / w
+            t = j / h
             ref_u, ref_v = _visualign_atlas_norm(s, t, src, dst, width, height)
             max_err = max(max_err, abs(map_x[j, i] / w - ref_u), abs(map_y[j, i] / h - ref_v))
     assert max_err < 1e-5, f"backward remap must match VisuAlign (got {max_err})"

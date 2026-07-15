@@ -91,12 +91,16 @@ def test_canonical_plane_anchoring_is_axis_aligned():
     anchoring = atlas.canonical_plane_anchoring(position=4.0, axis=1)  # AP
     from verso.engine.anchoring import make_atlas_sample_grid
 
-    grid = make_atlas_sample_grid(anchoring, out_width=10, out_height=6)
+    out_w, out_h = 10, 6
+    grid = make_atlas_sample_grid(anchoring, out_width=out_w, out_height=out_h)
     # AP (component 1) is constant at the requested position across the plane.
     np.testing.assert_allclose(grid[:, :, 1], 4.0)
-    # LR (0) and DV (2) sweep the full atlas extent.
-    assert grid[:, :, 0].min() == 0.0 and grid[:, :, 0].max() == pytest.approx(_LR)
-    assert grid[:, :, 2].min() == 0.0 and grid[:, :, 2].max() == pytest.approx(_DV)
+    # LR (0) and DV (2) sweep the atlas extent. With the i/N sampling convention
+    # the last pixel stops one step short of the full extent (s never reaches 1).
+    assert grid[:, :, 0].min() == 0.0
+    assert grid[:, :, 0].max() == pytest.approx(_LR * (out_w - 1) / out_w)
+    assert grid[:, :, 2].min() == 0.0
+    assert grid[:, :, 2].max() == pytest.approx(_DV * (out_h - 1) / out_h)
 
 
 def test_axis_plane_dims_rejects_bad_axis():
@@ -122,8 +126,8 @@ def test_build_canonical_remap_identity_ramps():
     )
     assert (out_w, out_h) == (_LR, _DV)  # (10, 6)
 
-    cols = np.arange(out_w) / (out_w - 1) * work_w
-    rows = np.arange(out_h) / (out_h - 1) * work_h
+    cols = np.arange(out_w) / out_w * work_w
+    rows = np.arange(out_h) / out_h * work_h
     np.testing.assert_allclose(map_x, np.broadcast_to(cols, (out_h, out_w)), atol=1e-4)
     np.testing.assert_allclose(map_y, np.broadcast_to(rows[:, None], (out_h, out_w)), atol=1e-4)
     assert (map_x >= 0).all()  # fully covered

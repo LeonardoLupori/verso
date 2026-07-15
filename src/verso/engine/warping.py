@@ -300,8 +300,13 @@ def build_backward_remap(
     b0 = np.ascontiguousarray(bias[:, 0])
     b1 = np.ascontiguousarray(bias[:, 1])
 
-    xs = (np.arange(w, dtype=np.float64) + 0.5) / w
-    ys = (np.arange(h, dtype=np.float64) + 0.5) / h
+    # ``i / N`` (pixel left/top edge), matching VisuAlign's sampling and VERSO's
+    # atlas slice / quantification grids. With this convention an identity warp
+    # maps output pixel i -> source coord ``(i / w) * w = i`` exactly (no
+    # half-pixel drift); ``(i + 0.5) / w`` with the ``atlas_x * w`` output below
+    # would shift the overlay half a source pixel.
+    xs = np.arange(w, dtype=np.float64) / w
+    ys = np.arange(h, dtype=np.float64) / h
     grid_x, grid_y = np.meshgrid(xs, ys)  # (H, W) each
     pixels = np.column_stack([grid_x.ravel(), grid_y.ravel()])  # (H*W, 2) normalised
     pixels_scaled = pixels * scale  # triangulation space
