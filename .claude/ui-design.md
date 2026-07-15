@@ -165,7 +165,9 @@ checkable pill buttons. Right-aligned: the current project name.
     control points*; *Clear all automatic control points* (each enabled only
     when control points of that kind exist in the project).
 - **Export** — Images with atlas overlay.
-- **Help** — Atlas info; Project info.
+- **Help** — Atlas info; Project info; About VERSO (version, repo link, issue
+  tracker link, and credits for QuickNII/VisuAlign/DeepSlice/Elastix/
+  BrainGlobe/Allen Atlas API).
 
 All "Clear all …" entries prompt for confirmation and route through
 `MainWindow._after_batch_clear` (resyncs the current view, refreshes the

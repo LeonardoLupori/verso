@@ -1,943 +1,387 @@
-"""Tests for engine/registration.py."""
+"""Tests for engine/registration.py — the VersoRegistration façade.
 
-import math
+These build small projects in memory (via ``VersoRegistration.from_project``) so
+they run headless with no brainglobe download: the class only reads the project
+data model, and the fake atlas is used solely to produce canonical-plane
+anchorings (its helpers read ``annotation.shape`` only).
+"""
 
 import numpy as np
 import pytest
 
-from verso.engine.model.alignment import Alignment, AlignmentStatus
-from verso.engine.model.project import Preprocessing, Section
-from verso.engine.registration import (
-    anchoring_to_vectors,
-    atlas_to_normalized,
-    flip_anchoring_horizontal,
-    interpolate_anchorings,
-    make_atlas_sample_grid,
-    normalized_to_atlas,
-    normalized_to_pixel,
-    pixel_to_normalized,
-    plane_tilt_deg,
-    quicknii_default_anchoring,
-    quicknii_pack_anchoring,
-    quicknii_series_anchorings,
-    quicknii_unpack_anchoring,
-    rotate_anchoring,
-    scale_anchoring,
-    set_center_position_along_axis,
-    set_position_along_axis,
-    vectors_to_anchoring,
-)
+from verso.engine.anchoring import anchoring_center, make_atlas_sample_grid, normalized_to_atlas
+from verso.engine.atlas import AtlasVolume
+from verso.engine.model.alignment import Alignment, ControlPoint, WarpState
+from verso.engine.model.project import AtlasRef, Preprocessing, Project, Section
+from verso.engine.registration import VersoRegistration
 
-# Coronal anchoring for Allen Mouse 25 µm atlas (illustrative — not exact).
-# Represents a mid-brain coronal section.
-SAMPLE_ANCHORING = [
-    # origin: left-top corner of the section in voxel space
-    0.0,
-    160.0,
-    228.0,
-    # u: 456 px wide section → moves 456 voxels along x
-    456.0,
-    0.0,
-    0.0,
-    # v: 320 px tall section → moves 320 voxels along y
-    0.0,
-    320.0,
-    0.0,
-]
+# Fake atlas dimensions (AP, DV, LR) and resolution.
+_AP, _DV, _LR = 20, 16, 24
+_RES_UM = 25.0
 
 
-# ---------------------------------------------------------------------------
-# anchoring_to_vectors / vectors_to_anchoring
-# ---------------------------------------------------------------------------
+def _fake_atlas() -> AtlasVolume:
+    atlas = object.__new__(AtlasVolume)
+    atlas._annotation = np.zeros((_AP, _DV, _LR), dtype=np.int32)
+    return atlas
 
 
-def test_anchoring_round_trip():
-    o, u, v = anchoring_to_vectors(SAMPLE_ANCHORING)
-    rebuilt = vectors_to_anchoring(o, u, v)
-    np.testing.assert_allclose(rebuilt, SAMPLE_ANCHORING)
+def _anchoring(position: float, axis: int = 1) -> list[float]:
+    return _fake_atlas().canonical_plane_anchoring(position, axis)
 
 
-def test_anchoring_to_vectors_wrong_length():
-    with pytest.raises(ValueError):
-        anchoring_to_vectors([1.0] * 8)
+def _section(
+    sid: str,
+    position: float,
+    *,
+    axis: int = 1,
+    flip_h: bool = False,
+    flip_v: bool = False,
+    cps: list[ControlPoint] | None = None,
+    work: tuple[int, int] = (48, 32),
+    full: tuple[int, int] = (96, 64),
+    original_path: str | None = None,
+) -> Section:
+    return Section(
+        id=sid,
+        slice_index=int(position),
+        original_path=original_path or f"{sid}.tif",
+        thumbnail_path=f"{sid}.ome.tif",
+        resolution_original_wh=full,
+        resolution_thumbnail_wh=work,
+        preprocessing=Preprocessing(flip_horizontal=flip_h, flip_vertical=flip_v),
+        alignment=Alignment(current_anchoring=_anchoring(position, axis)),
+        warp=WarpState(control_points=cps or []),
+    )
 
 
-# ---------------------------------------------------------------------------
-# normalized_to_atlas / atlas_to_normalized
-# ---------------------------------------------------------------------------
+def _project(sections: list[Section]) -> Project:
+    return Project(
+        name="t",
+        atlas=AtlasRef(name="fake", resolution_um=_RES_UM, shape=(_AP, _DV, _LR)),
+        sections=sections,
+        working_scale=0.5,
+    )
 
 
-def test_origin_maps_to_origin():
-    xyz = normalized_to_atlas(0.0, 0.0, SAMPLE_ANCHORING)
-    np.testing.assert_allclose(xyz, SAMPLE_ANCHORING[:3])
+def _reg(sections: list[Section]) -> VersoRegistration:
+    return VersoRegistration.from_project(_project(sections))
 
 
-def test_corner_maps_correctly():
-    xyz = normalized_to_atlas(1.0, 1.0, SAMPLE_ANCHORING)
-    o, u, v = anchoring_to_vectors(SAMPLE_ANCHORING)
-    np.testing.assert_allclose(xyz, o + u + v)
+# --- round trip --------------------------------------------------------------
 
 
-def test_round_trip_normalized_atlas():
-    for s, t in [(0.0, 0.0), (0.5, 0.3), (1.0, 1.0), (0.25, 0.75)]:
-        xyz = normalized_to_atlas(s, t, SAMPLE_ANCHORING)
-        s2, t2 = atlas_to_normalized(xyz, SAMPLE_ANCHORING)
-        assert abs(s2 - s) < 1e-9, f"s mismatch at ({s}, {t})"
-        assert abs(t2 - t) < 1e-9, f"t mismatch at ({s}, {t})"
+def test_roundtrip_no_cps():
+    reg = _reg([_section("s1", 10.0)])
+    p = np.array([[30.0, 20.0], [70.0, 50.0]])
+    xyz = reg.coord_image_to_atlas("s1", p)
+    assert xyz.shape == (2, 3)
+    res = reg.coord_atlas_to_image(xyz)
+    assert list(res.section_id) == ["s1", "s1"]
+    np.testing.assert_allclose(res.distance, 0.0, atol=1e-6)
+    np.testing.assert_allclose(res.xy, p, atol=1e-6)
+    assert res.valid.all()
 
 
-# ---------------------------------------------------------------------------
-# pixel_to_normalized / normalized_to_pixel
-# ---------------------------------------------------------------------------
+def test_roundtrip_with_flips():
+    reg = _reg([_section("s1", 10.0, flip_h=True, flip_v=True)])
+    p = np.array([[30.0, 20.0]])
+    xyz = reg.coord_image_to_atlas("s1", p)
+    res = reg.coord_atlas_to_image(xyz)
+    assert res.section_id[0] == "s1"
+    np.testing.assert_allclose(res.xy, p, atol=1e-6)
 
 
-def test_pixel_normalized_round_trip():
-    w, h = 456, 320
-    for px, py in [(0, 0), (228, 160), (455, 319)]:
-        s, t = pixel_to_normalized(px, py, w, h)
-        px2, py2 = normalized_to_pixel(s, t, w, h)
-        assert abs(px2 - px) < 1e-9
-        assert abs(py2 - py) < 1e-9
+def test_roundtrip_working_space():
+    reg = _reg([_section("s1", 10.0)])
+    p = np.array([[12.0, 8.0]])
+    xyz = reg.coord_image_to_atlas("s1", p, space="working")
+    res = reg.coord_atlas_to_image(xyz, space="working")
+    np.testing.assert_allclose(res.xy, p, atol=1e-6)
 
 
-# ---------------------------------------------------------------------------
-# set_position_along_axis
-# ---------------------------------------------------------------------------
-
-
-def test_set_position_along_axis_changes_only_origin_z():
-    new_anch = set_position_along_axis(SAMPLE_ANCHORING, voxel=300.0, axis=2)
-    o, u, v = anchoring_to_vectors(new_anch)
-
-    assert abs(o[2] - 300.0) < 1e-9
-    # u and v unchanged
-    np.testing.assert_allclose(u, SAMPLE_ANCHORING[3:6])
-    np.testing.assert_allclose(v, SAMPLE_ANCHORING[6:9])
-
-
-def test_set_center_position_along_axis_moves_midpoint_only():
-    tilted = [
-        10.0,
-        20.0,
-        30.0,
-        100.0,
-        12.0,
-        0.0,
-        0.0,
-        18.0,
-        80.0,
+def test_roundtrip_with_control_points():
+    # At control-point dst locations the warp inverts exactly; full == work here
+    # so full-res pixels equal working pixels.
+    cps = [
+        ControlPoint(src_x=10.0, src_y=8.0, dst_x=14.0, dst_y=6.0),
+        ControlPoint(src_x=30.0, src_y=20.0, dst_x=26.0, dst_y=24.0),
+        ControlPoint(src_x=40.0, src_y=12.0, dst_x=38.0, dst_y=16.0),
     ]
+    reg = _reg([_section("s1", 10.0, cps=cps, work=(48, 32), full=(48, 32))])
+    p = np.array([[cp.dst_x, cp.dst_y] for cp in cps])
 
-    new_anch = set_center_position_along_axis(tilted, voxel=75.0, axis=1)
-    o, u, v = anchoring_to_vectors(new_anch)
-    old_o, old_u, old_v = anchoring_to_vectors(tilted)
-    center = o + (u + v) / 2.0
+    xyz = reg.coord_image_to_atlas("s1", p)
+    # Forward maps each dst control point to its src atlas voxel.
+    anch = _anchoring(10.0)
+    expected = np.array([normalized_to_atlas(cp.src_x / 48, cp.src_y / 32, anch) for cp in cps])
+    np.testing.assert_allclose(xyz, expected, atol=1e-6)
 
-    assert abs(center[1] - 75.0) < 1e-9
-    np.testing.assert_allclose(u, old_u)
-    np.testing.assert_allclose(v, old_v)
-    np.testing.assert_allclose(o[[0, 2]], old_o[[0, 2]])
-
-
-# ---------------------------------------------------------------------------
-# rotate_anchoring
-# ---------------------------------------------------------------------------
+    res = reg.coord_atlas_to_image(xyz)
+    assert list(res.section_id) == ["s1", "s1", "s1"]
+    np.testing.assert_allclose(res.xy, p, atol=1e-6)
 
 
-def test_rotate_180_inverts_uv():
-    rotated = rotate_anchoring(SAMPLE_ANCHORING, math.pi)
-    o, u, v = anchoring_to_vectors(SAMPLE_ANCHORING)
-    ro, ru, rv = anchoring_to_vectors(rotated)
-
-    np.testing.assert_allclose(ru, -u, atol=1e-9)
-    np.testing.assert_allclose(rv, -v, atol=1e-9)
+# --- nearest-section search --------------------------------------------------
 
 
-def test_rotate_preserves_pivot_in_atlas_space():
-    pivot_s, pivot_t = 0.5, 0.5
-    o, u, v = anchoring_to_vectors(SAMPLE_ANCHORING)
-    pivot_before = o + pivot_s * u + pivot_t * v
+def test_nearest_section_picks_closer_plane():
+    reg = _reg([_section("s1", 8.0), _section("s2", 14.0)])
+    # Voxel order is anchoring order (LR, AP, DV); AP=9 is 1 from s1, 5 from s2.
+    res = reg.coord_atlas_to_image(np.array([[12.0, 9.0, 8.0]]))
+    assert res.section_id[0] == "s1"
+    np.testing.assert_allclose(res.distance[0], 1.0, atol=1e-6)
+    assert res.valid[0]
 
-    rotated = rotate_anchoring(SAMPLE_ANCHORING, math.pi / 4, pivot_s, pivot_t)
-    ro, ru, rv = anchoring_to_vectors(rotated)
-    pivot_after = ro + pivot_s * ru + pivot_t * rv
-
-    np.testing.assert_allclose(pivot_after, pivot_before, atol=1e-9)
-
-
-# ---------------------------------------------------------------------------
-# scale_anchoring
-# ---------------------------------------------------------------------------
+    # AP=12 is 4 from s1, 2 from s2 → s2.
+    res2 = reg.coord_atlas_to_image(np.array([[12.0, 12.0, 8.0]]))
+    assert res2.section_id[0] == "s2"
+    np.testing.assert_allclose(res2.distance[0], 2.0, atol=1e-6)
 
 
-def test_scale_uniform_doubles_uv():
-    scaled = scale_anchoring(SAMPLE_ANCHORING, 2.0)
-    o, u, v = anchoring_to_vectors(SAMPLE_ANCHORING)
-    so, su, sv = anchoring_to_vectors(scaled)
-
-    np.testing.assert_allclose(su, 2.0 * u, atol=1e-9)
-    np.testing.assert_allclose(sv, 2.0 * v, atol=1e-9)
-
-
-def test_scale_preserves_pivot():
-    pivot_s, pivot_t = 0.5, 0.5
-    o, u, v = anchoring_to_vectors(SAMPLE_ANCHORING)
-    pivot_before = o + pivot_s * u + pivot_t * v
-
-    scaled = scale_anchoring(SAMPLE_ANCHORING, 1.5, pivot_s=pivot_s, pivot_t=pivot_t)
-    so, su, sv = anchoring_to_vectors(scaled)
-    pivot_after = so + pivot_s * su + pivot_t * sv
-
-    np.testing.assert_allclose(pivot_after, pivot_before, atol=1e-9)
+def test_voxel_outside_all_footprints_is_invalid():
+    reg = _reg([_section("s1", 8.0)])
+    # LR=100 → s = 100/24 > 1 → outside the section frame.
+    res = reg.coord_atlas_to_image(np.array([[100.0, 8.0, 8.0]]))
+    assert res.section_id[0] == ""
+    assert not res.valid[0]
+    assert not np.isfinite(res.distance[0])
+    assert np.isnan(res.xy[0]).all()
 
 
-def test_flip_anchoring_horizontal_is_involutive():
-    flipped = flip_anchoring_horizontal(SAMPLE_ANCHORING)
-    restored = flip_anchoring_horizontal(flipped)
+def test_max_distance_and_distance_units():
+    reg = _reg([_section("s1", 8.0)])
+    v = np.array([[12.0, 11.0, 8.0]])  # 3 voxels off the plane
 
-    o, u, v = anchoring_to_vectors(SAMPLE_ANCHORING)
-    fo, fu, fv = anchoring_to_vectors(flipped)
+    res = reg.coord_atlas_to_image(v, max_distance=2.0)  # voxels
+    assert res.section_id[0] == "s1"  # still matched…
+    assert not res.valid[0]  # …but beyond the cutoff
+    assert reg.coord_atlas_to_image(v, max_distance=5.0).valid[0]
 
-    np.testing.assert_allclose(fo, o + u)
-    np.testing.assert_allclose(fu, -u)
-    np.testing.assert_allclose(fv, v)
-    np.testing.assert_allclose(restored, SAMPLE_ANCHORING)
-
-
-# ---------------------------------------------------------------------------
-# quicknii_default_anchoring
-# ---------------------------------------------------------------------------
+    res_um = reg.coord_atlas_to_image(v, units="um")
+    np.testing.assert_allclose(res_um.distance[0], 3.0 * _RES_UM, atol=1e-6)
+    assert reg.coord_atlas_to_image(v, units="um", max_distance=3.0 * _RES_UM + 1).valid[0]
+    assert not reg.coord_atlas_to_image(v, units="um", max_distance=3.0 * _RES_UM - 1).valid[0]
 
 
-def test_quicknii_default_anchoring_uses_series_stretch():
-    anchoring = quicknii_default_anchoring(
-        image_width=500,
-        image_height=400,
-        max_width=1000,
-        max_height=800,
-        atlas_shape=(528, 320, 456),
-        interpolation_axis=1,
+# --- export-path parity ------------------------------------------------------
+
+
+def test_export_parity_with_build_canonical_remap():
+    from verso.engine.io.export_stack import build_canonical_remap
+
+    atlas = _fake_atlas()
+    cps = [
+        ControlPoint(src_x=10.0, src_y=8.0, dst_x=14.0, dst_y=6.0),
+        ControlPoint(src_x=30.0, src_y=20.0, dst_x=26.0, dst_y=24.0),
+    ]
+    sec = _section("s1", 10.0, cps=cps, work=(48, 32), full=(48, 32))
+    reg = _reg([sec])
+
+    map_x, map_y, out_w, out_h = build_canonical_remap(
+        sec, atlas, axis=1, scale=1.0, work_w=48, work_h=32
     )
+    position = float(anchoring_center(sec.alignment.current_anchoring)[1])
+    canonical = atlas.canonical_plane_anchoring(position, 1)
+    grid = make_atlas_sample_grid(canonical, out_w, out_h)  # (H, W, 3)
 
-    o, u, v = anchoring_to_vectors(anchoring)
-    np.testing.assert_allclose(u, [228.0, 0.0, 0.0])
-    np.testing.assert_allclose(v, [0.0, 0.0, 160.0])
-    np.testing.assert_allclose(o, [114.0, 264.0, 80.0])
+    res = reg.coord_atlas_to_image(grid.reshape(-1, 3), space="working")
+    mx = res.xy[:, 0].reshape(out_h, out_w)
+    my = res.xy[:, 1].reshape(out_h, out_w)
 
-
-def test_quicknii_pack_unpack_round_trip():
-    unpacked = [456, 527, 160, 1, 0, 0, 0, 0, -1, 0.456, 0.4]
-    anchoring = quicknii_pack_anchoring(unpacked, image_width=1000, image_height=800)
-    restored = quicknii_unpack_anchoring(anchoring, image_width=1000, image_height=800)
-
-    np.testing.assert_allclose(restored, unpacked)
+    covered = map_x >= 0
+    np.testing.assert_allclose(mx[covered], map_x[covered], atol=1e-4)
+    np.testing.assert_allclose(my[covered], map_y[covered], atol=1e-4)
 
 
-def test_quicknii_coronal_series_initializes_ap_endpoints():
-    anchorings = quicknii_series_anchorings(
-        image_sizes=[(1000, 800), (1000, 800), (1000, 800)],
-        slice_indices=[1, 2, 3],
-        atlas_shape=(528, 320, 456),
-        interpolation_axis=1,
-    )
-
-    centers = []
-    vectors = []
-    for anchoring in anchorings:
-        o, u, v = anchoring_to_vectors(anchoring)
-        centers.append(o + u / 2 + v / 2)
-        vectors.append((u, v))
-    np.testing.assert_allclose([c[1] for c in centers], [527.0, 263.5, 0.0])
-    np.testing.assert_allclose([c[0] for c in centers], [228.0, 228.0, 228.0])
-    np.testing.assert_allclose([c[2] for c in centers], [160.0, 160.0, 160.0])
-    np.testing.assert_allclose(vectors[0][0], [456.0, 0.0, 0.0])
-    np.testing.assert_allclose(vectors[0][1], [0.0, 0.0, 320.0])
+# --- units, validity, resolver, errors ---------------------------------------
 
 
-def test_quicknii_coronal_series_can_reverse_ap_proposal():
-    anchorings = quicknii_series_anchorings(
-        image_sizes=[(1000, 800), (1000, 800), (1000, 800)],
-        slice_indices=[1, 2, 3],
-        atlas_shape=(528, 320, 456),
-        interpolation_axis=1,
-        reverse_axis=True,
-    )
-
-    centers = []
-    for anchoring in anchorings:
-        o, u, v = anchoring_to_vectors(anchoring)
-        centers.append(o + u / 2 + v / 2)
-    np.testing.assert_allclose([c[1] for c in centers], [0.0, 263.5, 527.0])
-
-
-def test_quicknii_coronal_series_uses_slice_indices_not_list_indices():
-    anchorings = quicknii_series_anchorings(
-        image_sizes=[(1000, 800), (1000, 800), (1000, 800)],
-        slice_indices=[30, 10, 20],
-        atlas_shape=(528, 320, 456),
-        interpolation_axis=1,
-    )
-
-    centers_by_serial = {}
-    for serial, anchoring in zip([30, 10, 20], anchorings):
-        o, u, v = anchoring_to_vectors(anchoring)
-        centers_by_serial[serial] = o + u / 2 + v / 2
-
+def test_units_forward():
+    reg = _reg([_section("s1", 10.0)])
+    p = np.array([[30.0, 20.0]])
+    vox = reg.coord_image_to_atlas("s1", p)
+    np.testing.assert_allclose(reg.coord_image_to_atlas("s1", p, units="um"), vox * _RES_UM)
     np.testing.assert_allclose(
-        [centers_by_serial[n][1] for n in [10, 20, 30]],
-        [527.0, 263.5, 0.0],
+        reg.coord_image_to_atlas("s1", p, units="mm"), vox * _RES_UM / 1000.0
     )
 
 
-def test_quicknii_coronal_series_duplicate_serial_gets_stored_ap_but_default_orientation():
-    stored = quicknii_series_anchorings(
-        image_sizes=[(1000, 800), (1000, 800), (1000, 800)],
-        slice_indices=[9, 10, 11],
-        atlas_shape=(528, 320, 456),
-        interpolation_axis=1,
+def test_return_valid_flags_out_of_frame():
+    reg = _reg([_section("s1", 10.0)])  # full == (96, 64)
+    p = np.array([[30.0, 20.0], [999.0, 20.0], [-5.0, 10.0]])
+    coords, inside = reg.coord_image_to_atlas("s1", p, return_valid=True)
+    assert coords.shape == (3, 3)
+    assert list(inside) == [True, False, False]
+
+
+def test_slice_resolver_by_id_stem_and_basename():
+    reg = _reg(
+        [
+            _section("s1", 8.0, original_path="/data/IMG_1.tif"),
+            _section("s2", 14.0, original_path="/data/IMG_2.tif"),
+        ]
     )
+    assert reg._resolve_slice("s1") == "s1"
+    assert reg._resolve_slice("IMG_1") == "s1"  # file stem
+    assert reg._resolve_slice("IMG_2.tif") == "s2"  # basename
+    assert "IMG_1" in reg
+    assert "nope" not in reg
+    with pytest.raises(KeyError):
+        reg._resolve_slice("missing")
 
-    anchorings = quicknii_series_anchorings(
-        image_sizes=[(800, 600), (1000, 800), (1000, 800), (1000, 800)],
-        slice_indices=[10, 10, 11, 12],
-        atlas_shape=(528, 320, 456),
-        interpolation_axis=1,
-        stored_anchorings=[None, stored[1], None, None],
+
+def test_slice_resolver_ambiguous_raises():
+    reg = _reg(
+        [
+            _section("s1", 8.0, original_path="/a/IMG.tif"),
+            _section("s2", 14.0, original_path="/b/IMG.tif"),
+        ]
     )
-
-    stored_u = quicknii_unpack_anchoring(anchorings[1], 1000, 800)
-    dup_u = quicknii_unpack_anchoring(anchorings[0], 800, 600)
-
-    # AP position matches the stored section.
-    np.testing.assert_allclose(dup_u[1], stored_u[1])
-    # Orientation is reset to the default upright coronal, not copied from stored.
-    np.testing.assert_allclose(dup_u[3:9], [1.0, 0.0, 0.0, 0.0, 0.0, 1.0], atol=1e-9)
-    # LR and DV are at the atlas centre.
-    np.testing.assert_allclose(dup_u[0], 228.0)  # lr_dim/2 = 456/2
-    np.testing.assert_allclose(dup_u[2], 160.0)  # dv_dim/2 = 320/2
+    with pytest.raises(KeyError):
+        reg._resolve_slice("IMG")
 
 
-def test_quicknii_coronal_series_same_serial_same_ap_with_different_sizes():
-    """Sections sharing a serial get the same AP position regardless of image size."""
-    anchorings = quicknii_series_anchorings(
-        image_sizes=[(800, 600), (1000, 800), (600, 400)],
-        slice_indices=[10, 10, 10],
-        atlas_shape=(528, 320, 456),
-        interpolation_axis=1,
+def test_ids_and_len():
+    reg = _reg([_section("s1", 8.0), _section("s2", 14.0)])
+    assert reg.ids() == ["s1", "s2"]
+    assert len(reg) == 2
+
+
+def test_unaligned_section_raises():
+    sec = _section("s1", 10.0)
+    sec.alignment = Alignment()  # zero anchoring → degenerate plane
+    reg = VersoRegistration.from_project(_project([sec]))
+    with pytest.raises(ValueError):
+        reg.coord_image_to_atlas("s1", [[10.0, 10.0]])
+
+
+def test_incomplete_dimensions_raise():
+    sec = _section("s1", 10.0)
+    sec.resolution_thumbnail_wh = (0, 0)
+    with pytest.raises(ValueError):
+        VersoRegistration.from_project(_project([sec]))
+
+
+def test_bad_space_and_units_raise():
+    reg = _reg([_section("s1", 10.0)])
+    with pytest.raises(ValueError):
+        reg.coord_image_to_atlas("s1", [[1.0, 1.0]], space="nope")
+    with pytest.raises(ValueError):
+        reg.coord_image_to_atlas("s1", [[1.0, 1.0]], units="parsecs")
+
+
+# --- whole-image atlas resampling (image_to_atlas) ----------------------------
+
+
+def _fake_atlas_full() -> AtlasVolume:
+    """Fake atlas with annotation, reference, and color dict populated.
+
+    Two regions split along the LR (x) axis at the midpoint, so warping and
+    flipping visibly change which region a given pixel samples.
+    """
+    atlas = object.__new__(AtlasVolume)
+    ann = np.ones((_AP, _DV, _LR), dtype=np.int32)
+    ann[:, :, _LR // 2 :] = 2
+    atlas._annotation = ann
+    atlas._reference = np.arange(_AP * _DV * _LR, dtype=np.float64).reshape(_AP, _DV, _LR)
+    ref_max = float(atlas._reference.max())
+    atlas._reference_scale = 255.0 / ref_max if ref_max > 0 else 1.0
+    atlas._color_dict = {0: (0, 0, 0), 1: (255, 0, 0), 2: (0, 255, 0)}
+    return atlas
+
+
+def _reg_with_fake_volume(sections: list[Section]) -> VersoRegistration:
+    reg = _reg(sections)
+    reg._atlas_volume = _fake_atlas_full()
+    return reg
+
+
+def test_image_to_atlas_annotation_matches_pointwise_lookup():
+    sec = _section("s1", 10.0, full=(96, 64), work=(48, 32))
+    reg = _reg_with_fake_volume([sec])
+
+    labels = reg.image_to_atlas("s1", kind="annotation")
+    assert labels.shape == (64, 96)
+    assert labels.dtype == np.int32
+
+    # Spot-check a handful of full-res pixels (queried at their pixel *centers*,
+    # matching image_to_atlas's own sampling convention) against the pointwise
+    # coordinate mapping + the same nearest-voxel (floor/ceil) convention.
+    from verso.engine.atlas import _sample_voxel_indices
+
+    cols = np.array([5, 50, 90])
+    rows = np.array([5, 10, 60])
+    pts = np.column_stack([cols + 0.5, rows + 0.5])
+    xyz = reg.coord_image_to_atlas("s1", pts)
+    lr_f, ap_f, dv_f = _sample_voxel_indices(xyz[:, 0], xyz[:, 1], xyz[:, 2])
+    ap_max, dv_max, lr_max = (_AP, _DV, _LR)
+    inside = (
+        (ap_f >= 0)
+        & (ap_f < ap_max)
+        & (dv_f >= 0)
+        & (dv_f < dv_max)
+        & (lr_f >= 0)
+        & (lr_f < lr_max)
     )
-    # All three must land on the same AP voxel (same midpoint in atlas space).
-    centers = [
-        anchoring_to_vectors(a)[0] + anchoring_to_vectors(a)[1] / 2 + anchoring_to_vectors(a)[2] / 2
-        for a in anchorings
+    expected = np.where(inside, np.where(np.clip(lr_f, 0, lr_max - 1) >= _LR // 2, 2, 1), 0)
+    np.testing.assert_array_equal(labels[rows, cols], expected)
+
+
+def test_image_to_atlas_annotation_with_warp():
+    cps = [
+        ControlPoint(src_x=10.0, src_y=8.0, dst_x=20.0, dst_y=8.0),
+        ControlPoint(src_x=30.0, src_y=20.0, dst_x=20.0, dst_y=20.0),
+        ControlPoint(src_x=10.0, src_y=25.0, dst_x=20.0, dst_y=25.0),
     ]
-    np.testing.assert_allclose(centers[0][1], centers[1][1])  # AP axis
-    np.testing.assert_allclose(centers[0][1], centers[2][1])
+    sec = _section("s1", 10.0, cps=cps, work=(48, 32), full=(48, 32))
+    reg = _reg_with_fake_volume([sec])
 
+    labels_warped = reg.image_to_atlas("s1", kind="annotation")
+    reg_flat = _reg_with_fake_volume([_section("s1", 10.0, work=(48, 32), full=(48, 32))])
+    labels_unwarped = reg_flat.image_to_atlas("s1", kind="annotation")
 
-def test_quicknii_coronal_series_centers_generated_proposals_from_off_center_keyframes():
-    off_center_left = quicknii_pack_anchoring(
-        [120.0, 500.0, 90.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.456, 0.4],
-        image_width=1000,
-        image_height=800,
-    )
-    off_center_right = quicknii_pack_anchoring(
-        [340.0, 100.0, 250.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.456, 0.4],
-        image_width=1000,
-        image_height=800,
-    )
+    assert labels_warped.shape == labels_unwarped.shape
+    assert not np.array_equal(labels_warped, labels_unwarped)
 
-    anchorings = quicknii_series_anchorings(
-        image_sizes=[(1000, 800), (1000, 800), (1000, 800)],
-        slice_indices=[1, 2, 3],
-        atlas_shape=(528, 320, 456),
-        interpolation_axis=1,
-        stored_anchorings=[off_center_left, None, off_center_right],
-    )
 
-    proposal = quicknii_unpack_anchoring(anchorings[1], 1000, 800)
-    np.testing.assert_allclose(proposal[0], 228.0)
-    np.testing.assert_allclose(proposal[2], 160.0)
-    np.testing.assert_allclose(anchorings[0], off_center_left)
-    np.testing.assert_allclose(anchorings[2], off_center_right)
+def test_image_to_atlas_template():
+    sec = _section("s1", 10.0, full=(96, 64), work=(48, 32))
+    reg = _reg_with_fake_volume([sec])
 
+    gray, in_bounds = reg.image_to_atlas("s1", kind="template", return_valid=True)
+    assert gray.shape == (64, 96)
+    assert gray.dtype == np.uint8
+    assert in_bounds.shape == (64, 96)
+    assert np.all(gray[~in_bounds] == 0)
 
-def test_quicknii_coronal_series_proposals_are_upright_even_when_keyframe_is_rotated():
-    """Interpolated proposals must have default (upright) rotation regardless of keyframes."""
-    left_anchoring = quicknii_default_anchoring(
-        image_width=1000,
-        image_height=800,
-        max_width=1000,
-        max_height=800,
-        atlas_shape=(528, 320, 456),
-        interpolation_axis=1,
-        voxel=400.0,
-    )
-    right_base = quicknii_default_anchoring(
-        image_width=1000,
-        image_height=800,
-        max_width=1000,
-        max_height=800,
-        atlas_shape=(528, 320, 456),
-        interpolation_axis=1,
-        voxel=100.0,
-    )
-    right_anchoring = rotate_anchoring(right_base, math.radians(15))
 
-    anchorings = quicknii_series_anchorings(
-        image_sizes=[(1000, 800)] * 3,
-        slice_indices=[1, 2, 3],
-        atlas_shape=(528, 320, 456),
-        interpolation_axis=1,
-        stored_anchorings=[left_anchoring, None, right_anchoring],
-    )
+def test_image_to_atlas_boundary():
+    sec = _section("s1", 10.0, full=(96, 64), work=(48, 32))
+    reg = _reg_with_fake_volume([sec])
 
-    mid_u = quicknii_unpack_anchoring(anchorings[1], 1000, 800)
-    default_u = quicknii_unpack_anchoring(
-        quicknii_default_anchoring(
-            image_width=1000,
-            image_height=800,
-            max_width=1000,
-            max_height=800,
-            atlas_shape=(528, 320, 456),
-            interpolation_axis=1,
-        ),
-        1000,
-        800,
-    )
-    # Rotation components of the proposal must equal the default upright orientation.
-    np.testing.assert_allclose(mid_u[3:9], default_u[3:9], atol=1e-9)
+    boundary = reg.image_to_atlas("s1", kind="boundary")
+    labels = reg.image_to_atlas("s1", kind="annotation")
 
+    assert boundary.dtype == np.bool_
+    assert boundary.shape == labels.shape
+    assert boundary.any()  # the two-region fake atlas has a real boundary
 
-def test_interpolate_anchorings_uses_quicknii_decomposed_space(tmp_path):
-    from PIL import Image
+    from verso.engine.atlas import boundary_mask
 
-    paths = []
-    for i in range(3):
-        path = tmp_path / f"s{i + 1}.png"
-        Image.new("RGB", (1000, 800)).save(path)
-        paths.append(path)
+    expected = boundary_mask(labels, np.ones_like(labels, dtype=bool))
+    np.testing.assert_array_equal(boundary, expected)
 
-    stored = quicknii_series_anchorings(
-        image_sizes=[(1000, 800), (1000, 800), (1000, 800)],
-        slice_indices=[1, 2, 3],
-        atlas_shape=(528, 320, 456),
-        interpolation_axis=1,
-    )
-    sections = [
-        Section(
-            id="s001",
-            slice_index=1,
-            original_path=str(paths[0]),
-            thumbnail_path=str(paths[0]),
-            alignment=Alignment(anchoring=stored[0], status=AlignmentStatus.COMPLETE),
-        ),
-        Section(
-            id="s002",
-            slice_index=2,
-            original_path=str(paths[1]),
-            thumbnail_path=str(paths[1]),
-        ),
-        Section(
-            id="s003",
-            slice_index=3,
-            original_path=str(paths[2]),
-            thumbnail_path=str(paths[2]),
-            alignment=Alignment(anchoring=stored[2], status=AlignmentStatus.COMPLETE),
-        ),
-    ]
 
-    interpolate_anchorings(sections)
+def test_image_to_atlas_working_space():
+    sec = _section("s1", 10.0, full=(96, 64), work=(48, 32))
+    reg = _reg_with_fake_volume([sec])
 
-    expected = quicknii_series_anchorings(
-        image_sizes=[(1000, 800), (1000, 800), (1000, 800)],
-        slice_indices=[1, 2, 3],
-        atlas_shape=(528, 320, 456),
-        interpolation_axis=1,
-        stored_anchorings=[stored[0], None, stored[2]],
-    )
-    np.testing.assert_allclose(sections[1].alignment.anchoring, expected[1])
-    assert sections[1].alignment.status == AlignmentStatus.IN_PROGRESS
+    labels = reg.image_to_atlas("s1", kind="annotation", space="working")
+    assert labels.shape == (32, 48)
 
 
-def test_interpolate_anchorings_with_one_keyframe_matches_quicknii(tmp_path):
-    from PIL import Image
-
-    paths = []
-    for i in range(2):
-        path = tmp_path / f"s{i + 1}.png"
-        Image.new("RGB", (1000, 800)).save(path)
-        paths.append(path)
-
-    sections = [
-        Section(
-            id="s001",
-            slice_index=1,
-            original_path=str(paths[0]),
-            thumbnail_path=str(paths[0]),
-            alignment=Alignment(
-                anchoring=SAMPLE_ANCHORING,
-                status=AlignmentStatus.COMPLETE,
-            ),
-        ),
-        Section(
-            id="s002",
-            slice_index=2,
-            original_path=str(paths[1]),
-            thumbnail_path=str(paths[1]),
-        ),
-    ]
-
-    interpolate_anchorings(sections, atlas_shape=(528, 320, 456))
-
-    expected = quicknii_series_anchorings(
-        image_sizes=[(1000, 800), (1000, 800)],
-        slice_indices=[1, 2],
-        atlas_shape=(528, 320, 456),
-        interpolation_axis=1,
-        stored_anchorings=[SAMPLE_ANCHORING, None],
-    )
-    np.testing.assert_allclose(sections[1].alignment.anchoring, expected[1])
-    assert sections[1].alignment.status == AlignmentStatus.IN_PROGRESS
-
-
-def test_interpolate_anchorings_handles_horizontally_flipped_stored_keyframe(
-    tmp_path,
-):
-    from PIL import Image
-
-    atlas_shape = (528, 320, 456)
-    paths = []
-    for i in range(3):
-        path = tmp_path / f"s{i + 1}.png"
-        Image.new("RGB", (1000, 800)).save(path)
-        paths.append(path)
-
-    angle = math.radians(18.0)
-    unpacked_left = [
-        228.0,
-        500.0,
-        160.0,
-        math.cos(angle),
-        math.sin(angle),
-        0.0,
-        0.0,
-        0.0,
-        1.0,
-        0.456,
-        0.4,
-    ]
-    unpacked_right = list(unpacked_left)
-    unpacked_right[1] = 100.0
-    left = quicknii_pack_anchoring(unpacked_left, 1000, 800)
-    right = quicknii_pack_anchoring(unpacked_right, 1000, 800)
-    sections = [
-        Section(
-            id="s001",
-            slice_index=1,
-            original_path=str(paths[0]),
-            thumbnail_path=str(paths[0]),
-            alignment=Alignment(anchoring=left, status=AlignmentStatus.COMPLETE),
-        ),
-        Section(
-            id="s002",
-            slice_index=2,
-            original_path=str(paths[1]),
-            thumbnail_path=str(paths[1]),
-        ),
-        Section(
-            id="s003",
-            slice_index=3,
-            original_path=str(paths[2]),
-            thumbnail_path=str(paths[2]),
-            preprocessing=Preprocessing(flip_horizontal=True),
-            alignment=Alignment(
-                anchoring=right,
-                stored_anchoring=right,
-                status=AlignmentStatus.COMPLETE,
-            ),
-        ),
-    ]
-
-    interpolate_anchorings(sections, atlas_shape=atlas_shape)
-
-    middle = quicknii_unpack_anchoring(sections[1].alignment.anchoring, 1000, 800)
-    np.testing.assert_allclose(middle[4], math.sin(angle), atol=1e-9)
-    np.testing.assert_allclose(middle[1], 300.0, atol=1e-9)
-    assert sections[1].alignment.status == AlignmentStatus.IN_PROGRESS
-
-
-def test_interpolate_anchorings_duplicate_serial_strips_inplane_rotation_keeps_tilt(
-    tmp_path,
-):
-    from PIL import Image
-
-    atlas_shape = (528, 320, 456)
-    # Stored section: upright coronal anchoring with an in-plane rotation applied.
-    stored_base = quicknii_default_anchoring(
-        image_width=1000,
-        image_height=800,
-        max_width=1000,
-        max_height=800,
-        atlas_shape=atlas_shape,
-        interpolation_axis=1,
-        voxel=300.0,
-    )
-    stored_anchoring = rotate_anchoring(stored_base, math.radians(20))
-
-    paths = []
-    image_sizes = [(800, 600), (1000, 800), (1000, 800)]
-    for i, size in enumerate(image_sizes):
-        path = tmp_path / f"s{i + 1}.png"
-        Image.new("RGB", size).save(path)
-        paths.append(path)
-
-    sections = [
-        Section(
-            id="s001",
-            slice_index=10,
-            original_path=str(paths[0]),
-            thumbnail_path=str(paths[0]),
-        ),
-        Section(
-            id="s002",
-            slice_index=10,
-            original_path=str(paths[1]),
-            thumbnail_path=str(paths[1]),
-            alignment=Alignment(
-                anchoring=stored_anchoring,
-                status=AlignmentStatus.COMPLETE,
-            ),
-        ),
-        Section(
-            id="s003",
-            slice_index=11,
-            original_path=str(paths[2]),
-            thumbnail_path=str(paths[2]),
-        ),
-    ]
-
-    interpolate_anchorings(sections, atlas_shape=atlas_shape)
-
-    duplicate_unpacked = quicknii_unpack_anchoring(
-        sections[0].alignment.anchoring,
-        *image_sizes[0],
-    )
-    stored_unpacked = quicknii_unpack_anchoring(
-        sections[1].alignment.anchoring,
-        *image_sizes[1],
-    )
-    # AP position must match the stored section.
-    np.testing.assert_allclose(duplicate_unpacked[1], stored_unpacked[1])
-    # In-plane rotation removed; rotate_anchoring leaves u_y=v_y=0, so result is upright.
-    np.testing.assert_allclose(duplicate_unpacked[3:9], [1.0, 0.0, 0.0, 0.0, 0.0, 1.0], atol=1e-9)
-    assert sections[0].alignment.status == AlignmentStatus.IN_PROGRESS
-
-
-def test_interpolate_anchorings_keeps_manual_edit_on_duplicate_slice(tmp_path):
-    """A manual, uncommitted plane must survive interpolation even when it shares
-    a slice_index with a COMPLETE sibling (regression: duplicates were clobbered
-    by the stored sibling's mirror, then a save promoted the default to green)."""
-    from PIL import Image
-
-    atlas_shape = (528, 320, 456)
-    paths = []
-    for i in range(3):
-        path = tmp_path / f"s{i + 1}.png"
-        Image.new("RGB", (1000, 800)).save(path)
-        paths.append(path)
-
-    base = quicknii_series_anchorings(
-        image_sizes=[(1000, 800)] * 3,
-        slice_indices=[10, 10, 20],
-        atlas_shape=atlas_shape,
-        interpolation_axis=1,
-    )
-    custom_stored = rotate_anchoring(base[0], math.radians(15))
-    custom_manual = rotate_anchoring(base[0], math.radians(-30))
-
-    sections = [
-        Section(
-            id="s001",
-            slice_index=10,
-            original_path=str(paths[0]),
-            thumbnail_path=str(paths[0]),
-            alignment=Alignment(
-                anchoring=list(custom_stored),
-                stored_anchoring=list(custom_stored),
-                status=AlignmentStatus.COMPLETE,
-                source="manual",
-            ),
-        ),
-        # Same slice_index as the COMPLETE sibling, but a manual in-progress edit.
-        Section(
-            id="s002",
-            slice_index=10,
-            original_path=str(paths[1]),
-            thumbnail_path=str(paths[1]),
-            alignment=Alignment(
-                anchoring=list(custom_manual),
-                status=AlignmentStatus.IN_PROGRESS,
-                source="manual",
-            ),
-        ),
-        Section(
-            id="s003",
-            slice_index=20,
-            original_path=str(paths[2]),
-            thumbnail_path=str(paths[2]),
-        ),
-    ]
-
-    interpolate_anchorings(sections, atlas_shape=atlas_shape, interpolation_axis=1)
-
-    np.testing.assert_allclose(sections[1].alignment.anchoring, custom_manual)
-    assert sections[1].alignment.source == "manual"
-    assert sections[1].alignment.status == AlignmentStatus.IN_PROGRESS
-
-
-def test_interpolate_anchorings_without_atlas_shape_keeps_legacy_one_keyframe_noop(
-    tmp_path,
-):
-    from PIL import Image
-
-    paths = []
-    for i in range(2):
-        path = tmp_path / f"s{i + 1}.png"
-        Image.new("RGB", (1000, 800)).save(path)
-        paths.append(path)
-
-    sections = [
-        Section(
-            id="s001",
-            slice_index=1,
-            original_path=str(paths[0]),
-            thumbnail_path=str(paths[0]),
-            alignment=Alignment(
-                anchoring=SAMPLE_ANCHORING,
-                status=AlignmentStatus.COMPLETE,
-            ),
-        ),
-        Section(
-            id="s002",
-            slice_index=2,
-            original_path=str(paths[1]),
-            thumbnail_path=str(paths[1]),
-        ),
-    ]
-
-    interpolate_anchorings(sections)
-
-    assert sections[1].alignment.anchoring == [0.0] * 9
-    assert sections[1].alignment.status == AlignmentStatus.NOT_STARTED
-
-
-# ---------------------------------------------------------------------------
-# make_atlas_sample_grid
-# ---------------------------------------------------------------------------
-
-
-def test_sample_grid_shape():
-    grid = make_atlas_sample_grid(SAMPLE_ANCHORING, out_width=10, out_height=8)
-    assert grid.shape == (8, 10, 3)
-
-
-def test_sample_grid_corners():
-    grid = make_atlas_sample_grid(SAMPLE_ANCHORING, out_width=10, out_height=8)
-    o, u, v = anchoring_to_vectors(SAMPLE_ANCHORING)
-
-    np.testing.assert_allclose(grid[0, 0], o, atol=1e-9)
-    np.testing.assert_allclose(grid[0, -1], o + u, atol=1e-9)
-    np.testing.assert_allclose(grid[-1, 0], o + v, atol=1e-9)
-    np.testing.assert_allclose(grid[-1, -1], o + u + v, atol=1e-9)
-
-
-# ---------------------------------------------------------------------------
-# Non-coronal axes
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "axis, axis_dim_idx, u_axis, v_axis",
-    [
-        (0, 2, 1, 2),  # sagittal (ML) — atlas_shape[2]=lr_dim along ML
-        (1, 0, 0, 2),  # coronal (AP) — atlas_shape[0]=ap_dim along AP
-        (2, 1, 0, 1),  # horizontal (DV) — atlas_shape[1]=dv_dim along DV
-    ],
-)
-def test_quicknii_default_anchoring_for_each_axis(axis, axis_dim_idx, u_axis, v_axis):
-    atlas_shape = (528, 320, 456)  # (AP, DV, LR)
-    anchoring = quicknii_default_anchoring(
-        image_width=1000,
-        image_height=800,
-        max_width=1000,
-        max_height=800,
-        atlas_shape=atlas_shape,
-        interpolation_axis=axis,
-    )
-    o, u, v = anchoring_to_vectors(anchoring)
-    # The slicing-axis component of u and v is zero (plane perpendicular to axis).
-    assert abs(u[axis]) < 1e-9
-    assert abs(v[axis]) < 1e-9
-    # u lies along its natural axis, v along its natural axis.
-    assert abs(u[u_axis]) > 0
-    assert abs(v[v_axis]) > 0
-
-
-@pytest.mark.parametrize("axis", [0, 1, 2])
-def test_quicknii_series_endpoint_voxels_match_axis_dim(axis):
-    atlas_shape = (528, 320, 456)
-    qn_dims = (456, 528, 320)  # (ML, AP, DV)
-    anchorings = quicknii_series_anchorings(
-        image_sizes=[(1000, 800), (1000, 800)],
-        slice_indices=[1, 2],
-        atlas_shape=atlas_shape,
-        interpolation_axis=axis,
-    )
-    o0, u0, v0 = anchoring_to_vectors(anchorings[0])
-    o1, u1, v1 = anchoring_to_vectors(anchorings[1])
-    center0 = o0 + (u0 + v0) / 2.0
-    center1 = o1 + (u1 + v1) / 2.0
-    # First section endpoint sits at the far end of the slicing axis; second at 0.
-    assert abs(center0[axis] - (qn_dims[axis] - 1)) < 1e-9
-    assert abs(center1[axis] - 0.0) < 1e-9
-
-
-def test_quicknii_sagittal_series_interpolates_along_ml():
-    """For a sagittal series (axis=0), proposals should vary in ML, not AP."""
-    atlas_shape = (528, 320, 456)
-    anchorings = quicknii_series_anchorings(
-        image_sizes=[(1000, 800), (1000, 800), (1000, 800)],
-        slice_indices=[1, 2, 3],
-        atlas_shape=atlas_shape,
-        interpolation_axis=0,
-    )
-    centers = [
-        anchoring_to_vectors(a)[0] + (anchoring_to_vectors(a)[1] + anchoring_to_vectors(a)[2]) / 2.0
-        for a in anchorings
-    ]
-    # ML axis varies through the series.
-    assert centers[0][0] != centers[1][0]
-    assert centers[1][0] != centers[2][0]
-    # AP/DV stay centered at the atlas midpoint.
-    for c in centers:
-        np.testing.assert_allclose(c[1], 528 / 2.0)  # AP midpoint
-        np.testing.assert_allclose(c[2], 320 / 2.0)  # DV midpoint
-
-
-def test_interpolate_anchorings_sagittal_axis_strips_in_plane_rotation(tmp_path):
-    """Rotation around the slicing axis is stripped for any axis."""
-    from PIL import Image
-
-    atlas_shape = (528, 320, 456)
-    axis = 0  # ML slicing
-    paths = []
-    for i in range(3):
-        path = tmp_path / f"s{i + 1}.png"
-        Image.new("RGB", (1000, 800)).save(path)
-        paths.append(path)
-
-    left = quicknii_default_anchoring(
-        image_width=1000,
-        image_height=800,
-        max_width=1000,
-        max_height=800,
-        atlas_shape=atlas_shape,
-        interpolation_axis=axis,
-        voxel=400.0,
-    )
-    right_base = quicknii_default_anchoring(
-        image_width=1000,
-        image_height=800,
-        max_width=1000,
-        max_height=800,
-        atlas_shape=atlas_shape,
-        interpolation_axis=axis,
-        voxel=50.0,
-    )
-    right = rotate_anchoring(right_base, math.radians(15))
-
-    sections = [
-        Section(
-            id="s001",
-            slice_index=1,
-            original_path=str(paths[0]),
-            thumbnail_path=str(paths[0]),
-            alignment=Alignment(anchoring=left, status=AlignmentStatus.COMPLETE),
-        ),
-        Section(
-            id="s002",
-            slice_index=2,
-            original_path=str(paths[1]),
-            thumbnail_path=str(paths[1]),
-        ),
-        Section(
-            id="s003",
-            slice_index=3,
-            original_path=str(paths[2]),
-            thumbnail_path=str(paths[2]),
-            alignment=Alignment(anchoring=right, status=AlignmentStatus.COMPLETE),
-        ),
-    ]
-
-    interpolate_anchorings(sections, atlas_shape=atlas_shape, interpolation_axis=axis)
-
-    mid_unpacked = quicknii_unpack_anchoring(sections[1].alignment.anchoring, 1000, 800)
-    # The in-plane components in u and v that aren't the slicing axis must be
-    # zero (rotation around the slicing axis stripped); the slicing-axis
-    # components (the tilt) can be non-zero. For axis=0, in-plane axes are AP=1
-    # and DV=2 so we expect u_unit ∝ (0, 1, 0) and v_unit ∝ (0, 0, 1).
-    u_unit = mid_unpacked[3:6]
-    v_unit = mid_unpacked[6:9]
-    # rotate_anchoring around the section normal preserves the slicing-axis
-    # component (axis=0) at zero, so after stripping rotation we expect
-    # canonical units along axes 1 and 2.
-    np.testing.assert_allclose(u_unit, [0.0, 1.0, 0.0], atol=1e-9)
-    np.testing.assert_allclose(v_unit, [0.0, 0.0, 1.0], atol=1e-9)
-    assert sections[1].alignment.status == AlignmentStatus.IN_PROGRESS
-
-
-# ---------------------------------------------------------------------------
-# plane_tilt_deg
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("axis", [0, 1, 2])
-def test_plane_tilt_deg_zero_for_axis_aligned_plane(axis):
-    atlas_shape = (528, 320, 456)
-    anchoring = quicknii_default_anchoring(
-        image_width=1000,
-        image_height=800,
-        max_width=1000,
-        max_height=800,
-        atlas_shape=atlas_shape,
-        interpolation_axis=axis,
-    )
-    assert plane_tilt_deg(anchoring, axis) == pytest.approx(0.0, abs=1e-9)
-
-
-def test_plane_tilt_deg_matches_rotation_angle():
-    # Coronal default plane (axis=1): u along LR, v along DV, normal along AP.
-    # Rotate v toward AP by 30° around LR; the plane should tilt by 30°.
-    o = np.array([0.0, 264.0, 0.0])
-    u = np.array([456.0, 0.0, 0.0])  # LR
-    deg = 30.0
-    a = math.radians(deg)
-    v_tilted = np.array([0.0, math.sin(a) * 320.0, math.cos(a) * 320.0])
-    anchoring = vectors_to_anchoring(o, u, v_tilted)
-    assert plane_tilt_deg(anchoring, 1) == pytest.approx(deg, abs=1e-6)
-
-
-def test_rotate_anchoring_is_in_plane_only():
-    # In-plane rotation must not change the direction of the plane normal,
-    # so plane_tilt_deg is invariant under rotate_anchoring (the basis for
-    # clamping tilt independently of in-plane spin).
-    anchoring = SAMPLE_ANCHORING
-    before = plane_tilt_deg(anchoring, 1)
-    rotated = rotate_anchoring(anchoring, math.radians(37.0))
-    after = plane_tilt_deg(rotated, 1)
-    assert after == pytest.approx(before, abs=1e-9)
-
-    n0 = np.cross(*anchoring_to_vectors(anchoring)[1:])
-    n1 = np.cross(*anchoring_to_vectors(rotated)[1:])
-    cos = np.dot(n0, n1) / (np.linalg.norm(n0) * np.linalg.norm(n1))
-    assert cos == pytest.approx(1.0, abs=1e-9)
+def test_image_to_atlas_bad_kind_raises():
+    reg = _reg_with_fake_volume([_section("s1", 10.0)])
+    with pytest.raises(ValueError):
+        reg.image_to_atlas("s1", kind="nope")

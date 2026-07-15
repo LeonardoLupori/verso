@@ -11,6 +11,7 @@ On accept, call result() to get the configured Project object.
 
 from __future__ import annotations
 
+import contextlib
 import os
 from pathlib import Path
 
@@ -40,20 +41,22 @@ from PyQt6.QtWidgets import (
 )
 
 from verso.engine.io.image_io import (
+    SUPPORTED_IMAGE_EXTENSIONS,
     compute_working_scale,
     guess_slice_indices,
     probe_channels,
     thumbnail_filename,
 )
+from verso.engine.io.project_metadata import AtlasUnavailableError, populate_metadata
 from verso.engine.model.alignment import Alignment, AlignmentStatus, WarpState
 from verso.engine.model.project import (
-    DEFAULT_PROJECT_FILENAME,
     SLICING_ORIENTATION_TO_AXIS,
     AtlasRef,
     ChannelSpec,
     Project,
     Section,
 )
+from verso.gui.utils import require
 
 # Default per-channel pseudo-color palettes used when seeding Project.channels
 # at project creation time.
@@ -88,10 +91,7 @@ def _default_channel_specs(channel_names: list[str], source_ext: str) -> list[Ch
         return [ChannelSpec(name=channel_names[0], color=(255, 255, 255))]
 
     ext = source_ext.lower().lstrip(".")
-    if ext in ("jpg", "jpeg", "png"):
-        palette = _RGB_IDENTITY_PALETTE
-    else:
-        palette = _FLUORESCENCE_PALETTE
+    palette = _RGB_IDENTITY_PALETTE if ext in ("jpg", "jpeg", "png") else _FLUORESCENCE_PALETTE
 
     specs: list[ChannelSpec] = []
     for i, name in enumerate(channel_names):
@@ -108,7 +108,9 @@ _KNOWN_ATLASES = [
     "kim_mouse_25um",
 ]
 
-_IMAGE_FILTER = "Images (*.tif *.tiff *.png *.jpg *.jpeg);;All files (*)"
+_IMAGE_FILTER = (
+    "Images (" + " ".join(f"*{ext}" for ext in SUPPORTED_IMAGE_EXTENSIONS) + ");;All files (*)"
+)
 
 # Columns of the section-image preview table.
 _FILE_COL = 0
@@ -187,6 +189,22 @@ class _SliceIndexDelegate(QStyledItemDelegate):
         painter.restore()
 
 
+def _slugify_project_name(name: str) -> str:
+    """Turn a project name into a filesystem-safe slug for the folder and JSON file.
+
+    Collapses every run of non-word characters to a single underscore and trims
+    stray underscores, so only ``[A-Za-z0-9_-]`` survive. No-space slugs keep the
+    project path friendly for the MATLAB/scripting entry point. Falls back to
+    ``"project"`` when nothing usable remains. (Mirrors ``slugify`` in
+    ``engine/io/annotation_io.py`` — kept as a small local duplicate rather than
+    a shared import.)
+    """
+    import re
+
+    slug = re.sub(r"[^\w\-]+", "_", name.strip()).strip("_")
+    return slug or "project"
+
+
 def _natural_name_key(path: str) -> list[object]:
     """Order filenames with embedded numbers numerically (tiebreak for equal index)."""
     import re
@@ -214,6 +232,7 @@ def generate_thumbnails(
     n = len(sections)
     progress = QProgressDialog("Generating thumbnails…", "Skip", 0, n, parent)
     progress.setWindowTitle(title)
+    progress.setMinimumWidth(300)
     progress.setWindowModality(Qt.WindowModality.WindowModal)
     progress.setMinimumDuration(0)
     progress.setValue(0)
@@ -226,22 +245,25 @@ def generate_thumbnails(
         )
         progress.setValue(i)
         QApplication.processEvents()
-        try:
+        # On failure the working copy is generated lazily on first view.
+        with contextlib.suppress(Exception):
             ensure_working_copy(section, scale)
-        except Exception:
-            pass  # will be generated lazily on first view
 
     progress.setValue(n)
 
 
 class NewProjectDialog(QDialog):
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, parent: QWidget | None = None, initial_paths: list[str] | None = None
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("New Project")
         self.setMinimumWidth(560)
         self._project: Project | None = None
         self._project_path: Path | None = None
         self._build_ui()
+        if initial_paths:
+            self._add_paths(initial_paths)
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -254,17 +276,27 @@ class NewProjectDialog(QDialog):
         self._name_edit = QLineEdit("My Experiment")
         form.addRow("Name:", self._name_edit)
 
-        file_row = QWidget()
-        h = QHBoxLayout(file_row)
+        location_row = QWidget()
+        h = QHBoxLayout(location_row)
         h.setContentsMargins(0, 0, 0, 0)
-        self._project_file_edit = QLineEdit()
-        self._project_file_edit.setPlaceholderText("Choose where to save the project…")
+        self._location_edit = QLineEdit()
+        self._location_edit.setPlaceholderText("Choose a folder to create the project in…")
         browse_btn = QPushButton("Browse…")
         browse_btn.setFixedWidth(80)
-        browse_btn.clicked.connect(self._browse_project_file)
-        h.addWidget(self._project_file_edit)
+        browse_btn.clicked.connect(self._browse_location)
+        h.addWidget(self._location_edit)
         h.addWidget(browse_btn)
-        form.addRow("Project file:", file_row)
+        form.addRow("Location:", location_row)
+
+        # Live preview of the self-contained folder VERSO will create from the
+        # Name + Location above, so the auto-created subfolder is never a
+        # surprise. Updates as either field changes.
+        self._path_preview = QLabel()
+        self._path_preview.setWordWrap(True)
+        self._path_preview.setStyleSheet("color: #888; font-size: 11px;")
+        form.addRow(self._path_preview)
+        self._name_edit.textChanged.connect(self._update_path_preview)
+        self._location_edit.textChanged.connect(self._update_path_preview)
 
         self._atlas_combo = QComboBox()
         self._atlas_combo.addItems(_KNOWN_ATLASES)
@@ -294,14 +326,15 @@ class NewProjectDialog(QDialog):
             QAbstractItemView.EditTrigger.DoubleClicked
             | QAbstractItemView.EditTrigger.EditKeyPressed
         )
-        self._file_table.verticalHeader().setVisible(False)
+        v_header = require(self._file_table.verticalHeader())
+        v_header.setVisible(False)
+        v_header.setDefaultSectionSize(30)
         self._file_table.setMinimumHeight(160)
         self._file_table.setAlternatingRowColors(True)
         self._file_table.setShowGrid(False)
-        self._file_table.verticalHeader().setDefaultSectionSize(30)
-        self._file_table.horizontalHeader().setHighlightSections(False)
         self._file_table.setStyleSheet(_TABLE_STYLE)
-        header = self._file_table.horizontalHeader()
+        header = require(self._file_table.horizontalHeader())
+        header.setHighlightSections(False)
         header.setSectionResizeMode(_FILE_COL, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(_IDX_COL, QHeaderView.ResizeMode.ResizeToContents)
         # Slice index is the only editable column — render it as an input chip
@@ -343,27 +376,32 @@ class NewProjectDialog(QDialog):
     # Slots
     # ------------------------------------------------------------------
 
-    def _browse_project_file(self) -> None:
-        current = self._project_file_edit.text().strip()
-        suggested = current if current else DEFAULT_PROJECT_FILENAME
-        path, _ = QFileDialog.getSaveFileName(
+    def _browse_location(self) -> None:
+        current = self._location_edit.text().strip()
+        directory = QFileDialog.getExistingDirectory(
             self,
-            "Save Project File",
-            suggested,
-            "JSON files (*.json);;All files (*)",
+            "Choose Project Location",
+            current or str(Path.home()),
         )
-        if path:
-            project_path = Path(path)
-            if project_path.suffix == "":
-                project_path = project_path.with_suffix(".json")
-            self._project_file_edit.setText(str(project_path))
+        if directory:
+            self._location_edit.setText(directory)
+
+    def _update_path_preview(self) -> None:
+        """Refresh the preview showing the folder + JSON filename that will be created."""
+        location = self._location_edit.text().strip()
+        if not location:
+            self._path_preview.setText("")
+            return
+        slug = _slugify_project_name(self._name_edit.text())
+        folder = Path(location) / slug
+        self._path_preview.setText(f"Creates:  {folder}{os.sep}")
 
     def _current_entries(self) -> list[tuple[str, int]]:
         """Return ``(path, slice_index)`` for every table row, in row order."""
         entries: list[tuple[str, int]] = []
         for row in range(self._file_table.rowCount()):
-            file_item = self._file_table.item(row, _FILE_COL)
-            idx_item = self._file_table.item(row, _IDX_COL)
+            file_item = require(self._file_table.item(row, _FILE_COL))
+            idx_item = require(self._file_table.item(row, _IDX_COL))
             path = file_item.data(Qt.ItemDataRole.UserRole)
             entries.append((path, int(idx_item.data(Qt.ItemDataRole.UserRole))))
         return entries
@@ -389,8 +427,11 @@ class NewProjectDialog(QDialog):
 
     def _add_images(self) -> None:
         paths, _ = QFileDialog.getOpenFileNames(self, "Add Section Images", "", _IMAGE_FILTER)
-        if not paths:
-            return
+        if paths:
+            self._add_paths(paths)
+
+    def _add_paths(self, paths: list[str]) -> None:
+        """Merge ``paths`` into the table, skipping ones already present."""
         existing = {p for p, _ in self._current_entries()}
         merged = [p for p, _ in self._current_entries()]
         for path in paths:
@@ -398,7 +439,7 @@ class NewProjectDialog(QDialog):
                 merged.append(path)
                 existing.add(path)
         # Re-guess across the whole set so the heuristic sees every filename.
-        self._set_entries(list(zip(merged, guess_slice_indices(merged))))
+        self._set_entries(list(zip(merged, guess_slice_indices(merged), strict=False)))
 
     def _remove_selected(self) -> None:
         selected = {idx.row() for idx in self._file_table.selectedIndexes()}
@@ -411,7 +452,7 @@ class NewProjectDialog(QDialog):
     def _auto_number(self) -> None:
         """Re-run the filename heuristic, discarding any manual edits."""
         paths = [p for p, _ in self._current_entries()]
-        self._set_entries(list(zip(paths, guess_slice_indices(paths))))
+        self._set_entries(list(zip(paths, guess_slice_indices(paths), strict=False)))
 
     def _on_index_edited(self, item: QTableWidgetItem) -> None:
         """Validate an edited slice-index cell; revert non-integer input."""
@@ -433,7 +474,7 @@ class NewProjectDialog(QDialog):
 
     def _on_accept(self) -> None:
         name = self._name_edit.text().strip()
-        project_file = self._project_file_edit.text().strip()
+        location = self._location_edit.text().strip()
         atlas = self._atlas_combo.currentText().strip()
         orientation = self._orientation_combo.currentData() or "coronal"
         interpolation_axis = SLICING_ORIENTATION_TO_AXIS[orientation]
@@ -441,24 +482,33 @@ class NewProjectDialog(QDialog):
         if not name:
             QMessageBox.warning(self, "Missing field", "Please enter a project name.")
             return
-        if not project_file:
-            QMessageBox.warning(self, "Missing field", "Please choose a project file.")
+        if not location:
+            QMessageBox.warning(self, "Missing field", "Please choose a project location.")
             return
         if self._file_table.rowCount() == 0:
             QMessageBox.warning(self, "No images", "Please add at least one section image.")
             return
 
-        project_path = Path(project_file)
-        if project_path.suffix == "":
-            project_path = project_path.with_suffix(".json")
-            self._project_file_edit.setText(str(project_path))
-
-        folder_path = project_path.parent
+        # A project is a self-contained folder named after the project, created
+        # inside the location the user picked. The JSON and every subfolder live
+        # inside it; the user never names the file directly.
+        slug = _slugify_project_name(name)
+        folder_path = Path(location) / slug
+        if folder_path.exists() and any(folder_path.iterdir()):
+            QMessageBox.warning(
+                self,
+                "Folder already exists",
+                f"A non-empty folder named “{slug}” already exists in this location.\n\n"
+                "Choose a different name or location so the new project does not "
+                "overwrite existing files.",
+            )
+            return
         folder_path.mkdir(parents=True, exist_ok=True)
         (folder_path / "thumbnails").mkdir(exist_ok=True)
         (folder_path / "masks").mkdir(exist_ok=True)
-        (folder_path / "alignments").mkdir(exist_ok=True)
         (folder_path / "exports").mkdir(exist_ok=True)
+
+        project_path = folder_path / f"{slug}_verso.json"
 
         # Build sections in increasing slice-index order so ``id`` (s001, s002…)
         # follows the physical series; sort_sections keeps the same order later.
@@ -504,6 +554,29 @@ class NewProjectDialog(QDialog):
 
         # Generate working-resolution thumbnails now so all views load quickly.
         self._generate_thumbnails(self._project.sections, self._project.working_scale)
+
+        # Cache image dimensions and atlas resolution/shape so the saved project
+        # is self-contained for pixel <-> atlas voxel mapping. This needs the
+        # atlas, which is downloaded from brainglobe on first use; fail loudly if
+        # it cannot be fetched rather than writing an unusable project.
+        try:
+            populate_metadata(self._project, folder_path)
+        except AtlasUnavailableError as exc:
+            QMessageBox.critical(
+                self,
+                "Atlas download failed",
+                "Could not download the reference atlas. An internet connection is "
+                "required the first time an atlas is used.\n\n"
+                f"Details: {exc}",
+            )
+            return
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                "Could not create project",
+                f"Failed to read image metadata while creating the project.\n\nDetails: {exc}",
+            )
+            return
         self._project.save(self._project_path)
 
         self.accept()

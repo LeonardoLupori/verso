@@ -10,6 +10,7 @@ from verso.engine.warping import (
     find_atlas_position,
     warp_overlay,
     warp_points_atlas_to_section,
+    warp_points_section_to_atlas,
 )
 
 
@@ -41,45 +42,47 @@ def _visualign_atlas_norm(s, t, src_norm, dst_norm, width, height):
 
 
 def test_find_atlas_position_matches_visualign_when_aspect_set():
-    """With aspect = width/height the warp must equal VisuAlign pixel-for-pixel.
+    """With correct work dimensions the warp must equal VisuAlign pixel-for-pixel.
 
-    VisuAlign triangulates in section pixel space; VERSO normalises to [0,1]².
-    Delaunay is not invariant under the anisotropic x/W, y/H scaling, so the two
-    only agree when VERSO triangulates in the section's true aspect ratio.
+    VisuAlign triangulates in section pixel space; the internal normalisation
+    must preserve the pixel-space topology (aspect ratio). Passing the actual
+    working dimensions achieves this; using square dimensions (aspect=1) diverges.
     """
     width, height = 1140, 800  # aspect 1.425 — the case that exposed the bug
-    aspect = width / height
     rng = np.random.default_rng(3)
     src = rng.uniform(0.15, 0.85, (10, 2))
     dst = src + rng.normal(0, 0.04, src.shape)
+    src_px = src * [width, height]
+    dst_px = dst * [width, height]
     queries = rng.uniform(0.08, 0.92, (60, 2))
 
     max_fixed = 0.0
     max_unfixed = 0.0
     for s, t in queries:
         ref_u, ref_v = _visualign_atlas_norm(s, t, src, dst, width, height)
-        # Fixed path: aspect-correct triangulation must match VisuAlign exactly.
-        fu, fv = find_atlas_position(float(s), float(t), src, dst, aspect=aspect)
+        # Fixed path: pixel CPs with correct working dimensions match VisuAlign.
+        fu, fv = find_atlas_position(float(s), float(t), src_px, dst_px, width, height)
         max_fixed = max(max_fixed, abs(fu - ref_u), abs(fv - ref_v))
-        # Unfixed path (aspect=1, the old behaviour) diverges from VisuAlign.
-        uu, uv = find_atlas_position(float(s), float(t), src, dst)
+        # Unfixed path: square dimensions (aspect=1) diverge from VisuAlign.
+        uu, uv = find_atlas_position(float(s), float(t), src_px, dst_px, width, width)
         max_unfixed = max(max_unfixed, abs(uu - ref_u), abs(uv - ref_v))
 
     assert max_fixed < 1e-9, f"aspect-correct warp must match VisuAlign (got {max_fixed})"
-    # Sanity: the old normalised triangulation really did differ (regression guard).
-    assert max_unfixed > 1e-3, "expected normalised-space warp to diverge from VisuAlign"
+    # Sanity: the square-aspect triangulation really does diverge (regression guard).
+    assert max_unfixed > 1e-3, "expected square-aspect warp to diverge from VisuAlign"
 
 
 def test_build_backward_remap_matches_visualign_when_aspect_set():
     """The dense remap (display/export path) must also match VisuAlign per pixel."""
     width, height = 1280, 720  # aspect 1.778
-    aspect = width / height
     h, w = 72, 128  # overlay grid at the same aspect
     rng = np.random.default_rng(7)
     src = rng.uniform(0.2, 0.8, (8, 2))
     dst = src + rng.normal(0, 0.05, src.shape)
+    src_px = src * [width, height]
+    dst_px = dst * [width, height]
 
-    map_x, map_y = build_backward_remap(h, w, src, dst, aspect=aspect)
+    map_x, map_y = build_backward_remap(h, w, src_px, dst_px, width, height)
 
     # Spot-check pixel centres against the VisuAlign reference (atlas coords).
     max_err = 0.0
@@ -115,7 +118,7 @@ def test_warp_overlay_identity_preserves_image():
     src = np.array([[0.25, 0.25], [0.75, 0.25], [0.25, 0.75], [0.75, 0.75]])
     dst = src.copy()
 
-    warped = warp_overlay(overlay, src, dst)
+    warped = warp_overlay(overlay, src, dst, 1, 1)
 
     assert warped.shape == overlay.shape
     assert warped.dtype == overlay.dtype
@@ -131,7 +134,7 @@ def test_warp_overlay_shift():
     src = np.array([[0.125, 0.16], [0.875, 0.16], [0.125, 0.83], [0.875, 0.83]])
     dst = src + np.array([5.0 / w, 0.0])
 
-    warped = warp_overlay(overlay, src, dst)
+    warped = warp_overlay(overlay, src, dst, 1, 1)
 
     assert warped.shape == overlay.shape
     assert warped.dtype == overlay.dtype
@@ -141,7 +144,7 @@ def test_warp_overlay_grayscale():
     overlay = np.full((40, 60), 128, dtype=np.uint8)
     src = np.array([[0.2, 0.25], [0.8, 0.25]])
     dst = src.copy()
-    warped = warp_overlay(overlay, src, dst)
+    warped = warp_overlay(overlay, src, dst, 1, 1)
     assert warped.shape == (40, 60)
 
 
@@ -154,7 +157,7 @@ def test_warp_overlay_rgba_preserves_discrete_opacity_and_brightness():
     src = np.array([[0.2, 0.25], [0.8, 0.25], [0.2, 0.75], [0.8, 0.75]])
     dst = src + np.array([0.5 / w, 0.0])
 
-    warped = warp_overlay(overlay, src, dst)
+    warped = warp_overlay(overlay, src, dst, 1, 1)
     visible = warped[..., 3] > 0
 
     assert visible.any()
@@ -167,7 +170,7 @@ def test_warp_overlay_no_control_points():
     h, w = 40, 60
     overlay = np.zeros((h, w, 3), dtype=np.uint8)
     overlay[:, :, 0] = np.tile(np.linspace(0, 255, w, dtype=np.uint8), (h, 1))
-    warped = warp_overlay(overlay, np.zeros((0, 2)), np.zeros((0, 2)))
+    warped = warp_overlay(overlay, np.zeros((0, 2)), np.zeros((0, 2)), 1, 1)
     np.testing.assert_array_equal(warped, overlay)
 
 
@@ -176,7 +179,7 @@ def test_warp_points_atlas_to_section_identity():
     src = np.array([[0.25, 0.25], [0.75, 0.25], [0.25, 0.75], [0.75, 0.75]])
     dst = src.copy()
     pts = np.array([[0.1, 0.2], [0.5, 0.5], [0.9, 0.8]])
-    out = warp_points_atlas_to_section(pts, src, dst)
+    out = warp_points_atlas_to_section(pts, src, dst, 1, 1)
     np.testing.assert_allclose(out, pts, atol=1e-9)
 
 
@@ -185,13 +188,13 @@ def test_warp_points_atlas_to_section_translation():
     src = np.array([[0.2, 0.2], [0.8, 0.2], [0.2, 0.8], [0.8, 0.8]])
     dst = src + np.array([0.1, 0.0])
     pts = np.array([[0.5, 0.5], [0.3, 0.4]])
-    out = warp_points_atlas_to_section(pts, src, dst)
+    out = warp_points_atlas_to_section(pts, src, dst, 1, 1)
     np.testing.assert_allclose(out, pts + np.array([0.1, 0.0]), atol=1e-9)
 
 
 def test_warp_points_atlas_to_section_no_control_points():
     pts = np.array([[0.1, 0.2], [0.9, 0.4]])
-    out = warp_points_atlas_to_section(pts, np.zeros((0, 2)), np.zeros((0, 2)))
+    out = warp_points_atlas_to_section(pts, np.zeros((0, 2)), np.zeros((0, 2)), 1, 1)
     np.testing.assert_array_equal(out, pts)
 
 
@@ -228,7 +231,7 @@ def test_export_and_display_warp_agree():
     dst = np.array([[0.40, 0.40]])
 
     # Export path: build_backward_remap + NEAREST directly on the label array.
-    map_x, map_y = build_backward_remap(h, w, src, dst)
+    map_x, map_y = build_backward_remap(h, w, src, dst, 1, 1)
     labels_export = cv2.remap(
         labels.astype(np.float32),
         map_x,
@@ -239,7 +242,7 @@ def test_export_and_display_warp_agree():
     ).astype(np.int32)
 
     # Display path: warp_overlay on RGBA (also uses NEAREST for 4-channel).
-    rgba_display = warp_overlay(rgba, src, dst)
+    rgba_display = warp_overlay(rgba, src, dst, 1, 1)
 
     # Reconstruct integer labels from the warped RGBA.
     labels_display = np.zeros((h, w), dtype=np.int32)
@@ -261,7 +264,45 @@ def test_warp_overlay_output_shape_preserved():
 
         src = np.array([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]])
         dst = src.copy()
-        warped = warp_overlay(overlay, src, dst)
+        warped = warp_overlay(overlay, src, dst, 1, 1)
 
         assert warped.shape == overlay.shape, f"shape mismatch for dtype={dtype}"
         assert warped.dtype == overlay.dtype, f"dtype mismatch for dtype={dtype}"
+
+
+# --- warp_points_section_to_atlas (vectorised forward warp) ------------------
+
+
+def test_warp_points_section_to_atlas_matches_scalar():
+    """Batch section→atlas equals the scalar find_atlas_position per point."""
+    src = np.array([[10.0, 8.0], [30.0, 20.0], [40.0, 12.0]])
+    dst = np.array([[14.0, 6.0], [26.0, 24.0], [38.0, 16.0]])
+    work_w, work_h = 48, 32
+    pts = np.array([[0.2, 0.3], [0.5, 0.5], [0.8, 0.6], [0.1, 0.9]])
+
+    batch = warp_points_section_to_atlas(pts, src, dst, work_w, work_h)
+    for i, (s, t) in enumerate(pts):
+        u, v = find_atlas_position(s, t, src, dst, work_w, work_h)
+        np.testing.assert_allclose(batch[i], [u, v], atol=1e-12)
+
+
+def test_warp_points_section_to_atlas_roundtrip_at_control_points():
+    """At control-point locations the forward/backward warps invert exactly."""
+    src = np.array([[10.0, 8.0], [30.0, 20.0], [40.0, 12.0]])
+    dst = np.array([[14.0, 6.0], [26.0, 24.0], [38.0, 16.0]])
+    work_w, work_h = 48, 32
+    wh = np.array([work_w, work_h], dtype=np.float64)
+
+    dst_norm = dst / wh
+    fwd = warp_points_section_to_atlas(dst_norm, src, dst, work_w, work_h)
+    np.testing.assert_allclose(fwd, src / wh, atol=1e-9)
+    back = warp_points_atlas_to_section(fwd, src, dst, work_w, work_h)
+    np.testing.assert_allclose(back, dst_norm, atol=1e-9)
+
+
+def test_warp_points_section_to_atlas_identity_without_cps():
+    """No control points → identity (points pass through, clipped to [0, 1])."""
+    empty = np.empty((0, 2))
+    pts = np.array([[0.25, 0.75], [1.5, -0.2]])
+    out = warp_points_section_to_atlas(pts, empty, empty, 40, 30)
+    np.testing.assert_allclose(out, [[0.25, 0.75], [1.0, 0.0]])

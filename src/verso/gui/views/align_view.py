@@ -23,24 +23,29 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from verso.engine.model.alignment import Alignment, AlignmentStatus
+from verso.engine.drafts import commit_alignment
+from verso.engine.model.alignment import Alignment
 from verso.gui.utils import require
+from verso.gui.views.base_canvas_view import BaseCanvasView
 from verso.gui.widgets.navigator import NavigatorPanel
 from verso.gui.widgets.section_canvas_panel import SectionCanvasPanel
 from verso.gui.widgets.view_chrome import make_view_status_bar
 
 if TYPE_CHECKING:
-    from PyQt6.QtCore import pyqtBoundSignal  # noqa: F401
-
+    from verso.engine.model.project import Section
     from verso.gui.state import AppState
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 
+# Maximum in-plane spin (degrees) from axis-aligned allowed via the align handle.
+_MAX_INPLANE_DEG = 45.0
 
-class AlignView(QWidget):
+
+class AlignView(BaseCanvasView):
     """Canvas view for atlas alignment (affine anchoring)."""
 
-    dirty_changed = pyqtSignal(bool)
+    STEP = "align"
+
     anchoring_changed = pyqtSignal(list)
     alignments_updated = pyqtSignal()
 
@@ -50,24 +55,13 @@ class AlignView(QWidget):
         state: AppState,
         parent: QWidget | None = None,
     ) -> None:
-        super().__init__(parent)
+        super().__init__(state, parent)
         self._panel = panel
-        self._state = state
-        self._reverse_axis = False
         self._interpolation_axis = 1
-        # Snapshot of section.alignment taken at section-load time; used as the
-        # undo floor and to report the last-saved plane.  Navigator edits are no
-        # longer discarded on navigation — they persist on the Section and the
-        # section's dirty state is tracked in the edit registry.
-        self._baseline_alignment: Alignment | None = None
-        self._dirty = False
+        # Dirty flag, last-saved baseline, and the undo stack live in the base
+        # (BaseCanvasView) keyed by (section.id, "align").  A continuous run of
+        # pan events is coalesced into a single undo step via the idle timer.
         self._active = False
-
-        # In-memory undo history of anchoring snapshots for the active slice.
-        # Reset whenever the baseline is re-snapshotted (section / view change,
-        # save, clear, discard).  A continuous run of pan events is coalesced
-        # into a single undo step via the idle timer below.
-        self._undo_stack: list[list[float]] = []
         self._pan_run_active = False
         self._pan_coalesce_timer = QTimer(self)
         self._pan_coalesce_timer.setSingleShot(True)
@@ -143,20 +137,13 @@ class AlignView(QWidget):
         self._panel.overlay_post_processor = None
         self._panel.cursor_to_atlas_mapper = None
         self._panel.update_overlay()
-        # Re-snapshot in case the section was already loaded before activate.
+        # Re-sync the baseline in case the section was loaded before activate.
+        # A no-op while dirty, so the stashed last-saved plane survives.  The
+        # save bar's dirty state is refreshed by the window on view entry.
         self._reset_undo()
         section = self._panel.section
         if section is not None:
-            if self._state.is_dirty(section.id, "align"):
-                stashed = self._state.get_baseline(section.id, "align")
-                self._baseline_alignment = (
-                    stashed if stashed is not None else copy.deepcopy(section.alignment)
-                )
-                self._set_dirty(True)
-            else:
-                self._baseline_alignment = copy.deepcopy(section.alignment)
-                self._state.pop_baseline(section.id, "align")
-                self._set_dirty(False)
+            self._state.sync_baseline(section.id, "align", copy.deepcopy(section.alignment))
 
     def deactivate(self) -> None:
         """Release any state set on the panel."""
@@ -167,13 +154,8 @@ class AlignView(QWidget):
     # External API used by MainWindow
     # ------------------------------------------------------------------
 
-    def set_reverse_axis(self, reverse: bool) -> None:
-        """Invert slicing-axis movement and tilt directions when the series is reversed."""
-        self._reverse_axis = reverse
-        self._navigator.set_reverse_axis(reverse)
-
     def set_interpolation_axis(self, axis: int) -> None:
-        """Update the QuickNII voxel axis used to compute ``position_mm``."""
+        """Update the anchoring voxel axis used to compute ``position_mm``."""
         self._interpolation_axis = int(axis)
         self._navigator.set_interpolation_axis(axis)
 
@@ -192,23 +174,13 @@ class AlignView(QWidget):
         self._navigator.set_stretch_enabled(section is not None)
         self._reset_undo()
         if section is None:
-            self._baseline_alignment = None
             self._navigator.set_anchoring(None)
-            self._set_dirty(False)
             return
-        # Persisted edits are not discarded on navigation; reflect the section's
-        # registry dirty state instead of forcing clean.  When still dirty,
-        # recover the genuine last-saved baseline from the stash.
-        if self._state.is_dirty(section.id, "align"):
-            stashed = self._state.get_baseline(section.id, "align")
-            self._baseline_alignment = (
-                stashed if stashed is not None else copy.deepcopy(section.alignment)
-            )
-            self._set_dirty(True)
-        else:
-            self._baseline_alignment = copy.deepcopy(section.alignment)
-            self._state.pop_baseline(section.id, "align")
-            self._set_dirty(False)
+        # Persisted edits are not discarded on navigation; the section's dirty
+        # state and last-saved baseline live in AppState.  Re-sync the baseline
+        # (a no-op while dirty, so the stash survives).  The window refreshes the
+        # save bar for the new section.
+        self._state.sync_baseline(section.id, "align", copy.deepcopy(section.alignment))
 
     def _on_overlay_updated(self, anchoring, _display_w, _display_h) -> None:
         self._navigator.set_anchoring(anchoring)
@@ -223,7 +195,7 @@ class AlignView(QWidget):
             return
         self._end_pan_run()
         self._push_undo()
-        section.alignment.anchoring = new_anchoring
+        section.alignment.current_anchoring = new_anchoring
         self._sync_position_from_anchoring(new_anchoring)
         self._panel.update_overlay()
         self._set_dirty(True)
@@ -246,8 +218,8 @@ class AlignView(QWidget):
         raw = self._panel.raw_image
         if section is None or raw is None:
             return
-        anchoring = section.alignment.anchoring
-        if not anchoring or all(v == 0.0 for v in anchoring):
+        anchoring = section.alignment.current_anchoring
+        if not section.alignment.is_anchored:
             return
         # Coalesce the whole drag gesture into a single undo step: snapshot
         # once when the run starts, then keep the idle timer alive so the run
@@ -268,7 +240,7 @@ class AlignView(QWidget):
         v = np.array(anchoring[6:9])
         new_o = o - (dx / w_bg) * u - (dy / h_bg) * v
         new_anchoring = new_o.tolist() + anchoring[3:]
-        section.alignment.anchoring = new_anchoring
+        section.alignment.current_anchoring = new_anchoring
         self._sync_position_from_anchoring(new_anchoring)
         self._panel.update_overlay()
         self._set_dirty(True)
@@ -282,9 +254,22 @@ class AlignView(QWidget):
         section = self._panel.section
         if section is None or self._panel.raw_image is None:
             return
-        anchoring = section.alignment.anchoring
-        if not anchoring or all(v == 0.0 for v in anchoring):
+        anchoring = section.alignment.current_anchoring
+        if not section.alignment.is_anchored:
             return
+
+        from verso.engine.anchoring import clamp_inplane_rotation, rotate_anchoring
+
+        # In-plane spin about the section centre. A clockwise drag on the ring
+        # spins the overlay clockwise (canvas y points down, so a positive
+        # screen-space sweep maps straight onto the rotation). Cap it so the
+        # overlay never spins more than ±_MAX_INPLANE_DEG from axis-aligned.
+        angle_rad = clamp_inplane_rotation(
+            anchoring, float(np.radians(d_deg)), self._interpolation_axis, _MAX_INPLANE_DEG
+        )
+        if angle_rad == 0.0:
+            return  # already at the rotation limit — ignore further outward spin
+
         # Coalesce the whole ring drag into a single undo step, mirroring the pan
         # gesture: snapshot once, keep the idle timer alive, sample the outline
         # cheaper while dragging.
@@ -296,13 +281,8 @@ class AlignView(QWidget):
             self._panel.set_overlay_fast(True)
         self._pan_coalesce_timer.start()
 
-        from verso.engine.registration import rotate_anchoring
-
-        # In-plane spin about the section centre. A clockwise drag on the ring
-        # spins the overlay clockwise (canvas y points down, so a positive
-        # screen-space sweep maps straight onto the rotation).
-        new_anchoring = rotate_anchoring(anchoring, np.radians(d_deg))
-        section.alignment.anchoring = new_anchoring
+        new_anchoring = rotate_anchoring(anchoring, angle_rad)
+        section.alignment.current_anchoring = new_anchoring
         self._sync_position_from_anchoring(new_anchoring)
         self._panel.update_overlay()
         self._set_dirty(True)
@@ -316,8 +296,8 @@ class AlignView(QWidget):
         section = self._panel.section
         if section is None or self._panel.raw_image is None:
             return
-        anchoring = section.alignment.anchoring
-        if not anchoring or all(v == 0.0 for v in anchoring):
+        anchoring = section.alignment.current_anchoring
+        if not section.alignment.is_anchored:
             return
         # Coalesce the whole grip drag into a single undo step, mirroring pan/rotate.
         if not self._pan_run_active:
@@ -328,10 +308,10 @@ class AlignView(QWidget):
             self._panel.set_overlay_fast(True)
         self._pan_coalesce_timer.start()
 
-        from verso.engine.registration import scale_anchoring
+        from verso.engine.anchoring import scale_anchoring
 
         new_anchoring = scale_anchoring(anchoring, scale_s, scale_t)
-        section.alignment.anchoring = new_anchoring
+        section.alignment.current_anchoring = new_anchoring
         self._sync_position_from_anchoring(new_anchoring)
         self._panel.update_overlay()
         self._set_dirty(True)
@@ -345,131 +325,106 @@ class AlignView(QWidget):
         section = self._panel.section
         if section is None or self._panel.raw_image is None:
             return
-        anchoring = section.alignment.anchoring
-        if not anchoring or all(v == 0.0 for v in anchoring):
+        anchoring = section.alignment.current_anchoring
+        if not section.alignment.is_anchored:
             return
         self._end_pan_run()
         self._push_undo()
-        from verso.engine.registration import scale_anchoring
+        from verso.engine.anchoring import scale_anchoring
 
         new_anchoring = scale_anchoring(anchoring, scale_u, scale_v)
-        section.alignment.anchoring = new_anchoring
+        section.alignment.current_anchoring = new_anchoring
         self._sync_position_from_anchoring(new_anchoring)
         self._panel.update_overlay()
         self._set_dirty(True)
         self.anchoring_changed.emit(new_anchoring)
 
     # ------------------------------------------------------------------
-    # Draft / save / clear / discard
+    # Draft-view hooks (see BaseCanvasView)
     # ------------------------------------------------------------------
 
-    def is_dirty(self) -> bool:
-        return self._dirty
+    def _current_section(self) -> Section | None:
+        return self._panel.section
 
     def has_persisted_state(self) -> bool:
-        baseline = self._baseline_alignment
-        if baseline is None:
-            return False
-        stored = baseline.stored_anchoring
-        return bool(stored) and any(v != 0.0 for v in stored)
-
-    def save(self) -> bool:
-        """Promote the current anchoring to ``stored_anchoring`` + COMPLETE."""
         section = self._panel.section
+        if section is None:
+            return False
+        # ``stored_anchoring`` only changes on save/clear, so it reflects the
+        # last-saved plane even mid-edit — no baseline lookup needed.
+        from verso.engine.anchoring import is_anchored
+
+        return is_anchored(section.alignment.stored_anchoring)
+
+    def _capture_edit(self) -> list[float]:
+        return list(require(self._panel.section).alignment.current_anchoring)
+
+    def _restore(self, snapshot: list[float]) -> None:
+        section = require(self._panel.section)
+        section.alignment.current_anchoring = snapshot
+        self._sync_position_from_anchoring(snapshot)
+        self._panel.update_overlay()
+
+    def _matches_saved(self, snapshot: list[float]) -> bool:
+        baseline = self._saved_state()
+        base_anchoring = baseline.current_anchoring if baseline is not None else None
+        return snapshot == base_anchoring
+
+    def _saved_copy(self) -> Alignment:
+        return copy.deepcopy(require(self._panel.section).alignment)
+
+    def _commit(self) -> bool:
+        """Seed a default plane if untouched, then promote to stored + COMPLETE."""
+        section = require(self._panel.section)
         atlas = self._panel.atlas
         raw = self._panel.raw_image
-        if section is None or atlas is None:
+        if atlas is None:
             return False
         # If the user never touched the navigator but hits Save, seed a default
         # plane so there's something to store.
-        if not section.alignment.anchoring or all(v == 0.0 for v in section.alignment.anchoring):
+        if not section.alignment.is_anchored:
             if raw is None:
                 return False
             h, w = raw.shape[:2]
-            section.alignment.anchoring = atlas.default_anchoring(
+            section.alignment.current_anchoring = atlas.default_anchoring(
                 axis=self._interpolation_axis,
                 aspect_ratio=w / h,
             )
-            self._sync_position_from_anchoring(section.alignment.anchoring)
-        section.alignment.stored_anchoring = list(section.alignment.anchoring)
-        section.alignment.status = AlignmentStatus.COMPLETE
-        self._baseline_alignment = copy.deepcopy(section.alignment)
-        self._state.pop_baseline(section.id, "align")
-        self._reset_undo()
-        self._set_dirty(False)
-        self.alignments_updated.emit()
+            self._sync_position_from_anchoring(section.alignment.current_anchoring)
+        commit_alignment(section)
         return True
 
-    def revert(self) -> bool:
-        """Discard unsaved anchoring edits, restoring the last-saved alignment."""
-        section = self._panel.section
-        if section is None or self._baseline_alignment is None:
-            return False
-        section.alignment = copy.deepcopy(self._baseline_alignment)
-        self._state.pop_baseline(section.id, "align")
-        self._reset_undo()
-        self._set_dirty(False)
-        self._sync_position_from_anchoring(section.alignment.anchoring)
+    def _apply_saved(self, baseline: Alignment) -> None:
+        section = require(self._panel.section)
+        section.alignment = copy.deepcopy(baseline)
+        self._sync_position_from_anchoring(section.alignment.current_anchoring)
         self._panel.update_overlay()
-        self.anchoring_changed.emit(list(section.alignment.anchoring))
-        self.alignments_updated.emit()
-        return True
 
-    def clear(self) -> bool:
+    def _wipe(self) -> None:
         """Wipe the alignment (and the slice's warp, which depended on it)."""
-        section = self._panel.section
-        if section is None:
-            return False
-        section.alignment.anchoring = [0.0] * 9
-        section.alignment.position_mm = None
-        section.alignment.status = AlignmentStatus.NOT_STARTED
-        section.alignment.source = None
-        section.alignment.stored_anchoring = None
-        section.alignment.proposal_anchoring = None
-        section.alignment.proposal_confidence = None
-        section.alignment.proposal_run_id = None
-        section.warp.control_points.clear()
-        section.warp.status = AlignmentStatus.NOT_STARTED
-        self._baseline_alignment = copy.deepcopy(section.alignment)
-        self._state.pop_baseline(section.id, "align")
-        self._reset_undo()
-        self._set_dirty(False)
+        from verso.engine.drafts import reset_alignment
+
+        reset_alignment(require(self._panel.section))
+
+    def _end_edit_gesture(self) -> None:
+        self._end_pan_run()
+
+    def _after_undo_restore(self) -> None:
+        self.anchoring_changed.emit(list(require(self._panel.section).alignment.current_anchoring))
+
+    def _after_save(self) -> None:
         self.alignments_updated.emit()
-        return True
+
+    def _after_revert(self) -> None:
+        self.anchoring_changed.emit(list(require(self._panel.section).alignment.current_anchoring))
+        self.alignments_updated.emit()
+
+    def _after_clear(self) -> None:
+        self.alignments_updated.emit()
 
     # ------------------------------------------------------------------
-    # Undo
+    # Pan-gesture coalescing
     # ------------------------------------------------------------------
-
-    def undo(self) -> None:
-        """Restore the previous anchoring from the undo history (Ctrl+Z)."""
-        section = self._panel.section
-        if section is None or not self._undo_stack:
-            return
-        self._end_pan_run()
-        previous = self._undo_stack.pop()
-        section.alignment.anchoring = previous
-        self._sync_position_from_anchoring(previous)
-        self._panel.update_overlay()
-        baseline = self._baseline_alignment
-        base_anchoring = baseline.anchoring if baseline is not None else None
-        self._set_dirty(previous != base_anchoring)
-        self.anchoring_changed.emit(previous)
-
-    def _push_undo(self) -> None:
-        """Snapshot the current anchoring before a mutating edit."""
-        section = self._panel.section
-        if section is None:
-            return
-        self._undo_stack.append(list(section.alignment.anchoring))
-        # Bound the history so a long editing session can't grow without limit.
-        if len(self._undo_stack) > 100:
-            self._undo_stack.pop(0)
-
-    def _reset_undo(self) -> None:
-        """Clear the undo history (called whenever the baseline is re-snapshotted)."""
-        self._end_pan_run()
-        self._undo_stack.clear()
 
     def _end_pan_run(self) -> None:
         """Close the current pan gesture so the next drag starts a fresh undo step."""
@@ -481,15 +436,3 @@ class AlignView(QWidget):
             self._panel.set_overlay_fast(False)
             if self._active:
                 self._panel.update_overlay()
-
-    def _set_dirty(self, dirty: bool) -> None:
-        if self._dirty == dirty:
-            return
-        if dirty:
-            section = self._panel.section
-            if section is not None and self._baseline_alignment is not None:
-                self._state.set_baseline(
-                    section.id, "align", copy.deepcopy(self._baseline_alignment)
-                )
-        self._dirty = dirty
-        self.dirty_changed.emit(dirty)

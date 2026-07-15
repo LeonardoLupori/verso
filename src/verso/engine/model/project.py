@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
@@ -10,12 +10,13 @@ from verso.engine.model.elastix import ElastixParams
 
 DEFAULT_PROJECT_FILENAME = "project-verso.json"
 
-# Mapping between the stored axis-name field and the QuickNII voxel axis index.
-# QuickNII voxel space ordering is (LR=0, AP=1, DV=2); "ML" is the storage name
+# Project-schema version, stamped on every saved file.
+SCHEMA_VERSION = "1.0"
+
+# Mapping between the stored axis-name field and the anchoring voxel axis index.
+# Anchoring voxel space ordering is (LR=0, AP=1, DV=2); "ML" is the storage name
 # for the mediolateral / LR axis.
 AXIS_NAME_TO_INDEX: dict[str, int] = {"AP": 1, "ML": 0, "DV": 2}
-AXIS_INDEX_TO_NAME: dict[int, str] = {v: k for k, v in AXIS_NAME_TO_INDEX.items()}
-
 # Slicing orientation used in the New Project dialog. Each orientation declares
 # which atlas axis the cutting series runs along (= which axis interpolation
 # should target).
@@ -24,22 +25,36 @@ SLICING_ORIENTATION_TO_AXIS: dict[str, str] = {
     "sagittal": "ML",
     "horizontal": "DV",
 }
-AXIS_TO_SLICING_ORIENTATION: dict[str, str] = {v: k for k, v in SLICING_ORIENTATION_TO_AXIS.items()}
 
 
 @dataclass
 class AtlasRef:
-    """Reference to a brainglobe atlas."""
+    """Reference to a brainglobe atlas.
+
+    ``resolution_um`` (isotropic, microns per voxel) and ``shape`` (voxel
+    dimensions in BrainGlobe's ``(AP, DV, LR)`` order) are cached here so the
+    project file is self-contained for coordinate work without re-fetching the
+    atlas. They are ``0.0`` / ``(0, 0, 0)`` until populated (see
+    ``populate_metadata``).
+    """
 
     name: str
     source: str = "brainglobe"
+    resolution_um: float = 0.0
+    shape: tuple[int, int, int] = (0, 0, 0)
 
-    def to_dict(self) -> dict[str, str]:
-        return {"name": self.name, "source": self.source}
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> AtlasRef:
-        return cls(name=d["name"], source=d.get("source", "brainglobe"))
+        raw_shape = d.get("shape") or (0, 0, 0)
+        return cls(
+            name=d["name"],
+            source=d.get("source", "brainglobe"),
+            resolution_um=float(d.get("resolution_um", 0.0)),
+            shape=(int(raw_shape[0]), int(raw_shape[1]), int(raw_shape[2])),
+        )
 
 
 @dataclass
@@ -52,12 +67,7 @@ class ChannelSpec:
     visible: bool = True
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "name": self.name,
-            "color": list(self.color),
-            "scale": self.scale,
-            "visible": self.visible,
-        }
+        return asdict(self)
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> ChannelSpec:
@@ -79,11 +89,7 @@ class Preprocessing:
     slice_mask_path: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "flip_horizontal": self.flip_horizontal,
-            "flip_vertical": self.flip_vertical,
-            "slice_mask_path": self.slice_mask_path,
-        }
+        return asdict(self)
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Preprocessing:
@@ -107,6 +113,8 @@ class Section:
     slice_index: int
     original_path: str
     thumbnail_path: str
+    resolution_original_wh: tuple[int, int] = (0, 0)
+    resolution_thumbnail_wh: tuple[int, int] = (0, 0)
     preprocessing: Preprocessing = field(default_factory=Preprocessing)
     alignment: Alignment = field(default_factory=Alignment)
     warp: WarpState = field(default_factory=WarpState)
@@ -117,6 +125,8 @@ class Section:
             "slice_index": self.slice_index,
             "original_path": self.original_path,
             "thumbnail_path": self.thumbnail_path,
+            "resolution_original_wh": list(self.resolution_original_wh),
+            "resolution_thumbnail_wh": list(self.resolution_thumbnail_wh),
             "preprocessing": self.preprocessing.to_dict(),
             "alignment": self.alignment.to_dict(),
             "warp": self.warp.to_dict(),
@@ -129,20 +139,35 @@ class Section:
             slice_index=d["slice_index"],
             original_path=d["original_path"],
             thumbnail_path=d["thumbnail_path"],
+            resolution_original_wh=tuple(d.get("resolution_original_wh", [0, 0])),
+            resolution_thumbnail_wh=tuple(d.get("resolution_thumbnail_wh", [0, 0])),
             preprocessing=Preprocessing.from_dict(d.get("preprocessing", {})),
             alignment=Alignment.from_dict(d.get("alignment", {})),
             warp=WarpState.from_dict(d.get("warp", {})),
         )
 
 
-_LEGACY_CP_COLORS: dict[str, str] = {
-    "Orange": "#ff6000",
-    "Cyan": "#00ffff",
-    "Yellow": "#fff500",
-    "Red": "#ff2020",
-    "White": "#ffffff",
-    "Magenta": "#ff00ff",
-}
+@dataclass
+class DialogPrefs:
+    """Per-project flags controlling which dialogs are shown.
+
+    Each flag is ``True`` (show the dialog) by default; the GUI sets it to
+    ``False`` when the user ticks "do not show again".
+    """
+
+    show_align_deletion: bool = True
+    show_overview_tutorial: bool = True
+    show_preprocessing_tutorial: bool = True
+    show_align_tutorial: bool = True
+    show_warp_tutorial: bool = True
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> DialogPrefs:
+        defaults = cls()
+        return cls(**{f.name: bool(d.get(f.name, getattr(defaults, f.name))) for f in fields(cls)})
 
 
 @dataclass
@@ -157,18 +182,17 @@ class Project:
     cp_shape: str = "Cross"
     cp_color: str = "#fff500"
     interpolation_axis: str = "AP"
-    # Ratio working_long_side / original_long_side, uniform across all sections.
     # Derived once at import from the largest image (see compute_working_scale);
-    # full-resolution export scales back up by this factor.
     working_scale: float = 0.2
     # Per-project parameters for automatic elastix control-point generation.
     # None means "use the built-in ElastixParams defaults" until edited.
     elastix_params: ElastixParams | None = None
-    version: str = "1.1"
+    dialog_prefs: DialogPrefs = field(default_factory=DialogPrefs)
+    version: str = SCHEMA_VERSION
 
     @property
     def interpolation_axis_index(self) -> int:
-        """QuickNII voxel axis index (0=ML, 1=AP, 2=DV) for ``interpolation_axis``."""
+        """Anchoring voxel axis index (0=ML, 1=AP, 2=DV) for ``interpolation_axis``."""
         return AXIS_NAME_TO_INDEX[self.interpolation_axis]
 
     def to_dict(self) -> dict[str, Any]:
@@ -185,6 +209,7 @@ class Project:
             "elastix_params": (
                 self.elastix_params.to_dict() if self.elastix_params is not None else None
             ),
+            "dialog_prefs": self.dialog_prefs.to_dict(),
             "sections": [s.to_dict() for s in self.sections],
         }
 
@@ -203,10 +228,7 @@ class Project:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Project:
-        raw_color = str(d.get("cp_color", "#fff500"))
-        cp_color = (
-            raw_color if raw_color.startswith("#") else _LEGACY_CP_COLORS.get(raw_color, "#fff500")
-        )
+        cp_color = str(d.get("cp_color", "#fff500"))
         raw_axis = str(d.get("interpolation_axis", "AP")).upper()
         interpolation_axis = raw_axis if raw_axis in AXIS_NAME_TO_INDEX else "AP"
         raw_elastix = d.get("elastix_params")
@@ -222,13 +244,22 @@ class Project:
             interpolation_axis=interpolation_axis,
             working_scale=float(d.get("working_scale", 0.2)),
             elastix_params=elastix_params,
-            version="1.1",
+            dialog_prefs=DialogPrefs.from_dict(d.get("dialog_prefs", {})),
+            version=str(d.get("version", SCHEMA_VERSION)),
         )
         project.sort_sections()
         return project
 
     @classmethod
     def load(cls, path: Path) -> Project:
-        """Load a project from disk."""
+        """Load a project from disk.
+
+        Args:
+            path: Path to a project JSON file.
+
+        Returns:
+            The loaded project.
+        """
+        path = Path(path)
         data = json.loads(path.read_text(encoding="utf-8"))
         return cls.from_dict(data)

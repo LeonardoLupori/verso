@@ -1,3 +1,4 @@
+import contextlib
 import json
 import math
 import subprocess
@@ -6,20 +7,20 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from verso.engine.anchoring import (
+    pack_series_anchoring,
+    reset_in_progress_to_default_proposals,
+    unpack_series_anchoring,
+)
 from verso.engine.deepslice import (
     DeepSliceRunResult,
     DeepSliceSectionSuggestion,
     apply_deepslice_suggestions,
     apply_deepslice_suggestions_with_atlas,
-    reset_in_progress_to_default_proposals,
     run_deepslice_suggestions,
 )
 from verso.engine.model.alignment import AlignmentStatus, ControlPoint
 from verso.engine.model.project import AtlasRef, ChannelSpec, Preprocessing, Project, Section
-from verso.engine.registration import (
-    quicknii_pack_anchoring,
-    quicknii_unpack_anchoring,
-)
 
 
 def _make_project(tmp_path: Path) -> Project:
@@ -31,8 +32,8 @@ def _make_project(tmp_path: Path) -> Project:
         name="deep",
         atlas=AtlasRef(name="allen_mouse_25um"),
         sections=[
-            Section("s001", 1, str(img1), str(img1)),
-            Section("s002", 2, str(img2), str(img2)),
+            Section("s001", 1, str(img1), str(img1), resolution_thumbnail_wh=(100, 80)),
+            Section("s002", 2, str(img2), str(img2), resolution_thumbnail_wh=(100, 80)),
         ],
     )
 
@@ -85,10 +86,8 @@ def test_run_deepslice_failure_does_not_mutate_project(tmp_path: Path, monkeypat
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
-    try:
+    with contextlib.suppress(Exception):
         run_deepslice_suggestions(project)
-    except Exception:
-        pass
 
     assert project.to_dict() == before
 
@@ -108,15 +107,12 @@ def test_apply_deepslice_suggestions_marks_editable_and_clears_warp(tmp_path: Pa
         ],
     )
 
-    applied = apply_deepslice_suggestions(project, result)
+    touched = apply_deepslice_suggestions(project, result)
 
     s0 = project.sections[0]
-    assert applied == 1
+    assert touched == {s0.id}
     assert s0.alignment.status == AlignmentStatus.IN_PROGRESS
     assert s0.alignment.source == "deepslice"
-    assert s0.alignment.proposal_anchoring == [1.0] * 9
-    assert s0.alignment.proposal_confidence == 0.5
-    assert s0.alignment.proposal_run_id == "run-1"
     assert s0.warp.control_points == []
 
 
@@ -133,9 +129,9 @@ def test_apply_deepslice_suggestions_matches_temporary_id_filename(tmp_path: Pat
         ],
     )
 
-    applied = apply_deepslice_suggestions(project, result)
+    touched = apply_deepslice_suggestions(project, result)
 
-    assert applied == 1
+    assert len(touched) == 1
     assert project.sections[0].alignment.source == "deepslice"
 
 
@@ -170,7 +166,7 @@ def test_apply_deepslice_suggestions_converts_quicknii_convention(tmp_path: Path
         atlas_shape=(528, 320, 456),
     )
 
-    assert project.sections[0].alignment.anchoring == [
+    assert project.sections[0].alignment.current_anchoring == [
         10.0,
         100.0,
         40.0,
@@ -210,7 +206,7 @@ def test_apply_deepslice_suggestions_does_not_mirror_for_reversed_section_order(
         atlas_shape=(528, 320, 456),
     )
 
-    assert project.sections[0].alignment.anchoring == [
+    assert project.sections[0].alignment.current_anchoring == [
         10.0,
         100.0,
         40.0,
@@ -317,9 +313,27 @@ def test_apply_deepslice_discards_bad_predictions_and_interpolates(tmp_path: Pat
         name="bad-interp",
         atlas=AtlasRef(name="allen_mouse_25um"),
         sections=[
-            Section("s001", 1, str(image_paths[0]), str(image_paths[0])),
-            Section("s002", 2, str(image_paths[1]), str(image_paths[1])),
-            Section("s003", 3, str(image_paths[2]), str(image_paths[2])),
+            Section(
+                "s001",
+                1,
+                str(image_paths[0]),
+                str(image_paths[0]),
+                resolution_thumbnail_wh=(100, 80),
+            ),
+            Section(
+                "s002",
+                2,
+                str(image_paths[1]),
+                str(image_paths[1]),
+                resolution_thumbnail_wh=(100, 80),
+            ),
+            Section(
+                "s003",
+                3,
+                str(image_paths[2]),
+                str(image_paths[2]),
+                resolution_thumbnail_wh=(100, 80),
+            ),
         ],
     )
 
@@ -348,22 +362,22 @@ def test_apply_deepslice_discards_bad_predictions_and_interpolates(tmp_path: Pat
         bad_section_ids=["s002"],
     )
 
-    applied = apply_deepslice_suggestions_with_atlas(
+    touched = apply_deepslice_suggestions_with_atlas(
         project,
         result,
         atlas_shape=(528, 320, 456),
     )
-    assert applied == 3  # 2 from DeepSlice, 1 interpolated.
+    assert len(touched) == 3  # 2 from DeepSlice, 1 interpolated.
 
     s2 = project.sections[1]
     assert s2.alignment.source == "deepslice_bad_interpolated"
     # The bogus 999 values must not have leaked through.
-    assert all(abs(v) < 600 for v in s2.alignment.anchoring)
+    assert all(abs(v) < 600 for v in s2.alignment.current_anchoring)
     # AP should land between the two neighbours' AP values after the QN->BG
     # convention flip applied to the good predictions.
-    s1_ap = project.sections[0].alignment.anchoring[1]
-    s3_ap = project.sections[2].alignment.anchoring[1]
-    s2_ap = s2.alignment.anchoring[1]
+    s1_ap = project.sections[0].alignment.current_anchoring[1]
+    s3_ap = project.sections[2].alignment.current_anchoring[1]
+    s2_ap = s2.alignment.current_anchoring[1]
     assert min(s1_ap, s3_ap) <= s2_ap <= max(s1_ap, s3_ap)
 
 
@@ -371,12 +385,12 @@ def test_apply_deepslice_orients_series_to_verso_convention(tmp_path: Path):
     """DeepSlice's AP order is realigned to VERSO's default-proposal direction.
 
     DeepSlice 1.2.7 auto-detects indexing direction, so it can return a series
-    that scrolls opposite to VERSO's own QuickNII proposals.  Apply re-orients
+    that scrolls opposite to VERSO's own default proposals.  Apply re-orients
     it: with ``reverse_axis=False`` the AP centre must *decrease* with
     ``slice_index`` (VERSO's default), and with ``reverse_axis=True`` it must
     *increase* — regardless of how DeepSlice happened to order the input.
     """
-    from verso.engine.registration import anchoring_center
+    from verso.engine.anchoring import anchoring_center
 
     def _build() -> Project:
         paths = []
@@ -416,8 +430,8 @@ def test_apply_deepslice_orients_series_to_verso_convention(tmp_path: Path):
         reversed_, DeepSliceRunResult("r", suggestions), atlas_shape, reverse_axis=True
     )
 
-    fwd_ap = [anchoring_center(s.alignment.anchoring)[1] for s in forward.sections]
-    rev_ap = [anchoring_center(s.alignment.anchoring)[1] for s in reversed_.sections]
+    fwd_ap = [anchoring_center(s.alignment.current_anchoring)[1] for s in forward.sections]
+    rev_ap = [anchoring_center(s.alignment.current_anchoring)[1] for s in reversed_.sections]
 
     # reverse_axis=False → AP decreases with slice_index (VERSO default).
     assert fwd_ap[0] > fwd_ap[1] > fwd_ap[2]
@@ -469,11 +483,11 @@ def test_run_deepslice_uses_user_serial_as_filename_prefix(tmp_path: Path, monke
     monkeypatch.setattr(subprocess, "run", fake_run)
 
     result = run_deepslice_suggestions(project)
-    applied = apply_deepslice_suggestions(project, result)
-    assert applied == 3
+    touched = apply_deepslice_suggestions(project, result)
+    assert len(touched) == 3
     # Each section keeps its own anchoring — matched via the serial prefix.
-    assert project.sections[0].alignment.anchoring == [1.0] * 9  # serial 10
-    assert project.sections[2].alignment.anchoring == [3.0] * 9  # serial 50
+    assert project.sections[0].alignment.current_anchoring == [1.0] * 9  # serial 10
+    assert project.sections[2].alignment.current_anchoring == [3.0] * 9  # serial 50
 
 
 def test_run_deepslice_reverse_visible_in_filenames_for_non_contiguous_serials(
@@ -666,11 +680,9 @@ def test_run_deepslice_stages_working_resolution_png_with_display_flips(
 def test_reset_in_progress_to_default_proposals_clears_deepslice_metadata(tmp_path: Path):
     project = _make_project(tmp_path)
     for section in project.sections:
-        section.alignment.anchoring = [1.0] * 9
+        section.alignment.current_anchoring = [1.0] * 9
         section.alignment.status = AlignmentStatus.IN_PROGRESS
         section.alignment.source = "deepslice"
-        section.alignment.proposal_anchoring = [1.0] * 9
-        section.alignment.proposal_confidence = 0.5
         section.warp.control_points.append(ControlPoint(0.1, 0.2, 0.3, 0.4))
 
     changed = reset_in_progress_to_default_proposals(
@@ -681,9 +693,7 @@ def test_reset_in_progress_to_default_proposals_clears_deepslice_metadata(tmp_pa
     assert changed == 2
     for section in project.sections:
         assert section.alignment.status == AlignmentStatus.IN_PROGRESS
-        assert section.alignment.source == "quicknii_default"
-        assert section.alignment.proposal_anchoring is None
-        assert section.alignment.proposal_confidence is None
+        assert section.alignment.source == "series_interpolation"
         assert section.warp.control_points == []
 
 
@@ -713,12 +723,12 @@ def test_reset_default_proposals_interpolates_flipped_keyframe_in_display_space(
     ]
     unpacked_right = list(unpacked_left)
     unpacked_right[1] = 100.0
-    left = quicknii_pack_anchoring(unpacked_left, 1000, 800)
+    left = pack_series_anchoring(unpacked_left, 1000, 800)
     # Section 3 is flipped to restore coherent orientation. After flipping,
     # the user aligns the atlas in display space — u points the same anatomical
     # direction as the unflipped keyframe. Both keyframes have the same u vector
     # in display space, so interpolation propagates the angle correctly.
-    right = quicknii_pack_anchoring(unpacked_right, 1000, 800)
+    right = pack_series_anchoring(unpacked_right, 1000, 800)
 
     project = Project(
         name="deep",
@@ -729,12 +739,14 @@ def test_reset_default_proposals_interpolates_flipped_keyframe_in_display_space(
                 1,
                 str(image_paths[0]),
                 str(image_paths[0]),
+                resolution_thumbnail_wh=(1000, 800),
             ),
             Section(
                 "s002",
                 2,
                 str(image_paths[1]),
                 str(image_paths[1]),
+                resolution_thumbnail_wh=(1000, 800),
             ),
             Section(
                 "s003",
@@ -742,13 +754,14 @@ def test_reset_default_proposals_interpolates_flipped_keyframe_in_display_space(
                 str(image_paths[2]),
                 str(image_paths[2]),
                 preprocessing=Preprocessing(flip_horizontal=True),
+                resolution_thumbnail_wh=(1000, 800),
             ),
         ],
     )
-    project.sections[0].alignment.anchoring = left
+    project.sections[0].alignment.current_anchoring = left
     project.sections[0].alignment.stored_anchoring = list(left)
     project.sections[0].alignment.status = AlignmentStatus.COMPLETE
-    project.sections[2].alignment.anchoring = right
+    project.sections[2].alignment.current_anchoring = right
     project.sections[2].alignment.stored_anchoring = list(right)
     project.sections[2].alignment.status = AlignmentStatus.COMPLETE
 
@@ -758,7 +771,7 @@ def test_reset_default_proposals_interpolates_flipped_keyframe_in_display_space(
     )
 
     assert changed == 1
-    middle = quicknii_unpack_anchoring(project.sections[1].alignment.anchoring, 1000, 800)
+    middle = unpack_series_anchoring(project.sections[1].alignment.current_anchoring, 1000, 800)
     np.testing.assert_allclose(middle[4], math.sin(angle), atol=1e-9)
     np.testing.assert_allclose(middle[1], 300.0, atol=1e-9)
 
@@ -766,7 +779,7 @@ def test_reset_default_proposals_interpolates_flipped_keyframe_in_display_space(
 def test_reset_to_default_can_clear_complete_alignments(tmp_path: Path):
     project = _make_project(tmp_path)
     for section in project.sections:
-        section.alignment.anchoring = [1.0] * 9
+        section.alignment.current_anchoring = [1.0] * 9
         section.alignment.status = AlignmentStatus.COMPLETE
         section.alignment.source = "manual"
         section.warp.control_points.append(ControlPoint(0.1, 0.2, 0.3, 0.4))
@@ -780,6 +793,6 @@ def test_reset_to_default_can_clear_complete_alignments(tmp_path: Path):
     assert changed == 2
     for section in project.sections:
         assert section.alignment.status == AlignmentStatus.IN_PROGRESS
-        assert section.alignment.source == "quicknii_default"
-        assert section.alignment.anchoring != [1.0] * 9
+        assert section.alignment.source == "series_interpolation"
+        assert section.alignment.current_anchoring != [1.0] * 9
         assert section.warp.control_points == []

@@ -12,6 +12,7 @@ is currently active, so zoom/pan and channel cache survive mode switches.
 
 from __future__ import annotations
 
+import contextlib
 import os
 from collections.abc import Callable
 from typing import TYPE_CHECKING
@@ -26,8 +27,8 @@ from PyQt6.QtWidgets import (
 
 from verso.engine.io.image_io import WORKING_SCALE
 from verso.engine.model.project import Section
-from verso.engine.preprocessing import channel_lut
 from verso.gui.widgets.canvas import ImageCanvas
+from verso.gui.widgets.channel_display import push_channel_display
 
 if TYPE_CHECKING:
     from verso.engine.atlas import AtlasVolume
@@ -253,36 +254,14 @@ class SectionCanvasPanel(QWidget):
     # ------------------------------------------------------------------
 
     def _display_image(self) -> None:
-        if self._raw_image is None:
-            self.canvas.clear()
-            self._channel_planes_key = None
-            return
-        img = self._raw_image
-        if img.ndim == 2:
-            img = img[..., np.newaxis]
-        flip_h = bool(self._section and self._section.preprocessing.flip_horizontal)
-        flip_v = bool(self._section and self._section.preprocessing.flip_vertical)
-        if flip_h:
-            img = np.fliplr(img)
-        if flip_v:
-            img = np.flipud(img)
-        n = min(img.shape[2], len(self._channels))
-
-        # Push raw planes only when section / flip / channel-count actually
-        # changed; this is the only path that touches the GPU texture.
-        planes_key = (self._planes_version, flip_h, flip_v, n)
-        if planes_key != self._channel_planes_key:
-            planes = [np.ascontiguousarray(img[:, :, i]) for i in range(n)]
-            self.canvas.set_channel_planes(planes)
-            self._channel_planes_key = planes_key
-
-        # Apply per-channel LUT / visibility — drives the brightness slider.
-        for i in range(n):
-            spec = self._channels[i]
-            if not getattr(spec, "visible", True) or float(spec.scale) <= 0:
-                self.canvas.set_channel_visible(i, False)
-            else:
-                self.canvas.set_channel_lut(i, channel_lut(spec))
+        self._channel_planes_key = push_channel_display(
+            self.canvas,
+            self._raw_image,
+            self._section,
+            self._channels,
+            self._planes_version,
+            self._channel_planes_key,
+        )
 
     # ------------------------------------------------------------------
     # Atlas overlay pipeline
@@ -342,8 +321,8 @@ class SectionCanvasPanel(QWidget):
             self.canvas.set_overlay(None)
             return
 
-        anchoring = self._section.alignment.anchoring
-        if not anchoring or all(v == 0.0 for v in anchoring):
+        anchoring = self._section.alignment.current_anchoring
+        if not self._section.alignment.is_anchored:
             # Render-only fallback for a section with no interpolated/edited
             # plane yet.  Do NOT write this centered plane back to the section —
             # leaving the anchoring unset lets project-wide interpolation fill in
@@ -397,13 +376,11 @@ class SectionCanvasPanel(QWidget):
             self._slice_cache_key = slice_key
 
         if self.overlay_post_processor is not None:
-            try:
-                # The post-processor (warp) must not mutate the cached slice; the
-                # engine's warp_overlay always returns a fresh array, so this is
-                # safe to feed the cached rgba directly.
+            # The post-processor (warp) must not mutate the cached slice; the
+            # engine's warp_overlay always returns a fresh array, so this is
+            # safe to feed the cached rgba directly.
+            with contextlib.suppress(Exception):
                 rgba = self.overlay_post_processor(rgba)
-            except Exception:
-                pass
 
         self.canvas.set_overlay(rgba, display_w=w_bg, display_h=h_bg)
         self.overlay_updated.emit(list(anchoring), w_bg, h_bg)
@@ -417,8 +394,8 @@ class SectionCanvasPanel(QWidget):
 
         if self._atlas is None or self._section is None or self._raw_image is None:
             return
-        anchoring = self._section.alignment.anchoring
-        if not anchoring or all(v == 0.0 for v in anchoring):
+        anchoring = self._section.alignment.current_anchoring
+        if not self._section.alignment.is_anchored:
             return
         h_bg, w_bg = self._raw_image.shape[:2]
         if x < 0 or y < 0 or x >= w_bg or y >= h_bg:
@@ -427,10 +404,8 @@ class SectionCanvasPanel(QWidget):
             return
         s, t = x / w_bg, y / h_bg
         if self.cursor_to_atlas_mapper is not None:
-            try:
+            with contextlib.suppress(Exception):
                 s, t = self.cursor_to_atlas_mapper(s, t)
-            except Exception:
-                pass
         name, (r, g, b) = self._atlas.get_region_info(anchoring, s, t)
         # Darken the region colour slightly so white text stays legible
         br, bg, bb = int(r * 0.55), int(g * 0.55), int(b * 0.55)
@@ -446,10 +421,11 @@ class SectionCanvasPanel(QWidget):
         Style is applied by ``view_chrome.make_view_status_bar`` so the bar
         looks identical across Prep / Align / Warp.
         """
-        if self._section is None:
-            text = "No section loaded"
-        else:
-            text = os.path.basename(self._section.original_path)
+        text = (
+            "No section loaded"
+            if self._section is None
+            else os.path.basename(self._section.original_path)
+        )
         lbl = QLabel(text)
         self._status_labels.append(lbl)
         return lbl

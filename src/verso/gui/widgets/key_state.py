@@ -12,6 +12,8 @@ methods; they register by adding themselves to ``SpaceState.listeners`` /
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 from PyQt6.QtCore import QEvent, QObject, Qt
 from PyQt6.QtGui import QKeyEvent
 from PyQt6.QtWidgets import QAbstractButton, QApplication
@@ -20,13 +22,13 @@ from PyQt6.QtWidgets import QAbstractButton, QApplication
 class SpaceState:
     held: bool = False
     # Canvas instances that want to be notified on Space change.
-    listeners: set = set()
+    listeners: ClassVar[set] = set()
 
 
 class ShiftState:
     held: bool = False
     # Canvas instances that want to be notified on Shift change.
-    listeners: set = set()
+    listeners: ClassVar[set] = set()
 
 
 class _KeyStateFilter(QObject):
@@ -36,6 +38,8 @@ class _KeyStateFilter(QObject):
     synced even when keyboard focus is on another widget (properties panel, main
     window, etc).
     """
+
+    _instance: ClassVar[_KeyStateFilter | None] = None
 
     def eventFilter(self, _: QObject, event: QEvent) -> bool:
         if not isinstance(event, QKeyEvent):
@@ -69,7 +73,7 @@ class _KeyStateFilter(QObject):
 def ensure_key_state_filter() -> None:
     """Install the singleton key-state event filter on the application once."""
     app = QApplication.instance()
-    if app is not None and getattr(app, "_verso_key_state_filter", None) is None:
+    if app is not None and _KeyStateFilter._instance is None:
         filt = _KeyStateFilter()
-        setattr(app, "_verso_key_state_filter", filt)
+        _KeyStateFilter._instance = filt
         app.installEventFilter(filt)

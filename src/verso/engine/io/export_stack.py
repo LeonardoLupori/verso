@@ -34,11 +34,11 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from verso.engine.anchoring import anchoring_center, anchoring_to_vectors, make_atlas_sample_grid
 from verso.engine.atlas import AtlasVolume
 from verso.engine.io.image_io import ensure_working_copy
 from verso.engine.model.project import Project, Section
 from verso.engine.preprocessing import apply_flip, load_mask
-from verso.engine.registration import anchoring_center, anchoring_to_vectors, make_atlas_sample_grid
 from verso.engine.warping import warp_points_atlas_to_section
 
 
@@ -65,7 +65,7 @@ class ExportStackOptions:
 
 def _has_usable_anchoring(section: Section) -> bool:
     """True if the section's anchoring defines a non-degenerate plane."""
-    anchoring = section.alignment.anchoring
+    anchoring = section.alignment.current_anchoring
     if not anchoring or len(anchoring) != 9:
         return False
     _, u, v = anchoring_to_vectors(anchoring)
@@ -85,7 +85,7 @@ def build_canonical_remap(
     Args:
         section: Section whose registration (anchoring + control points) is inverted.
         atlas: Atlas volume, used for plane dimensions only.
-        axis: Slicing axis in QuickNII voxel order (0 = LR, 1 = AP, 2 = DV).
+        axis: Slicing axis in anchoring voxel order (0 = LR, 1 = AP, 2 = DV).
         scale: Output resolution multiplier relative to the atlas voxel grid.
         work_w: Working-image width in pixels (sample source).
         work_h: Working-image height in pixels.
@@ -101,14 +101,14 @@ def build_canonical_remap(
     out_h = max(1, round(height_vox * scale))
 
     # Canonical (straight) atlas plane at this section's registered position.
-    position = float(anchoring_center(section.alignment.anchoring)[axis])
+    position = float(anchoring_center(section.alignment.current_anchoring)[axis])
     canonical = atlas.canonical_plane_anchoring(position, axis)
     grid = make_atlas_sample_grid(canonical, out_w, out_h)  # (H, W, 3) atlas voxels
 
     # Inverse affine: atlas voxel -> section atlas-overlay (s, t). Solve the
     # least-squares system grid - o = s·u + t·v for every pixel at once via the
     # anchoring's pseudo-inverse (vectorised atlas_to_normalized).
-    o, u, v = anchoring_to_vectors(section.alignment.anchoring)
+    o, u, v = anchoring_to_vectors(section.alignment.current_anchoring)
     pinv = np.linalg.pinv(np.column_stack([u, v]))  # (2, 3)
     st = (grid - o) @ pinv.T  # (H, W, 2)
 
@@ -122,8 +122,7 @@ def build_canonical_remap(
     if cps:
         src = np.array([[cp.src_x, cp.src_y] for cp in cps], dtype=np.float64)
         dst = np.array([[cp.dst_x, cp.dst_y] for cp in cps], dtype=np.float64)
-        aspect = work_w / work_h if work_h else 1.0
-        sec = warp_points_atlas_to_section(st.reshape(-1, 2), src, dst, aspect)
+        sec = warp_points_atlas_to_section(st.reshape(-1, 2), src, dst, work_w, work_h)
         sec = sec.reshape(out_h, out_w, 2)
     else:
         sec = st
@@ -171,7 +170,7 @@ def export_section_aligned(
         work = work[:, :, np.newaxis]
     work_h, work_w = work.shape[:2]
 
-    map_x, map_y, out_w, out_h = build_canonical_remap(
+    map_x, map_y, _out_w, _out_h = build_canonical_remap(
         section, atlas, project.interpolation_axis_index, scale, work_w, work_h
     )
     covered = map_x >= 0.0

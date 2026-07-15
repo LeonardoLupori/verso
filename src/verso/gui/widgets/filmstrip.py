@@ -22,6 +22,7 @@ _BORDER_W = 3
 _ROW_MARGIN = 4  # padding around the thumbnail row
 _DOT_DIAMETER = 10  # status dot in the top-right corner
 _DOT_MARGIN = 4
+_SQUARE_RADIUS = 3  # corner radius of the square annotation-presence marker
 
 
 class _ThumbnailLoader(QObject):
@@ -65,7 +66,7 @@ class _ThumbnailLoader(QObject):
 class _HScrollArea(QScrollArea):
     """Scroll area whose mouse wheel scrolls horizontally, never vertically."""
 
-    def wheelEvent(self, event) -> None:  # noqa: ANN001
+    def wheelEvent(self, event) -> None:
         delta = event.angleDelta().y() or event.angleDelta().x()
         bar = require(self.horizontalScrollBar())
         bar.setValue(bar.value() - delta)
@@ -82,6 +83,7 @@ class _ThumbButton(QLabel):
         self._index = index
         self._selected = False
         self._status_color: str | None = None
+        self._status_shape: str = "dot"  # "dot" (step status) or "square" (annotation)
         self._thumbnail: QPixmap | None = None  # original (unscaled) loaded tile
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -89,10 +91,18 @@ class _ThumbButton(QLabel):
         self._set_placeholder()
 
     def set_status_color(self, color: str | None) -> None:
-        """Set the top-right status-dot colour (None hides the dot)."""
+        """Set the top-right status marker colour (None hides the marker)."""
         if color == self._status_color:
             return
         self._status_color = color
+        self.update()
+
+    def set_status_shape(self, shape: str) -> None:
+        """Set the top-right marker shape: ``"dot"`` (step status) or ``"square"``
+        (annotation presence in the Annotate view)."""
+        if shape == self._status_shape:
+            return
+        self._status_shape = shape
         self.update()
 
     def set_thumbnail(self, pixmap: QPixmap) -> None:
@@ -124,7 +134,7 @@ class _ThumbButton(QLabel):
         colour = "#FFFFFF" if self._selected else "#555555"
         self.setStyleSheet(f"border: {_BORDER_W}px solid {colour}; background: transparent;")
 
-    def paintEvent(self, event) -> None:  # noqa: ANN001
+    def paintEvent(self, event) -> None:
         super().paintEvent(event)
         if self._status_color is None:
             return
@@ -134,10 +144,15 @@ class _ThumbButton(QLabel):
         painter.setBrush(QColor(self._status_color))
         x = self.width() - _BORDER_W - _DOT_MARGIN - _DOT_DIAMETER
         y = _BORDER_W + _DOT_MARGIN
-        painter.drawEllipse(x, y, _DOT_DIAMETER, _DOT_DIAMETER)
+        if self._status_shape == "square":
+            painter.drawRoundedRect(
+                x, y, _DOT_DIAMETER, _DOT_DIAMETER, _SQUARE_RADIUS, _SQUARE_RADIUS
+            )
+        else:
+            painter.drawEllipse(x, y, _DOT_DIAMETER, _DOT_DIAMETER)
         painter.end()
 
-    def mousePressEvent(self, event) -> None:  # noqa: ANN001
+    def mousePressEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit(self._index)
         super().mousePressEvent(event)
@@ -153,6 +168,7 @@ class Filmstrip(QWidget):
         super().__init__(parent)
         self._buttons: list[_ThumbButton] = []
         self._current: int = 0
+        self._status_shape: str = "dot"  # marker shape applied to every tile
         self._loader_thread: QThread | None = None
         self._loader: _ThumbnailLoader | None = None
         self._build_ui()
@@ -219,6 +235,7 @@ class Filmstrip(QWidget):
         # Create all placeholder buttons immediately — no I/O.
         for i in range(len(sections)):
             btn = _ThumbButton(i)
+            btn.set_status_shape(self._status_shape)
             btn.clicked.connect(self._on_thumb_clicked)
             self._row.insertWidget(self._row.count() - 1, btn)
             self._buttons.append(btn)
@@ -287,9 +304,16 @@ class Filmstrip(QWidget):
         target = button_center - viewport_w // 2
         bar.setValue(max(bar.minimum(), min(bar.maximum(), target)))
 
-    def set_statuses(self, colors: Sequence[str | None]) -> None:
-        """Set every thumbnail's status-dot colour from a per-section list."""
+    def set_statuses(self, colors: Sequence[str | None], shape: str = "dot") -> None:
+        """Set every thumbnail's status-marker colour from a per-section list.
+
+        ``shape`` selects the marker drawn for all tiles: ``"dot"`` for per-section
+        step status (Prep/Align/Warp) or ``"square"`` for annotation presence
+        (Annotate). It is remembered so tiles rebuilt by :meth:`populate` keep it.
+        """
+        self._status_shape = shape
         for i, btn in enumerate(self._buttons):
+            btn.set_status_shape(shape)
             btn.set_status_color(colors[i] if i < len(colors) else None)
 
     def set_status_color(self, index: int, color: str | None) -> None:

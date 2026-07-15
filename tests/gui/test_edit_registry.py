@@ -6,7 +6,6 @@ import numpy as np
 import pytest
 from PyQt6.QtWidgets import QApplication
 
-from verso.engine.drafts import PrepDraft
 from verso.engine.model.project import AtlasRef, Project, Section
 from verso.gui.state import AppState
 
@@ -59,35 +58,65 @@ def test_dirty_sections_groups_steps(_qapp):
     assert state.any_dirty()
 
 
-def test_prep_draft_store_roundtrip(_qapp):
+def test_prep_working_store_roundtrip(_qapp):
     state = AppState()
     state.load_project(_project())
     mask = np.ones((2, 2), dtype=bool)
-    state.set_prep_draft("s1", PrepDraft(slice_mask=mask, mask_dirty=True))
+    state.set_working("s1", "prep", mask)
 
-    assert state.has_prep_draft("s1")
-    draft = state.pop_prep_draft("s1")
-    assert draft is not None and draft.mask_dirty
-    assert not state.has_prep_draft("s1")  # popped
+    assert state.has_working("s1", "prep")
+    stored = state.pop_working("s1", "prep")
+    assert stored is mask
+    assert not state.has_working("s1", "prep")  # popped
 
 
 def test_load_project_clears_registry_and_drafts(_qapp):
     state = AppState()
     state.load_project(_project())
     state.mark_dirty("s0", "align")
-    state.set_prep_draft("s1", PrepDraft(mask_dirty=True))
+    state.set_working("s1", "prep", np.ones((2, 2), dtype=bool))
 
     state.load_project(_project())  # fresh load wipes unsaved edits
     assert not state.any_dirty()
-    assert not state.has_prep_draft("s1")
+    assert not state.has_working("s1", "prep")
+
+
+def test_sync_baseline_refreshes_while_clean_but_not_while_dirty(_qapp):
+    state = AppState()
+    state.load_project(_project())
+
+    # Clean: sync stores the supplied snapshot as the baseline.
+    state.sync_baseline("s0", "align", "saved-v1")
+    assert state.get_baseline("s0", "align") == "saved-v1"
+
+    # Still clean: a later sync refreshes it (e.g. re-loading a clean section).
+    state.sync_baseline("s0", "align", "saved-v2")
+    assert state.get_baseline("s0", "align") == "saved-v2"
+
+    # Dirty: the stashed last-saved value must survive navigation, so sync is a
+    # no-op even though the section object may now hold the unsaved edit.
+    state.mark_dirty("s0", "align")
+    state.sync_baseline("s0", "align", "dirty-edit")
+    assert state.get_baseline("s0", "align") == "saved-v2"
+
+
+def test_set_baseline_keeps_first_stash(_qapp):
+    state = AppState()
+    state.load_project(_project())
+
+    # Batch flows (DeepSlice / masks) dirty a section after mutating it and stash
+    # the pre-edit snapshot via set_baseline; the first stash wins.
+    state.set_baseline("s0", "prep", "saved")
+    state.set_baseline("s0", "prep", "later")
+    assert state.get_baseline("s0", "prep") == "saved"
 
 
 def test_clear_all_edits(_qapp):
     state = AppState()
     state.load_project(_project())
     state.mark_dirty("s0", "align")
-    state.set_prep_draft("s1", PrepDraft(mask_dirty=True))
+    state.set_working("s1", "prep", np.ones((2, 2), dtype=bool))
 
     state.clear_all_edits()
     assert not state.any_dirty()
-    assert not state.has_prep_draft("s1")
+    assert not state.has_working("s1", "prep")

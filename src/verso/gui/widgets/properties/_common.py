@@ -2,29 +2,20 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from PyQt6.QtCore import QSize
-from PyQt6.QtGui import QIcon, QPixmap
+from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QButtonGroup, QHBoxLayout, QPushButton, QWidget
 
-_ICONS_DIR = Path(__file__).parent.parent.parent / "icons"
+from verso.gui.utils import colored_svg_pixmap
 
 
 def colored_icon(name: str, color: str) -> QIcon:
-    svg = (_ICONS_DIR / name).read_text(encoding="utf-8").replace("currentColor", color)
-    pixmap = QPixmap()
-    pixmap.loadFromData(svg.encode())
-    return QIcon(pixmap)
-
-
-def white_icon(name: str) -> QIcon:
-    return colored_icon(name, "#ffffff")
+    return QIcon(colored_svg_pixmap(name, color, 64))
 
 
 def eye_icon(visible: bool) -> QIcon:
     name = "eye.svg" if visible else "eye-off.svg"
-    return white_icon(name)
+    return colored_icon(name, "#ffffff")
 
 
 def make_eye_btn() -> QPushButton:

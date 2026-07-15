@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 from PyQt6.QtWidgets import QApplication
 
-from verso.engine.registration import plane_tilt_deg, quicknii_default_anchoring
+from verso.engine.anchoring import plane_tilt_deg, series_default_anchoring
 from verso.gui.widgets.align_handle import _HANDLE_GRIP_PX, _HANDLE_RING_PX
 from verso.gui.widgets.canvas import ImageCanvas
 from verso.gui.widgets.navigator import NavigatorPanel, _SliceView
@@ -29,7 +29,7 @@ def _qapp():
 
 
 def _default_anchoring(axis: int) -> list[float]:
-    return quicknii_default_anchoring(
+    return series_default_anchoring(
         image_width=1000,
         image_height=800,
         max_width=1000,
@@ -48,22 +48,22 @@ def test_navigator_hides_only_parallel_view(_qapp, axis):
 
 
 @pytest.mark.parametrize("view_axis", [0, 2])  # the two tilt views for a coronal project
-def test_slice_view_tilt_clamped_to_45(_qapp, view_axis):
+def test_slice_view_tilt_clamped_to_44(_qapp, view_axis):
     view = _SliceView(view_axis, _DIMS)
     view.set_interpolation_axis(1)  # coronal project
     view._anchoring = _default_anchoring(1)
     view.anchoring_changed.connect(lambda a: setattr(view, "_anchoring", list(a)))
 
-    # Push well past the limit in 1° steps; tilt must never exceed 45°.
+    # Push well past the limit in 1° steps; tilt must never exceed 44°.
     for _ in range(120):
         view._rotate_step(1.0)
-        assert plane_tilt_deg(view._anchoring, 1) <= 45.0 + 1e-6
-    assert plane_tilt_deg(view._anchoring, 1) == pytest.approx(45.0, abs=1e-3)
+        assert plane_tilt_deg(view._anchoring, 1) <= 44.0 + 1e-6
+    assert plane_tilt_deg(view._anchoring, 1) == pytest.approx(44.0, abs=1e-3)
 
     # Rotating back must be allowed (the lock is not sticky).
     for _ in range(10):
         view._rotate_step(-1.0)
-    assert plane_tilt_deg(view._anchoring, 1) == pytest.approx(35.0, abs=1e-3)
+    assert plane_tilt_deg(view._anchoring, 1) == pytest.approx(34.0, abs=1e-3)
 
 
 def test_align_handle_zones_and_visibility(_qapp):

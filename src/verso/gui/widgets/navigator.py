@@ -1,7 +1,9 @@
 """Three-panel orthogonal atlas navigator for the Align/Warp view.
 
 Displays coronal, sagittal, and horizontal reference slices with the
-current cut-plane quadrilateral drawn as a coloured outline.  Interaction:
+current cut plane drawn as a single coloured line through the frame
+center, lettered at each end (e.g. D/V, L/R) to mark the edges.
+Interaction:
 
 - Drag near the crosshair center  → translate cut plane
 - Drag away from the crosshair    → rotate cut plane around that view's axis
@@ -16,19 +18,17 @@ taller for the mouse brain (~208 px vs ~120 px for coronal).
 from __future__ import annotations
 
 import math
-from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 import numpy as np
 from PyQt6.QtCore import QEvent, QPointF, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import (
     QColor,
-    QIcon,
+    QFont,
     QImage,
     QPainter,
     QPen,
     QPixmap,
-    QPolygonF,
 )
 from PyQt6.QtWidgets import (
     QApplication,
@@ -45,21 +45,16 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from verso.engine.registration import plane_tilt_deg
+from verso.engine.anchoring import (
+    clamp_rotation_to_max_tilt,
+    tilt_plane_about_atlas_axis,
+)
 from verso.gui.utils import require
-
-_ICONS_DIR = Path(__file__).parent.parent / "icons"
+from verso.gui.widgets.properties._common import colored_icon
 
 # Scale step per stretch button click
 _SCALE_STEP = 1.02
 _SCALE_STEP_FAST = 1.10
-
-
-def _white_icon(name: str) -> QIcon:
-    svg = (_ICONS_DIR / name).read_text(encoding="utf-8").replace("currentColor", "#ffffff")
-    pixmap = QPixmap()
-    pixmap.loadFromData(svg.encode())
-    return QIcon(pixmap)
 
 
 if TYPE_CHECKING:
@@ -79,10 +74,16 @@ _MOVE_STEP_FAST = 10
 # Per-click rotation step (degrees)
 _ROTATE_STEP_DEG = 1.0
 # Maximum plane tilt (degrees) from the slicing axis allowed via navigator views
-_MAX_TILT_DEG = 45.0
+_MAX_TILT_DEG = 44.0
 
 _OUTLINE_COLOR = QColor(255, 80, 80, 220)
 _CENTER_COLOR = QColor(255, 255, 0, 220)
+_LABEL_COLOR = QColor(255, 255, 0, 235)
+# Anatomical letters at the two ends of the cut-plane line, keyed by the atlas
+# axis the line runs along: (letter at low coordinate, letter at high coordinate).
+#   axis 0 = LR → Left / Right;  axis 1 = AP → Anterior / Posterior;
+#   axis 2 = DV → Dorsal / Ventral.  Matches the canvas orientation conventions.
+_AXIS_LETTERS = {0: ("L", "R"), 1: ("A", "P"), 2: ("D", "V")}
 
 # Radius (px) within which a press counts as "near center" → translate mode
 _TRANSLATE_RADIUS = 14
@@ -115,14 +116,6 @@ def _ndarray_to_qimage(rgb: np.ndarray) -> QImage:
     h, w = rgb.shape[:2]
     data = np.ascontiguousarray(rgb)
     return QImage(data.data, w, h, 3 * w, QImage.Format.Format_RGB888)
-
-
-def _rot_around(vec: np.ndarray, axis: np.ndarray, deg: float) -> np.ndarray:
-    """Rodrigues rotation of *vec* around *axis* by *deg* degrees."""
-    a = math.radians(deg)
-    c, s = math.cos(a), math.sin(a)
-    k = axis / np.linalg.norm(axis)
-    return c * vec + s * np.cross(k, vec) + (1.0 - c) * np.dot(k, vec) * k
 
 
 def _view_height(axis: int, dims: tuple[int, int, int]) -> int:
@@ -171,18 +164,13 @@ class _SliceView(QWidget):
 
     anchoring_changed = pyqtSignal(list)
 
-    _ROTATION_AXES = {
-        0: np.array([1.0, 0.0, 0.0]),
-        1: np.array([0.0, 1.0, 0.0]),
-        2: np.array([0.0, 0.0, 1.0]),
-    }
-    # Drag-clockwise → plane-rotates-clockwise in each view.
-    # Derived from Rodrigues applied to the cut-plane center: positive θ moves
-    # the leading edge in the clockwise direction in each view's screen space.
-    _ANGLE_SIGNS = {0: +1, 1: -1, 2: +1}
+    # Drag-clockwise → plane-rotates-clockwise in each view. The plane is rotated
+    # about the view's own atlas axis (index == self._axis); positive θ moves the
+    # leading edge clockwise in each view's screen space.
+    _ANGLE_SIGNS: ClassVar[dict[int, int]] = {0: +1, 1: -1, 2: +1}
     # Atlas axes addressed by each view's left/right and up/down buttons:
     #   view axis → (col_atlas_axis, row_atlas_axis)
-    _TRANSLATE_AXES = {
+    _TRANSLATE_AXES: ClassVar[dict[int, tuple[int, int]]] = {
         0: (1, 2),  # sagittal:   cols=AP, rows=DV
         1: (0, 2),  # coronal:    cols=LR, rows=DV
         2: (0, 1),  # horizontal: cols=LR, rows=AP
@@ -199,16 +187,17 @@ class _SliceView(QWidget):
         self._dims = dims
         self._anchoring: list[float] | None = None
         self._view_h = _view_height(axis, dims)
-        self._reverse_axis: bool = False
-        # The project's slicing axis (QuickNII voxel index 0/1/2).  Controls
-        # which translate/rotate steps get sign-flipped when the series is
-        # reversed.
+        # The project's slicing axis (anchoring voxel index 0/1/2), used to
+        # pick which orthogonal view is hidden (the one parallel to the slices)
+        # and as the reference axis for the tilt clamp.
         self._interpolation_axis: int = 1
 
         # drag state
         self._drag_mode: str | None = None
         self._drag_start: tuple[float, float] | None = None
         self._drag_start_anchoring: list[float] | None = None
+        # Last cursor polar angle (rad) about the center, for incremental rotation.
+        self._drag_last_angle: float | None = None
 
         self.setStyleSheet("background: #1a1a1a;")
 
@@ -317,12 +306,14 @@ class _SliceView(QWidget):
         self.setFixedSize(total_w, total_h)
 
         self._base_pixmap: QPixmap | None = None
-        self._corners: list[tuple[float, float]] = []
+        # Cut-plane line: two display-space endpoints, each paired with its end letter.
+        self._line: tuple[tuple[float, float], tuple[float, float]] | None = None
+        self._line_labels: tuple[tuple[str, tuple[float, float]], ...] = ()
         self._center_display: tuple[float, float] | None = None
 
     def _make_btn(self, icon_name: str, tooltip: str, w: int, h: int) -> QPushButton:
         btn = QPushButton()
-        btn.setIcon(_white_icon(icon_name))
+        btn.setIcon(colored_icon(icon_name, "#ffffff"))
         btn.setIconSize(QSize(w - 2, h - 2))
         btn.setFixedSize(w, h)
         btn.setToolTip(tooltip)
@@ -346,9 +337,6 @@ class _SliceView(QWidget):
             self._btn_cw,
         ):
             btn.setEnabled(enabled)
-
-    def set_reverse_axis(self, reverse: bool) -> None:
-        self._reverse_axis = reverse
 
     def set_interpolation_axis(self, axis: int) -> None:
         self._interpolation_axis = int(axis)
@@ -379,8 +367,28 @@ class _SliceView(QWidget):
         o = np.array(anchoring[:3])
         u = np.array(anchoring[3:6])
         v = np.array(anchoring[6:9])
-        self._corners = [self._proj(c) for c in [o, o + u, o + u + v, o + v]]
-        self._center_display = self._proj(o + u / 2.0 + v / 2.0)
+        center = o + u / 2.0 + v / 2.0
+
+        # The cut plane is edge-on in this view, so it reads as a line. Draw the
+        # plane's midline along whichever spanning vector lies in the view (the
+        # one most perpendicular to the into-screen axis — which is the atlas
+        # axis whose index equals this view's axis).
+        in_plane = u if abs(u[self._axis]) < abs(v[self._axis]) else v
+        p_lo = center - in_plane / 2.0
+        p_hi = center + in_plane / 2.0
+
+        # End letters come from the atlas axis the line runs along; order the
+        # endpoints by that coordinate so the "low" letter sits at the low end.
+        dom = int(np.argmax(np.abs(in_plane)))
+        lo_letter, hi_letter = _AXIS_LETTERS[dom]
+        if p_lo[dom] > p_hi[dom]:
+            p_lo, p_hi = p_hi, p_lo
+
+        d_lo = self._proj(p_lo)
+        d_hi = self._proj(p_hi)
+        self._line = (d_lo, d_hi)
+        self._line_labels = ((lo_letter, d_lo), (hi_letter, d_hi))
+        self._center_display = self._proj(center)
         self._redraw()
 
     # ------------------------------------------------------------------
@@ -390,66 +398,20 @@ class _SliceView(QWidget):
         """Translate cut-plane origin along an atlas axis by *delta* voxels."""
         if self._anchoring is None:
             return
-        if atlas_axis == self._interpolation_axis and self._reverse_axis:
-            delta = -delta
         new_anchoring = list(self._anchoring)
         new_anchoring[atlas_axis] += delta
         self.anchoring_changed.emit(new_anchoring)
-
-    def _tilt_after(self, u: np.ndarray, v: np.ndarray, rot_axis: np.ndarray, deg: float) -> float:
-        """Plane tilt (deg) that would result from rotating u,v by ``deg``."""
-        u_new = _rot_around(u, rot_axis, deg)
-        v_new = _rot_around(v, rot_axis, deg)
-        anchoring = [0.0, 0.0, 0.0, *u_new.tolist(), *v_new.tolist()]
-        return plane_tilt_deg(anchoring, self._interpolation_axis)
-
-    def _clamp_rotation_deg(
-        self, u: np.ndarray, v: np.ndarray, rot_axis: np.ndarray, deg: float
-    ) -> float:
-        """Reduce ``deg`` so the plane never tilts past ±_MAX_TILT_DEG.
-
-        Tilt is monotonic in the rotation magnitude over a 90° window, so cap the
-        request to that window and bisect for the boundary when it overshoots.
-        Rotation about the slicing axis (the in-plane spin of the now-removed
-        parallel view) leaves tilt unchanged, so this is a no-op there.
-        """
-        deg = max(-90.0, min(90.0, deg))
-        if deg == 0.0 or self._tilt_after(u, v, rot_axis, deg) <= _MAX_TILT_DEG:
-            return deg
-        if self._tilt_after(u, v, rot_axis, 0.0) > _MAX_TILT_DEG:
-            # Already past the limit (e.g. an imported plane): only allow tilt to
-            # decrease, never increase.
-            return (
-                deg
-                if self._tilt_after(u, v, rot_axis, deg) < self._tilt_after(u, v, rot_axis, 0.0)
-                else 0.0
-            )
-        lo, hi = 0.0, deg
-        for _ in range(24):
-            mid = 0.5 * (lo + hi)
-            if self._tilt_after(u, v, rot_axis, mid) <= _MAX_TILT_DEG:
-                lo = mid
-            else:
-                hi = mid
-        return lo
 
     def _rotate_step(self, deg_signed: float) -> None:
         """Rotate cut plane around this view's perpendicular atlas axis."""
         if self._anchoring is None:
             return
         deg = deg_signed * self._ANGLE_SIGNS[self._axis]
-        if self._reverse_axis and self._axis != self._interpolation_axis:
-            deg = -deg
-        o = np.array(self._anchoring[:3])
-        u = np.array(self._anchoring[3:6])
-        v = np.array(self._anchoring[6:9])
-        center = o + u / 2.0 + v / 2.0
-        rot_axis = self._ROTATION_AXES[self._axis]
-        deg = self._clamp_rotation_deg(u, v, rot_axis, deg)
-        u_new = _rot_around(u, rot_axis, deg)
-        v_new = _rot_around(v, rot_axis, deg)
-        new_o = center - u_new / 2.0 - v_new / 2.0
-        self.anchoring_changed.emit(new_o.tolist() + u_new.tolist() + v_new.tolist())
+        deg = clamp_rotation_to_max_tilt(
+            self._anchoring, self._axis, deg, self._interpolation_axis, _MAX_TILT_DEG
+        )
+        new_anchoring = tilt_plane_about_atlas_axis(self._anchoring, self._axis, deg)
+        self.anchoring_changed.emit(new_anchoring)
 
     # ------------------------------------------------------------------
     # Coordinate helpers
@@ -485,10 +447,11 @@ class _SliceView(QWidget):
         painter = QPainter(pm)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        if self._corners:
+        if self._line is not None:
+            (x0, y0), (x1, y1) = self._line
             painter.setPen(QPen(_OUTLINE_COLOR, 1.5))
-            poly = QPolygonF([QPointF(x, y) for x, y in self._corners])
-            painter.drawPolygon(poly)
+            painter.drawLine(QPointF(x0, y0), QPointF(x1, y1))
+            self._draw_end_labels(painter, x0, y0, x1, y1)
 
         if self._center_display:
             cx, cy = self._center_display
@@ -501,6 +464,38 @@ class _SliceView(QWidget):
 
         painter.end()
         self._canvas.setPixmap(pm)
+
+    def _draw_end_labels(
+        self, painter: QPainter, x0: float, y0: float, x1: float, y1: float
+    ) -> None:
+        """Draw the anatomical end letters just inside each line endpoint.
+
+        The line usually spans the whole frame, so letters are nudged inward
+        (toward the line center) and offset perpendicular, then clamped inside
+        the canvas so they never clip at the edges.
+        """
+        if not self._line_labels:
+            return
+        font = QFont(painter.font())
+        font.setPointSize(9)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.setPen(QPen(_LABEL_COLOR, 1))
+
+        cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+        dx, dy = x1 - x0, y1 - y0
+        length = math.hypot(dx, dy) or 1.0
+        # Perpendicular unit vector for a small sideways offset.
+        nx, ny = -dy / length, dx / length
+
+        for letter, (ex, ey) in self._line_labels:
+            inx, iny = cx - ex, cy - ey
+            inl = math.hypot(inx, iny) or 1.0
+            px = ex + inx / inl * 11.0 + nx * 7.0
+            py = ey + iny / inl * 11.0 + ny * 7.0
+            px = min(max(px, 3.0), _VIEW_W - 9.0)
+            py = min(max(py, 11.0), self._view_h - 3.0)
+            painter.drawText(QPointF(px, py), letter)
 
     # ------------------------------------------------------------------
     # Mouse interaction (anchored to the canvas widget itself)
@@ -527,9 +522,13 @@ class _SliceView(QWidget):
             self._drag_mode = "translate" if dist <= _TRANSLATE_RADIUS else "rotate"
         else:
             self._drag_mode = "translate"
-        # For translate: apply immediately so a single click moves the plane
+        # For translate: apply immediately so a single click moves the plane.
+        # For rotate: seed the incremental angle from the press point.
         if self._drag_mode == "translate":
             self._handle_translate(cx, cy)
+        elif self._center_display is not None:
+            ccx, ccy = self._center_display
+            self._drag_last_angle = math.atan2(cy - ccy, cx - ccx)
 
     def _on_canvas_moved(self, cx: float, cy: float) -> None:
         if self._drag_mode is None or self._drag_start is None:
@@ -543,6 +542,7 @@ class _SliceView(QWidget):
         self._drag_mode = None
         self._drag_start = None
         self._drag_start_anchoring = None
+        self._drag_last_angle = None
 
     def _handle_translate(self, cx: float, cy: float) -> None:
         """Absolute placement: move cut-plane center to the cursor's atlas position."""
@@ -571,30 +571,24 @@ class _SliceView(QWidget):
         self.anchoring_changed.emit(new_o.tolist() + anchoring[3:])
 
     def _handle_rotate(self, cx: float, cy: float) -> None:
-        if self._drag_start_anchoring is None or self._center_display is None:
+        if self._anchoring is None or self._center_display is None or self._drag_last_angle is None:
             return
-        sx, sy = require(self._drag_start)
         ccx, ccy = self._center_display
-        start_angle = math.atan2(sy - ccy, sx - ccx)
         cur_angle = math.atan2(cy - ccy, cx - ccx)
-        deg = math.degrees(cur_angle - start_angle) * self._ANGLE_SIGNS[self._axis]
-        # The two views that aren't perpendicular to the slicing axis rotate
-        # around axes that tilt the plane along the slicing direction —
-        # invert when the series is reversed.
-        if self._reverse_axis and self._axis != self._interpolation_axis:
-            deg = -deg
+        # Incremental step since the last cursor position, wrapped into
+        # (-180°, 180°]. Applying the small step to the *current* anchoring (not
+        # the press-time one) means sweeping the cursor past a half-turn just
+        # accumulates smoothly instead of snapping to the opposite rotation, and
+        # the tilt clamp simply stops further travel at the limit.
+        d = (cur_angle - self._drag_last_angle + math.pi) % (2.0 * math.pi) - math.pi
+        self._drag_last_angle = cur_angle
+        deg = math.degrees(d) * self._ANGLE_SIGNS[self._axis]
 
-        o = np.array(self._drag_start_anchoring[:3])
-        u = np.array(self._drag_start_anchoring[3:6])
-        v = np.array(self._drag_start_anchoring[6:9])
-        center = o + u / 2.0 + v / 2.0
-
-        rot_axis = self._ROTATION_AXES[self._axis]
-        deg = self._clamp_rotation_deg(u, v, rot_axis, deg)
-        u_new = _rot_around(u, rot_axis, deg)
-        v_new = _rot_around(v, rot_axis, deg)
-        new_o = center - u_new / 2.0 - v_new / 2.0
-        self.anchoring_changed.emit(new_o.tolist() + u_new.tolist() + v_new.tolist())
+        deg = clamp_rotation_to_max_tilt(
+            self._anchoring, self._axis, deg, self._interpolation_axis, _MAX_TILT_DEG
+        )
+        new_anchoring = tilt_plane_about_atlas_axis(self._anchoring, self._axis, deg)
+        self.anchoring_changed.emit(new_anchoring)
 
 
 class NavigatorPanel(QWidget):
@@ -664,7 +658,7 @@ class NavigatorPanel(QWidget):
         self._groups: dict[int, QGroupBox] = {}
         self._hidden_axis: int | None = None
         view_titles = ["Sagittal", "Coronal", "Horizontal"]
-        for view, title in zip((self._sag, self._cor, self._hor), view_titles):
+        for view, title in zip((self._sag, self._cor, self._hor), view_titles, strict=False):
             view.anchoring_changed.connect(self._on_anchoring_changed)
             grp = QGroupBox(title)
             grp.setStyleSheet(_VIEW_GROUP_QSS)
@@ -746,7 +740,7 @@ class NavigatorPanel(QWidget):
                 self._stretch_btns.append(btn)
 
             icon_lbl = QLabel()
-            icon_lbl.setPixmap(_white_icon(icon_name).pixmap(QSize(16, 16)))
+            icon_lbl.setPixmap(colored_icon(icon_name, "#ffffff").pixmap(QSize(16, 16)))
             icon_lbl.setFixedSize(18, 18)
             icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             inner.addWidget(icon_lbl)
@@ -772,10 +766,6 @@ class NavigatorPanel(QWidget):
     def set_stretch_enabled(self, enabled: bool) -> None:
         for btn in self._stretch_btns:
             btn.setEnabled(enabled)
-
-    def set_reverse_axis(self, reverse: bool) -> None:
-        for view in (self._sag, self._cor, self._hor):
-            view.set_reverse_axis(reverse)
 
     def set_interpolation_axis(self, axis: int) -> None:
         for view in (self._sag, self._cor, self._hor):
@@ -804,7 +794,7 @@ class NavigatorPanel(QWidget):
                 view.set_buttons_enabled(False)
             return
         center = self._atlas.cut_center(self._anchoring)
-        idx_for = {0: int(round(center[0])), 1: int(round(center[1])), 2: int(round(center[2]))}
+        idx_for = {0: round(center[0]), 1: round(center[1]), 2: round(center[2])}
         views_by_axis = {0: self._sag, 1: self._cor, 2: self._hor}
 
         for ax, view in views_by_axis.items():

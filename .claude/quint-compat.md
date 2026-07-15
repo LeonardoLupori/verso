@@ -98,7 +98,7 @@ Where:
 - `unit_u = u / |u|`, `u_stretch = |u|`
 - `unit_v = v / |v|`, `v_stretch = |v|`
 
-Interpolation (linear regression / piecewise linear) is performed in unpacked space, then repacked to the 9-component anchoring format. VERSO's `quicknii_series_anchorings()` in `engine/registration.py` mirrors this algorithm and parameterizes it on the project's `interpolation_axis` (the original QuickNII algorithm is coronal-only).
+Interpolation (linear regression / piecewise linear) is performed in unpacked space, then repacked to the 9-component anchoring format. VERSO's `propagate_series_anchorings()` in `engine/anchoring.py` mirrors this algorithm and parameterizes it on the project's `interpolation_axis` (the original QuickNII algorithm is coronal-only).
 
 ## VisuAlign JSON format
 
@@ -142,15 +142,18 @@ warp to match VisuAlign, the triangulation must be done in section *pixel* space
 not normalised `[0,1]²`** — see [warping.md](warping.md#triangulation-space--aspect-ratio-visualign-parity).
 
 VERSO stores control points internally as `ControlPoint(src_x, src_y, dst_x, dst_y)`
-in normalised `[0, 1]` (src = atlas, dst = section). Conversion at the I/O boundary
-(`width` `w`, `height` `h`):
+in **working-resolution pixel coordinates** (src = atlas overlay, dst = section
+image) — the same units as the VisuAlign marker itself, so no conversion happens
+at the I/O boundary:
 
-- **Load**: `src = (ox/w, oy/h)`, `dst = (nx/w, ny/h)`
-- **Save**: `[src_x·w, src_y·h, dst_x·w, dst_y·h]`
+- **Load**: `src = (ox, oy)`, `dst = (nx, ny)` — pixel values pass straight through.
+- **Save**: `[src_x, src_y, dst_x, dst_y]` — pixel values pass straight through
+  (see `_control_points_to_markers` in `engine/io/quint_io.py`).
 
-A legacy normalised-dict form `{"x", "y", "dx", "dy"}` (where `dst = (x+dx, y+dy)`)
-is still accepted on load for backward compatibility with old VERSO exports, but
-is never written.
+A legacy normalised-dict form `{"x", "y", "dx", "dy"}` (in `[0, 1]`, where
+`dst = (x+dx, y+dy)`) is still accepted on load for backward compatibility with
+old VERSO exports — that legacy form *is* normalised and gets multiplied by
+`(w, h)` on load — but is never written.
 
 > **Corner anchors are not exported.** Both tools synthesise four identity
 > anchors 10% outside the frame on load (`_CORNERS` / `Slice.triangulate()`), so
@@ -184,9 +187,11 @@ Export QuickNII XML / JSON, Export VisuAlign JSON).
 
 Internal helpers:
 - `_markers_to_control_points(markers, width, height)` — `[[ox, oy, nx, ny]]`
-  pixel arrays (or legacy `{x, y, dx, dy}` dicts) → `[ControlPoint]` (normalised).
-- `_control_points_to_markers(cps, width, height)` — `[ControlPoint]` →
-  `[[src_x·w, src_y·h, dst_x·w, dst_y·h]]` pixel arrays.
+  pixel arrays (or legacy `{x, y, dx, dy}` dicts) → `[ControlPoint]`
+  (working-resolution pixels; only the legacy normalised dicts are multiplied by `width`/`height`).
+- `_control_points_to_markers(cps)` — `[ControlPoint]` →
+  `[[src_x, src_y, dst_x, dst_y]]` pixel arrays (rounded to 6 dp; pixel values pass
+  straight through, no scaling).
 
 ### Round-trip guarantee
 

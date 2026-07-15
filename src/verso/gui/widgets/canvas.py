@@ -6,8 +6,8 @@ Item stack (low z to high):
                      together with CompositionMode_Lighten (component-wise max),
                      which is the GPU equivalent of np.maximum.reduce.
   overlay_item     — atlas overlay (z=10), normal SourceOver alpha blend.
-  disp_halo/disp   — warp displacement lines (z=14, 15).
-  cp_item          — warp control points (z=20).
+  _cp_overlay      — warp displacement lines (z=14, 15) + control points (z=20),
+                     owned by a ``ControlPointOverlay``.
   stroke_item      — live freehand mask preview (z=30).
 
 Align handle: in Align mode a centre gizmo (``AlignHandle``) is drawn over the
@@ -22,7 +22,7 @@ outside Align mode and when no overlay is present.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Literal
+from typing import ClassVar, Literal
 
 import numpy as np
 import pyqtgraph as pg
@@ -40,6 +40,9 @@ from PyQt6.QtWidgets import (
 
 from verso.gui.utils import require
 from verso.gui.widgets.align_handle import AlignHandle
+from verso.gui.widgets.annotation_overlay import AnnotationLayer, AnnotationOverlay
+from verso.gui.widgets.area_overlay import AreaLayer, AreaOverlay
+from verso.gui.widgets.control_points import ControlPointOverlay
 from verso.gui.widgets.cursors import (
     make_circle_cursor,
     make_cross_cursor,
@@ -74,7 +77,7 @@ class _OverlayViewBox(pg.ViewBox):
     canvas_dragged = pyqtSignal(float, float)  # drag update
     canvas_drag_ended = pyqtSignal(float, float)  # drag finish
 
-    _InteractionMode = Literal["align", "warp", "prep", "view"]
+    _InteractionMode = Literal["align", "warp", "prep", "annotate", "view"]
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -88,12 +91,16 @@ class _OverlayViewBox(pg.ViewBox):
         self._align_handle = handle
 
     def mouseClickEvent(self, ev) -> None:
-        if ev.double() and ev.button() == Qt.MouseButton.LeftButton:
+        # Middle-click resets the zoom (auto-range) in every mode. This replaces
+        # left double-click, which only worked outside the placement modes (in
+        # warp/prep/annotate a double-click's second press places a point) and so
+        # was inconsistent across views.
+        if ev.button() == Qt.MouseButton.MiddleButton:
             self.autoRange()
             ev.accept()
             return
         if (
-            self._interaction_mode in ("warp", "prep")
+            self._interaction_mode in ("warp", "prep", "annotate")
             and ev.button() == Qt.MouseButton.LeftButton
             and not SpaceState.held
         ):
@@ -141,7 +148,7 @@ class _OverlayViewBox(pg.ViewBox):
                 # Default: drag anywhere else translates the atlas overlay.
                 self.overlay_panned.emit(p2.x() - p1.x(), p2.y() - p1.y())
         elif (
-            self._interaction_mode in ("warp", "prep")
+            self._interaction_mode in ("warp", "prep", "annotate")
             and not SpaceState.held
             and ev.button() == Qt.MouseButton.LeftButton
         ):
@@ -187,7 +194,7 @@ class ImageCanvas(QWidget):
     # content (e.g. the atlas outline) so it stays ~1 screen-pixel wide.
     view_range_changed = pyqtSignal()
 
-    _InteractionMode = Literal["align", "warp", "prep", "view"]
+    _InteractionMode = Literal["align", "warp", "prep", "annotate", "view"]
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -245,21 +252,16 @@ class ImageCanvas(QWidget):
         self.overlay_item.setOpacity(0.5)
         self.overlay_item.setZValue(10)
 
-        # Control-point displacement lines (Warp mode) — drawn below the dots.
-        self.disp_halo_item = pg.PlotCurveItem(
-            pen=pg.mkPen((0, 0, 0, 220), width=5.0),
-            connect="pairs",
-        )
-        self.disp_halo_item.setZValue(14)
-        self.disp_item = pg.PlotCurveItem(
-            pen=pg.mkPen((255, 255, 255, 255), width=2.75),
-            connect="pairs",
-        )
-        self.disp_item.setZValue(15)
+        # Control-point dots + displacement vectors (Warp mode). Owns its own
+        # graphics items; the canvas adds them to the plot at their z-values.
+        self._cp_overlay = ControlPointOverlay()
 
-        # Control-point scatter (Warp mode)
-        self.cp_item = pg.ScatterPlotItem(size=10, pxMode=True)
-        self.cp_item.setZValue(20)
+        # Point-annotation layers (Annotate mode). Manages its own scatter items
+        # dynamically, so it needs the plot to add/remove them.
+        self._annotation_overlay = AnnotationOverlay(self.plot)
+
+        # Area-mask layers (Annotate mode), rendered below the point overlay.
+        self._area_overlay = AreaOverlay(self.plot)
 
         # Live freehand stroke preview (Prep mode)
         self.stroke_item = pg.PlotCurveItem(
@@ -271,9 +273,8 @@ class ImageCanvas(QWidget):
         self._align_handle = AlignHandle()
 
         self.plot.addItem(self.overlay_item)
-        self.plot.addItem(self.disp_halo_item)
-        self.plot.addItem(self.disp_item)
-        self.plot.addItem(self.cp_item)
+        for item in self._cp_overlay.items():
+            self.plot.addItem(item)
         self.plot.addItem(self.stroke_item)
         self.plot.addItem(self._align_handle)
         self._vb.set_align_handle(self._align_handle)
@@ -295,7 +296,7 @@ class ImageCanvas(QWidget):
     # Public API
     # ------------------------------------------------------------------
 
-    def resizeEvent(self, event) -> None:  # noqa: N802 (Qt signature)
+    def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         # Keep the orientation overlay covering the full canvas area.
         self._orientation.setGeometry(self.rect())
@@ -401,21 +402,34 @@ class ImageCanvas(QWidget):
 
     def _on_shift_changed(self) -> None:
         """Called by the app-level filter when Shift state changes."""
-        if self._interaction_mode == "prep" and self.view.underMouse():
-            self._refresh_prep_cursor()
+        # Shift recolours the draw/erase cursor in both Prep and Annotate.
+        if self._interaction_mode in ("prep", "annotate") and self.view.underMouse():
+            self._refresh_cursor()
 
     def set_brush_cursor(self, active: bool, radius_img: int) -> None:
         """Enable the circular brush cursor (``active``) sized to ``radius_img``
         image pixels. When inactive the crosshair cursor is used."""
         self._brush_mode = bool(active)
         self._brush_radius_img = max(int(radius_img), 1)
-        if self._interaction_mode == "prep" and self.view.underMouse():
-            self._refresh_prep_cursor()
+        if self._interaction_mode in ("prep", "annotate") and self.view.underMouse():
+            self._refresh_cursor()
 
     def _on_view_range_changed(self, *_: object) -> None:
-        if self._brush_mode and self._interaction_mode == "prep" and self.view.underMouse():
-            self._refresh_prep_cursor()
+        # Keep the brush circle sized to the footprint as the user zooms.
+        if (
+            self._brush_mode
+            and self._interaction_mode in ("prep", "annotate")
+            and self.view.underMouse()
+        ):
+            self._refresh_cursor()
         self.view_range_changed.emit()
+
+    def _brush_circle_cursor(self):
+        """A circular cursor sized to the brush footprint; red while Shift-erasing."""
+        rgb = (255, 140, 140) if ShiftState.held else (120, 200, 255)
+        px_per_img = 1.0 / max(self._vb.viewPixelSize()[0], 1e-9)
+        diameter = round(2 * self._brush_radius_img * px_per_img)
+        return make_circle_cursor(rgb, diameter)
 
     def image_to_screen_scale(self) -> float:
         """Return screen pixels per image pixel at the current zoom.
@@ -439,11 +453,8 @@ class ImageCanvas(QWidget):
             return
         if self._apply_pan_cursor():
             return
-        rgb = (255, 140, 140) if ShiftState.held else (120, 200, 255)
         if self._brush_mode:
-            px_per_img = 1.0 / max(self._vb.viewPixelSize()[0], 1e-9)
-            diameter = int(round(2 * self._brush_radius_img * px_per_img))
-            self.view.setCursor(make_circle_cursor(rgb, diameter))
+            self.view.setCursor(self._brush_circle_cursor())
             return
         self.view.setCursor(self._cursor_erase if ShiftState.held else self._cursor_draw)
 
@@ -471,7 +482,7 @@ class ImageCanvas(QWidget):
             self.plot.removeItem(item)
 
         first_shape: tuple[int, int] | None = None
-        for item, plane in zip(self._channel_items, planes):
+        for item, plane in zip(self._channel_items, planes, strict=False):
             if plane is None:
                 item.clear()
                 item.setVisible(False)
@@ -551,7 +562,7 @@ class ImageCanvas(QWidget):
             self._refresh_align_cursor()
         self.mouse_position_changed.emit(vb_pos.x(), vb_pos.y())
 
-    _HANDLE_CURSORS = {
+    _HANDLE_CURSORS: ClassVar[dict[str, Qt.CursorShape]] = {
         "stretch_x": Qt.CursorShape.SizeHorCursor,
         "stretch_y": Qt.CursorShape.SizeVerCursor,
     }
@@ -583,6 +594,13 @@ class ImageCanvas(QWidget):
             self._refresh_align_cursor()
         elif self._interaction_mode == "prep":
             self._refresh_prep_cursor()
+        elif self._interaction_mode == "annotate":
+            if self._apply_pan_cursor():
+                return
+            if self._brush_mode:
+                self.view.setCursor(self._brush_circle_cursor())
+            else:
+                self.view.setCursor(Qt.CursorShape.CrossCursor)
         elif not self._apply_pan_cursor():
             self.view.unsetCursor()
 
@@ -617,24 +635,6 @@ class ImageCanvas(QWidget):
         self._space_panning = panning
         self._refresh_cursor()
 
-    _CP_SYMBOLS: dict[str, str] = {
-        "Circle": "o",
-        "Cross": "+",
-        "Square": "s",
-        "Diamond": "d",
-    }
-    _CP_COLOR_RGB: dict[str, tuple[int, int, int]] = {
-        "Orange": (255, 96, 0),
-        "Cyan": (0, 255, 255),
-        "Yellow": (255, 245, 0),
-        "Red": (255, 32, 32),
-        "White": (255, 255, 255),
-        "Magenta": (255, 0, 255),
-    }
-    # Fixed, contrasting colour for automatically-generated control points so
-    # they stand apart from the user's manual ones regardless of the CP palette.
-    _AUTO_CP_COLOR_RGB: tuple[int, int, int] = (0, 200, 255)
-
     def set_control_points(
         self,
         dst_pts: list[tuple[float, float]],
@@ -649,77 +649,37 @@ class ImageCanvas(QWidget):
     ) -> None:
         """Draw warp control points and their displacement vectors.
 
-        Args:
-            dst_pts: List of (x, y) in normalised [0, 1] section coords (pin position).
-            display_w / display_h: Section display dimensions in pixels.
-            hovered_idx: Index of the point under the cursor (-1 = none).
-            cp_size: Normal point diameter in pixels.
-            cp_shape: One of Circle / Cross / Square / Diamond.
-            cp_color: Named colour from the properties panel palette.
-            src_pts: Atlas-space normalised origins for each CP. When provided,
-                a dashed line is drawn from each src to its dst (the displacement
-                vector, matching VisuAlign's pin rendering).
-            auto_flags: Per-point flags; points marked True are drawn in the
-                automatic-CP colour to distinguish them from manual points.
+        Thin pass-through to :class:`ControlPointOverlay`; see its ``set`` for the
+        full argument semantics.
         """
-        if not dst_pts:
-            self.cp_item.clear()
-            self.disp_halo_item.clear()
-            self.disp_item.clear()
-            return
-
-        symbol = self._CP_SYMBOLS.get(cp_shape, "o")
-        if cp_color.startswith("#") and len(cp_color) == 7:
-            r, g, b = int(cp_color[1:3], 16), int(cp_color[3:5], 16), int(cp_color[5:7], 16)
-        else:
-            r, g, b = self._CP_COLOR_RGB.get(cp_color, (255, 80, 0))
-        hov_size = cp_size + 4
-
-        # Displacement lines (src → dst)
-        if src_pts and len(src_pts) == len(dst_pts):
-            xs, ys = [], []
-            for (ss, st), (ds, dt) in zip(src_pts, dst_pts):
-                xs += [ss * display_w, ds * display_w]
-                ys += [st * display_h, dt * display_h]
-            self.disp_halo_item.setData(x=xs, y=ys)
-            self.disp_item.setPen(pg.mkPen((r, g, b, 255), width=2.75))
-            self.disp_item.setData(x=xs, y=ys)
-        else:
-            self.disp_halo_item.clear()
-            self.disp_item.clear()
-
-        ar, ag, ab = self._AUTO_CP_COLOR_RGB
-        spots = []
-        for i, (s, t) in enumerate(dst_pts):
-            px, py = s * display_w, t * display_h
-            is_auto = bool(auto_flags[i]) if auto_flags and i < len(auto_flags) else False
-            br, bg, bb = (ar, ag, ab) if is_auto else (r, g, b)
-            if i == hovered_idx:
-                spots.append(
-                    {
-                        "pos": (px, py),
-                        "size": hov_size,
-                        "symbol": symbol,
-                        "brush": pg.mkBrush(br, bg, bb, 255),
-                        "pen": pg.mkPen(255, 255, 255, 255, width=2.5),
-                    }
-                )
-            else:
-                spots.append(
-                    {
-                        "pos": (px, py),
-                        "size": cp_size,
-                        "symbol": symbol,
-                        "brush": pg.mkBrush(br, bg, bb, 255),
-                        "pen": pg.mkPen(0, 0, 0, 240, width=1.5),
-                    }
-                )
-        self.cp_item.setData(spots)
+        self._cp_overlay.set(
+            dst_pts,
+            display_w,
+            display_h,
+            hovered_idx=hovered_idx,
+            cp_size=cp_size,
+            cp_shape=cp_shape,
+            cp_color=cp_color,
+            src_pts=src_pts,
+            auto_flags=auto_flags,
+        )
 
     def clear_control_points(self) -> None:
-        self.cp_item.clear()
-        self.disp_halo_item.clear()
-        self.disp_item.clear()
+        self._cp_overlay.clear()
+
+    def set_annotations(self, layers: list[AnnotationLayer]) -> None:
+        """Draw point-annotation layers (Annotate mode). See AnnotationOverlay."""
+        self._annotation_overlay.set(layers)
+
+    def clear_annotations(self) -> None:
+        self._annotation_overlay.clear()
+
+    def set_area_masks(self, layers: list[AreaLayer]) -> None:
+        """Draw area-mask layers (Annotate mode). See AreaOverlay."""
+        self._area_overlay.set(layers)
+
+    def clear_area_masks(self) -> None:
+        self._area_overlay.clear()
 
     def set_stroke_preview(
         self,
@@ -728,7 +688,7 @@ class ImageCanvas(QWidget):
     ) -> None:
         """Draw a live freehand stroke preview in image-pixel coordinates."""
         if len(points) < 2:
-            self.stroke_item.clear()
+            self.clear_stroke_preview()
             return
         xs = [point[0] for point in points]
         ys = [point[1] for point in points]
@@ -736,7 +696,12 @@ class ImageCanvas(QWidget):
         self.stroke_item.setData(x=xs, y=ys)
 
     def clear_stroke_preview(self) -> None:
+        # PlotCurveItem.clear() drops the curve data but, unlike setData(), does
+        # not request a repaint — so force one. Otherwise the stroke lingers on
+        # screen until some unrelated event redraws the scene (e.g. an empty
+        # lasso that removes nothing, so no annotation re-render follows).
         self.stroke_item.clear()
+        self.stroke_item.update()
 
     def set_overlay_opacity(self, opacity: float) -> None:
         """Set overlay opacity in [0, 1]."""
@@ -751,7 +716,7 @@ class ImageCanvas(QWidget):
         self.overlay_item.clear()
         self._overlay_present = False
         self._update_handle_visibility()
-        self.cp_item.clear()
-        self.disp_halo_item.clear()
-        self.disp_item.clear()
+        self._cp_overlay.clear()
+        self._annotation_overlay.clear()
+        self._area_overlay.clear()
         self.stroke_item.clear()

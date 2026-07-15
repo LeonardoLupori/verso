@@ -26,6 +26,7 @@ Coordinate conventions
 
 from __future__ import annotations
 
+import contextlib
 import json
 import tempfile
 from functools import lru_cache
@@ -33,10 +34,10 @@ from pathlib import Path
 
 import numpy as np
 
+from verso.engine.anchoring import anchoring_to_vectors, atlas_to_normalized
 from verso.engine.model.alignment import ControlPoint
 from verso.engine.model.elastix import ElastixParams
 from verso.engine.preprocessing import morph_mask
-from verso.engine.registration import anchoring_to_vectors, atlas_to_normalized
 
 # resources/ lives at the package root (src/verso/resources), alongside gui/engine.
 _RESOURCES = Path(__file__).parent.parent / "resources"
@@ -108,7 +109,7 @@ def anchor_source_points(
         cp_mask: optional bool ``(out_h, out_w)`` gating mask.
 
     Returns:
-        ``(K, 2)`` float64 array of normalised ``(s, t)`` source positions.
+        ``(K, 2)`` float64 array of working-resolution pixel ``(x, y)`` source positions.
     """
     res = load_anchor_lines()
     curated_shape = np.asarray(res["shape"], dtype=np.float64)  # [AP, DV, ML]
@@ -129,14 +130,14 @@ def anchor_source_points(
         if len(dense) < 2:
             continue
         dense = dense * scale
-        qn = dense[:, [2, 0, 1]]  # → QuickNII [ML, AP, DV]
-        signed = (qn - o).dot(normal)
+        ml_ap_dv = dense[:, [2, 0, 1]]  # → anchoring order [ML, AP, DV]
+        signed = (ml_ap_dv - o).dot(normal)
         for idx in np.where(np.diff(np.sign(signed)))[0]:
             span = signed[idx + 1] - signed[idx]
             if span == 0:
                 continue
             frac = -signed[idx] / span
-            cross = qn[idx] + frac * (qn[idx + 1] - qn[idx])
+            cross = ml_ap_dv[idx] + frac * (ml_ap_dv[idx + 1] - ml_ap_dv[idx])
             s, t = atlas_to_normalized(cross, anchoring)
             if not (0.0 <= s <= 1.0 and 0.0 <= t <= 1.0):
                 continue
@@ -145,7 +146,7 @@ def anchor_source_points(
                 ry = int(np.clip(round(t * out_h), 0, out_h - 1))
                 if not cp_mask[ry, rx]:
                     continue
-            src_list.append([s, t])
+            src_list.append([s * out_w, t * out_h])
 
     return np.array(src_list, dtype=np.float64) if src_list else np.zeros((0, 2))
 
@@ -252,13 +253,17 @@ def auto_control_points(
     moving_itk.SetSpacing(spacing)
 
     # Dilated tissue mask gates the image metric so edge tissue still contributes.
+    # A mask with no foreground is dropped rather than attached: an all-empty
+    # fixed mask leaves the sampler with no voxels to draw and elastix aborts with
+    # a generic "Internal elastix error", so register without a mask instead.
     fixed_mask_itk = None
-    if mask is not None:
+    if mask is not None and np.any(mask):
         reg_mask = morph_mask(mask, params.mask_dilation_register, "expand")
         reg_mask_small = _resize(reg_mask.astype(np.float32)) > 0.5 if scale != 1.0 else reg_mask
-        mask_itk = itk.image_from_array(np.ascontiguousarray(reg_mask_small, dtype=np.uint8))
-        mask_itk.SetSpacing(spacing)
-        fixed_mask_itk = mask_itk
+        if np.any(reg_mask_small):
+            mask_itk = itk.image_from_array(np.ascontiguousarray(reg_mask_small, dtype=np.uint8))
+            mask_itk.SetSpacing(spacing)
+            fixed_mask_itk = mask_itk
 
     po = _make_parameter_map(params, with_points=bool(manual_cps))
 
@@ -269,9 +274,10 @@ def auto_control_points(
     with tempfile.TemporaryDirectory() as tmp:
         if manual_cps:
             # Same anatomical feature: fixed = section (dst), moving = template (src).
-            # Points are in working-resolution pixels = the registration's physical space.
-            fixed_pts = np.array([[cp.dst_x * w, cp.dst_y * h] for cp in manual_cps])
-            moving_pts = np.array([[cp.src_x * w, cp.src_y * h] for cp in manual_cps])
+            # Control points are stored in working-resolution pixels = the registration's
+            # physical space; pass them directly.
+            fixed_pts = np.array([[cp.dst_x, cp.dst_y] for cp in manual_cps])
+            moving_pts = np.array([[cp.src_x, cp.src_y] for cp in manual_cps])
             fixed_file = Path(tmp) / "fixed_points.txt"
             moving_file = Path(tmp) / "moving_points.txt"
             _write_point_file(fixed_file, fixed_pts)
@@ -286,8 +292,8 @@ def auto_control_points(
     # Source positions: curated anchor lines crossing the plane, gated by a
     # (larger) dilated mask so points only appear on/near tissue.
     cp_mask = morph_mask(mask, params.mask_dilation_cp, "expand") if mask is not None else None
-    src_norm = anchor_source_points(anchoring, atlas_shape, w, h, cp_mask=cp_mask)
-    if len(src_norm) == 0:
+    src_px = anchor_source_points(anchoring, atlas_shape, w, h, cp_mask=cp_mask)
+    if len(src_px) == 0:
         return []
 
     # Destination positions: apply the transform at working resolution to the
@@ -302,20 +308,19 @@ def auto_control_points(
     mapped_y = itk.array_from_image(itk.transformix_filter(itk.image_from_array(y_img), tp))
 
     out: list[ControlPoint] = []
-    for s, t in src_norm:
-        cx, cy = s * w, t * h
+    for cx, cy in src_px:
         rx = int(np.clip(round(cx), 0, w - 1))
         ry = int(np.clip(round(cy), 0, h - 1))
-        dst_x = (2.0 * cx - float(mapped_x[ry, rx])) / w
-        dst_y = (2.0 * cy - float(mapped_y[ry, rx])) / h
+        dst_x = 2.0 * cx - float(mapped_x[ry, rx])
+        dst_y = 2.0 * cy - float(mapped_y[ry, rx])
         # Drop points the single-step inversion threw outside the image: near
         # tissue edges or in poorly-registered regions the elastix displacement
         # can be large and the destination lands far off-section (see module
         # docstring). Such points are unreliable, so discard rather than clamp.
-        if not (0.0 <= dst_x <= 1.0 and 0.0 <= dst_y <= 1.0):
+        if not (0.0 <= dst_x <= w and 0.0 <= dst_y <= h):
             continue
         out.append(
-            ControlPoint(src_x=float(s), src_y=float(t), dst_x=dst_x, dst_y=dst_y, auto=True)
+            ControlPoint(src_x=float(cx), src_y=float(cy), dst_x=dst_x, dst_y=dst_y, auto=True)
         )
     return out
 
@@ -346,8 +351,8 @@ def prepare_registration_inputs(
     for section in sections:
         name = Path(section.original_path).name
         try:
-            anchoring = section.alignment.anchoring
-            if not anchoring or all(v == 0.0 for v in anchoring):
+            anchoring = section.alignment.current_anchoring
+            if not section.alignment.is_anchored:
                 errors.append(f"{name}: no alignment yet")
                 continue
             image = ensure_working_copy(section, working_scale)
@@ -427,10 +432,8 @@ class ElastixWorker:
         with self._lock:
             proc, self._proc = self._proc, None
         if proc is not None:
-            try:
+            with contextlib.suppress(Exception):
                 proc.kill()
-            except Exception:
-                pass
 
     def generate(
         self,
@@ -527,7 +530,5 @@ class ElastixWorker:
                 proc.wait(timeout=5)
         except Exception:
             pass
-        try:
+        with contextlib.suppress(Exception):
             proc.kill()
-        except Exception:
-            pass

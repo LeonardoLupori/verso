@@ -19,7 +19,7 @@ class _StubAtlas:
     the overlay pipeline would change the rendered output.
     """
 
-    def sample_labels(self, anchoring, out_w, out_h):  # noqa: ARG002 - anchoring unused
+    def sample_labels(self, anchoring, out_w, out_h):
         labels = np.zeros((out_h, out_w), dtype=np.int32)
         labels[: out_h // 2, : out_w // 3] = 1  # tall block, left
         labels[: out_h // 4, out_w // 2 :] = 2  # short block, top-right
@@ -43,8 +43,8 @@ def _make_section(*, flip_h: bool = False, flip_v: bool = False) -> Section:
         original_path="img.tif",
         thumbnail_path="thumb.png",
         preprocessing=Preprocessing(flip_horizontal=flip_h, flip_vertical=flip_v),
-        alignment=Alignment(anchoring=anchoring),
-        warp=WarpState(control_points=[ControlPoint(0.3, 0.3, 0.55, 0.45)]),
+        alignment=Alignment(current_anchoring=anchoring),
+        warp=WarpState(control_points=[ControlPoint(60.0, 45.0, 110.0, 67.5)]),
     )
 
 

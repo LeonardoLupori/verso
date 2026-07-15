@@ -14,8 +14,18 @@ my_experiment/
     project-verso.json     # all project state, settings, metadata
     thumbnails/            # working-resolution OME-TIFFs + filmstrip PNGs
     masks/                 # slice masks as 1-bit PNGs
-    exports/               # export outputs (images with overlays, etc.)
+    annotations/           # point series (points.csv) + area masks, one folder each
+    exports/               # export outputs (images with overlays, aligned stacks, etc.)
+        quantification_<YYYYMMDD-HHMMSS>/   # one folder per Export ▸ Quantify run
+            intensity.csv / area.csv / dots.csv / dots_regions.csv   # pooled tables
+            <image-slug>/  # only when "Separate output per slice" is on: same files per section
 ```
+
+Quantification CSVs are written by `engine/io/quant_export.py`; each run gets its
+own timestamped folder. Pooled runs write the tables at the top level; per-slice
+runs write one `<slugified-image-stem>/` subfolder per section instead. Aggregated
+levels add `*_mid.csv` / `*_coarse.csv` companions. See
+[quantification.md](quantification.md).
 
 Original full-resolution images are **not copied**. `project.json` stores
 their absolute paths in `section.original_path`. Only working copies
@@ -28,9 +38,14 @@ Top level:
 
 ```json
 {
-  "version": "1.1",
+  "version": "1.0",
   "name": "My Experiment",
-  "atlas": { "name": "allen_mouse_25um", "source": "brainglobe" },
+  "atlas": {
+    "name": "allen_mouse_25um",
+    "source": "brainglobe",
+    "resolution_um": 25.0,
+    "shape": [528, 320, 456]
+  },
   "interpolation_axis": "AP",
   "channels": [ ... ],
   "cp_size": 10,
@@ -43,14 +58,28 @@ Top level:
 
 | Field | Type | Notes |
 |---|---|---|
-| `version` | str | Schema version. Current `"1.1"`; older `"1.0"` files load with default `interpolation_axis="AP"` and are upgraded on next save. |
+| `version` | str | Schema version the file was written under; currently `"1.0"`. Informational only — see "Schema versioning" below. **Early development: no migration / backward-compatibility support.** |
 | `name` | str | Project display name. |
-| `atlas` | `AtlasRef` | `{name, source}`. Source defaults to `"brainglobe"`. |
-| `interpolation_axis` | str | Brain axis the cutting series runs along: `"AP"` (coronal, default), `"ML"` (sagittal), or `"DV"` (horizontal). Set at project creation; drives the QuickNII voxel axis used by `quicknii_series_anchorings`. See "Interpolation axis" below. |
+| `atlas` | `AtlasRef` | `{name, source, resolution_um, shape}`. `source` defaults to `"brainglobe"`. `resolution_um` is the isotropic atlas voxel size (microns); `shape` is the atlas voxel grid `[AP, DV, LR]` in BrainGlobe order. Both are cached so the project file is self-contained for pixel ↔ atlas voxel mapping without re-fetching the atlas; `0.0` / `[0, 0, 0]` until populated. |
+| `interpolation_axis` | str | Brain axis the cutting series runs along: `"AP"` (coronal, default), `"ML"` (sagittal), or `"DV"` (horizontal). Set at project creation; drives the anchoring voxel axis used by `propagate_series_anchorings`. See "Interpolation axis" below. |
 | `channels` | `list[ChannelSpec]` | Project-wide channel display settings (shared across all sections). |
 | `cp_size` / `cp_shape` / `cp_color` | int / str / hex | Warp control-point drawing style, project-wide. |
 | `working_scale` | float | Ratio `working_long_side / original_long_side`, **uniform across all sections**. Derived once at import from the largest image so its longest side fits within `THUMBNAIL_MAX_SIDE` (2000 px); see `compute_working_scale` in `engine/io/image_io.py`. Full-resolution export scales back up by this factor. Default `0.2`. |
 | `sections` | `list[Section]` | Sections in the cutting series. |
+
+### Schema versioning
+
+VERSO is in **early development: there is no schema migration or backward-compatibility
+support.** The `version` field is stamped on every saved file (currently always `"1.0"`)
+but nothing compares or upgrades it — `Project.load` simply calls `Project.from_dict`, and
+older or foreign project files are not guaranteed to load. When the schema changes, expect
+to recreate projects rather than migrate them. The field is kept so that, once versioning
+does matter, a missing `version` unambiguously means "pre-1.0".
+
+Derived metadata (per-section pixel dimensions, atlas `resolution_um`/`shape`) is populated
+once at project creation by `populate_metadata` (`engine/io/project_metadata.py`), which
+reads the image files and the `AtlasVolume`, so the saved file is self-contained. Atlas
+download requires internet the first time an atlas is used; creation fails loudly otherwise.
 
 ### `ChannelSpec`
 
@@ -71,6 +100,8 @@ Top level:
   "slice_index": 17,
   "original_path": "/data/raw/IMG_0234.tif",
   "thumbnail_path": "thumbnails/IMG_0234-thumb.ome.tif",
+  "resolution_original_wh": [20000, 15000],
+  "resolution_thumbnail_wh": [1200, 900],
   "preprocessing": { ... },
   "alignment": { ... },
   "warp": { ... }
@@ -83,6 +114,8 @@ Top level:
 | `slice_index` | int | Section's physical position along the project's interpolation axis (e.g. AP). Ground truth for ordering everywhere (overview / filmstrip / interpolation). **Need not be contiguous** (1, 2, 18, 19 encodes a gap) and **may repeat** (a slice that broke into several images shares one index). Guessed from filenames on import via `guess_slice_indices` and editable afterwards in the overview `#` column. |
 | `original_path` | str | Absolute path to the full-resolution source image. |
 | `thumbnail_path` | str | Path to the working-resolution OME-TIFF (relative or absolute). |
+| `resolution_original_wh` | `[int, int]` | Pixel dimensions `[width, height]` of the original (full-resolution) image. Cached so the file alone maps pixels ↔ atlas voxels; `[0, 0]` until populated (added in v1.2). |
+| `resolution_thumbnail_wh` | `[int, int]` | Pixel dimensions `[width, height]` of the working-resolution thumbnail. `[0, 0]` until populated (added in v1.2). |
 
 ### `Preprocessing`
 
@@ -102,31 +135,34 @@ Top level:
 ```json
 {
   "anchoring": [ox, oy, oz, ux, uy, uz, vx, vy, vz],
-  "position_mm": -1.2,
   "status": "complete",
-  "source": "manual",
-  "stored_anchoring": [...],
-  "proposal_anchoring": [...],
-  "proposal_confidence": 0.92,
-  "proposal_run_id": "20260214-deepslice"
+  "source": "manual"
 }
 ```
 
-| Field | Notes |
-|---|---|
-| `anchoring` | Current 9-float plane (see "Anchoring format" below). Mutated live by the navigator; only `stored_anchoring` is the canonical "saved" plane. |
-| `position_mm` | Section position in mm along the project's `interpolation_axis`. Derived from `anchoring` via the atlas; refreshed on every navigator move. Legacy `ap_position_mm` keys are read on load and rewritten as `position_mm` on next save. |
-| `status` | `not_started`, `in_progress`, or `complete`. `complete` ⇔ user clicked Save in Align. |
-| `source` | Origin of the current plane: `quicknii_default`, `deepslice`, `manual`, or `null`. |
-| `stored_anchoring` | The plane the user explicitly saved. Set by `AlignView.save()`. |
-| `proposal_anchoring` / `proposal_confidence` / `proposal_run_id` | Last automated proposal (e.g. from DeepSlice) shown alongside the user's edits. |
+The **saved plane is the only plane persisted**, under the key `"anchoring"`.
+It is emitted only when a saved plane exists (i.e. `stored_anchoring` is set —
+`complete` sections). In memory the `Alignment` dataclass holds two planes:
+
+| Field (in memory) | Persisted? | Notes |
+|---|---|---|
+| `stored_anchoring` | **yes**, as JSON `"anchoring"` | The plane the user explicitly saved (set on commit by `AlignView.save()`). The single source of truth; the only value written to disk, and what export/interpolation read. |
+| `current_anchoring` | no | The live working copy, mutated by the navigator during editing. Seeded from `stored_anchoring` on load; transient. |
+| `position_mm` | no | Section position in mm along the project's `interpolation_axis`. A derived display cache, recomputed from the plane via the atlas on load; never persisted. |
+| `status` | yes | `not_started`, `in_progress`, or `complete`. `complete` ⇔ user clicked Save in Align. |
+| `source` | yes (when set) | Origin of the current plane: `series_interpolation`, `deepslice`, `manual`, or `null`. |
+
+`in_progress` proposal planes are **not** persisted — they are regenerated on
+load by `interpolate_anchorings`/`_initialize_default_anchorings` from the saved
+keyframes (GUI), so a section without a saved plane carries no `"anchoring"` on
+disk.
 
 ### `WarpState`
 
 ```json
 {
   "control_points": [
-    {"src_x": 0.52, "src_y": 0.31, "dst_x": 0.54, "dst_y": 0.30}
+    {"src_x": 120.0, "src_y": 84.0, "dst_x": 128.0, "dst_y": 80.0}
   ],
   "status": "in_progress"
 }
@@ -160,17 +196,21 @@ QuickNII voxel space and BrainGlobe's coordinate frame.
 
 ### Control point format
 
-Control points are stored in **normalised section coordinates** `[0, 1]`
-in both source (atlas) and destination (section) spaces. Matches
-VisuAlign's internal representation and is resolution-independent.
+Control points (`ControlPoint` in `engine/model/alignment.py`) are stored in
+**working-resolution pixel coordinates**, in both source (atlas overlay) and
+destination (section image) spaces — *not* normalised. `warping.py`'s warp
+functions divide by the section's working width/height to normalise
+internally; `to_dict`/`from_dict` pass the pixel values straight through.
 
 | Field | Meaning |
 |---|---|
-| `src_x`, `src_y` | Atlas-space origin of the pin, normalised to `[0, 1]`. |
-| `dst_x`, `dst_y` | Section-space destination of the pin, normalised to `[0, 1]`. |
+| `src_x`, `src_y` | Atlas-overlay pixel position of the pin (working resolution) — fixed when the point is created. |
+| `dst_x`, `dst_y` | Section-image pixel position of the pin (working resolution) — updated as the user drags it. |
 
-In VisuAlign's export JSON the displacement is `dx = dst_x - src_x`,
-`dy = dst_y - src_y` (see [quint-compat.md](quint-compat.md)).
+This differs from VisuAlign's own JSON export, which stores control points as
+normalised `[0, 1]` `markers` (see [quint-compat.md](quint-compat.md)) — the
+conversion between the two happens at the QuickNII/VisuAlign I/O boundary in
+`engine/io/quint_io.py`, not in the native `project-verso.json` format.
 
 ### Status enum (`AlignmentStatus`)
 
@@ -189,13 +229,13 @@ All model types are `@dataclass`es in `engine/model/`:
 | Class | File | Notes |
 |---|---|---|
 | `Project` | `model/project.py` | Top-level container; `save(path)` / `load(path)` round-trip JSON. |
-| `AtlasRef` | `model/project.py` | `{name, source}`. |
+| `AtlasRef` | `model/project.py` | `{name, source, resolution_um, shape}`. |
 | `ChannelSpec` | `model/project.py` | Per-project channel display config. |
 | `Section` | `model/project.py` | One histological section. |
 | `Preprocessing` | `model/project.py` | Flips + slice-mask path. |
-| `Alignment` | `model/alignment.py` | 9-float anchoring + status + proposal/stored variants. |
+| `Alignment` | `model/alignment.py` | Saved + live 9-float planes (`stored_anchoring` / `current_anchoring`) + status. Only the saved plane persists. |
 | `WarpState` | `model/alignment.py` | List of `ControlPoint`s + status. |
-| `ControlPoint` | `model/alignment.py` | `(src_x, src_y, dst_x, dst_y)` normalised. |
+| `ControlPoint` | `model/alignment.py` | `(src_x, src_y, dst_x, dst_y)` in working-resolution pixels. |
 
 Each class implements `to_dict()` / `from_dict()` for JSON round-trip.
 `Project.save(path)` writes formatted JSON; `Project.load(path)`
@@ -239,7 +279,7 @@ order) breaking ties for duplicates.
   gap, then two more.
 - **Allowed to repeat** — a physical slice that broke into several images
   shares one index. Interpolation collapses equal indices to the same position
-  (the `denom == 0 → t = 0` guard in `quicknii_series_anchorings`); no separate
+  (the `denom == 0 → t = 0` guard in `propagate_series_anchorings`); no separate
   `replicate` field exists.
 - Guessed from filenames on import by `guess_slice_indices`
   (`engine/io/image_io.py`): every filename stem is tokenised into its numeric
@@ -255,7 +295,7 @@ order) breaking ties for duplicates.
 The project-level `interpolation_axis` field declares which atlas axis
 the cutting series runs along. It is one of:
 
-| Value | Slicing orientation (UI label) | QuickNII voxel axis |
+| Value | Slicing orientation (UI label) | Anchoring voxel axis |
 |---|---|---|
 | `"AP"` (default) | Coronal | 1 |
 | `"ML"` | Sagittal | 0 |
@@ -278,8 +318,9 @@ DeepSlice is coronal-only and is disabled in the UI when
 When some sections are aligned and others are not, VERSO fills the
 unaligned ones with linearly-interpolated proposals so the user starts
 each section near the right pose. Implementation:
-`engine/registration.py` (`quicknii_series_anchorings`,
-`interpolate_anchorings`); matches QuickNII's `MgmtPanel.dointerpolate`.
+`engine/anchoring.py` (`propagate_series_anchorings`,
+`interpolate_anchorings`); ported from QuickNII's `MgmtPanel.dointerpolate`
+algorithm (see [quint-compat.md](quint-compat.md)).
 
 The 9-float anchoring is unpacked into 11 components (midpoint xyz,
 unit u-vector xyz, unit v-vector xyz, u-stretch, v-stretch) for

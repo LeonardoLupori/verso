@@ -49,22 +49,29 @@ def _make_warp_mock(section: Section, state: AppState) -> SimpleNamespace:
         cursor_to_atlas_mapper=None,
     )
     mock = SimpleNamespace(
+        STEP="warp",
         _panel=panel,
         _panel_slot=SimpleNamespace(layout=lambda: SimpleNamespace(addWidget=lambda _w: None)),
         _state=state,
         _active=False,
         _cp_hovered=-1,
         _cp_dragging=-1,
-        _cp_drag_start_norm=None,
+        _cp_drag_start_px=None,
         _cp_drag_start_dst=None,
-        _baseline_warp=None,
-        _dirty=False,
         _warp_overlay=lambda rgba: rgba,
         _cursor_to_src=lambda s, t: (s, t),
         _reset_undo=lambda: None,
-        dirty_changed=SimpleNamespace(emit=lambda _v: None),
     )
+    # Dirty flag + baseline are the single source of truth in AppState; the mock
+    # drives them through the real BaseCanvasView / WarpView methods (which
+    # resolve via WarpView's MRO), so the base save/revert flow runs for real.
+    mock._current_section = lambda: WarpView._current_section(mock)
+    mock._saved_state = lambda: WarpView._saved_state(mock)
+    mock._saved_copy = lambda: WarpView._saved_copy(mock)
+    mock._apply_saved = lambda baseline: WarpView._apply_saved(mock, baseline)
+    mock._reset_cp_interaction = lambda: WarpView._reset_cp_interaction(mock)
     mock._set_dirty = lambda v: WarpView._set_dirty(mock, v)
+    mock._after_revert = lambda: None
     return mock
 
 
@@ -77,24 +84,24 @@ def test_clear_edits_discards_cps_after_navigating_away_and_back(_qapp):
 
     mock = _make_warp_mock(section, state)
 
-    # Enter Warp with a clean (no-CP) slice.
+    # Enter Warp with a clean (no-CP) slice; activate syncs the clean baseline.
     WarpView.activate(mock)
-    assert mock._dirty is False
+    assert state.is_dirty(section.id, "warp") is False
 
-    # User adds a control point → dirty. _set_dirty stashes the clean baseline.
-    section.warp.control_points.append(ControlPoint(0.5, 0.5, 0.6, 0.6))
-    state.mark_dirty(section.id, "warp")
+    # User adds a control point → dirty.
+    section.warp.control_points.append(ControlPoint(500.0, 400.0, 600.0, 400.0))
     mock._set_dirty(True)
+    assert state.is_dirty(section.id, "warp") is True
 
-    # Navigate away and back: deactivate is a no-op for the baseline; activate
-    # must NOT adopt the edited section.warp as the new baseline.
+    # Navigate away and back: re-activation must NOT adopt the edited section.warp
+    # as the new baseline (sync_baseline is a no-op while dirty).
     WarpView.activate(mock)
-    assert mock._dirty is True  # still dirty after re-activation
+    assert state.is_dirty(section.id, "warp") is True  # still dirty after re-activation
 
     # "Clear edits" must drop the unsaved control point and stay clean.
     assert WarpView.revert(mock) is True
     assert section.warp.control_points == []
-    assert mock._dirty is False
+    assert state.is_dirty(section.id, "warp") is False
 
 
 def test_inactive_view_ignores_shared_panel_section_loaded(_qapp):
@@ -126,15 +133,15 @@ def test_inactive_view_ignores_shared_panel_section_loaded(_qapp):
 
     # Warp is dirty on `section`.
     WarpView.activate(mock)
-    section.warp.control_points.append(ControlPoint(0.5, 0.5, 0.6, 0.6))
-    state.mark_dirty(section.id, "warp")
+    section.warp.control_points.append(ControlPoint(500.0, 400.0, 600.0, 400.0))
     mock._set_dirty(True)
-    saved_baseline = mock._baseline_warp
+    saved_baseline = state.get_baseline(section.id, "warp")
 
     # Leave Warp; another view now owns the panel and loads a different slice.
     mock._active = False
     WarpView._on_section_loaded(mock, other)
 
-    # The inactive Warp view must be untouched.
-    assert mock._dirty is True
-    assert mock._baseline_warp is saved_baseline
+    # The inactive Warp view must be untouched: `section` stays dirty and its
+    # stashed baseline is not overwritten.
+    assert state.is_dirty(section.id, "warp") is True
+    assert state.get_baseline(section.id, "warp") is saved_baseline

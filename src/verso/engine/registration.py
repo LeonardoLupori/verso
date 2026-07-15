@@ -1,849 +1,549 @@
-"""Affine registration utilities — anchoring matrix math.
+"""High-level pixel <-> atlas mapping façade for a VERSO project.
 
-The anchoring vector is a 9-element list:
-    [ox, oy, oz, ux, uy, uz, vx, vy, vz]
+:class:`VersoRegistration` packages the engine's coordinate math into one object
+that converts any pixel of an original section image into an Allen CCFv3 atlas
+voxel (and back), reading only the native ``project-verso.json`` — which is
+self-contained for coordinate work since it stores per-section pixel dimensions
+and atlas resolution/shape.
 
-Origin ``o`` and direction vectors ``u``, ``v`` are in atlas *voxel* space.
-For a point at normalized section coordinates (s, t) ∈ [0, 1]²:
+The heavy lifting is delegated to the low-level primitives in
+:mod:`verso.engine.anchoring` (affine anchoring math) and
+:mod:`verso.engine.warping` (piecewise-affine Delaunay warp); this module only
+composes them and applies the per-section preprocessing flips.
 
-    atlas_voxel = o + s·u + t·v
+Coordinate conventions
+----------------------
+- Image points default to **full-resolution original pixels** (``space="full"``),
+  i.e. pixels of the un-flipped image on disk. ``space="working"`` uses
+  working-resolution (thumbnail) pixels instead.
+- Preprocessing flips are applied internally: control points, masks and the
+  anchoring all live in *displayed* (flipped) section space, while the image on
+  disk is un-flipped, so an on-disk pixel is mirrored by the section's flips
+  before the transform (and un-mirrored on the way back).
+- Atlas output defaults to **voxels** (``units="voxel"``); ``"um"`` scales by the
+  atlas ``resolution_um`` and ``"mm"`` by ``resolution_um / 1000``.
 
-This matches the QuickNII format exactly.  All functions here operate on the
-anchoring vector directly so they stay independent of any atlas library.
+This module is pure Python — no PyQt/pyqtgraph — per the engine/GUI split.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from pathlib import Path
+
 import numpy as np
 
-# ---------------------------------------------------------------------------
-# Anchoring vector decomposition
-# ---------------------------------------------------------------------------
+from verso.engine.anchoring import anchoring_to_vectors
+from verso.engine.atlas import AtlasVolume, boundary_mask
+from verso.engine.model.project import Project, Section
+from verso.engine.warping import (
+    warp_points_atlas_to_section,
+    warp_points_section_to_atlas,
+)
+
+_SPACES = ("full", "working")
+_UNITS = ("voxel", "um", "mm")
+_KINDS = ("annotation", "template", "boundary", "hemisphere")
+
+# Row-chunk size (in output pixels) used when resampling a whole atlas volume
+# onto a section's own pixel grid, so full-resolution images (which can be
+# tens of thousands of pixels per side) don't require an all-at-once
+# (H*W, 2)-shaped buffer for the warp lookup.
+_IMAGE_TO_ATLAS_CHUNK_PIXELS = 2_000_000
 
 
-def anchoring_to_vectors(
-    anchoring: list[float],
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Split a 9-element anchoring list into origin and direction vectors.
+@dataclass(frozen=True)
+class _SectionSnapshot:
+    """Per-section numeric state needed for coordinate math, resolved once."""
 
-    Args:
-        anchoring: [ox, oy, oz, ux, uy, uz, vx, vy, vz]
+    id: str
+    original_path: str
+    work_w: int
+    work_h: int
+    full_w: int
+    full_h: int
+    o: np.ndarray  # (3,) anchoring origin, atlas voxels
+    u: np.ndarray  # (3,) anchoring right vector
+    v: np.ndarray  # (3,) anchoring down vector
+    src_px: np.ndarray  # (N, 2) control-point atlas positions, working-res px
+    dst_px: np.ndarray  # (N, 2) control-point section positions, working-res px
+    flip_h: bool
+    flip_v: bool
+    aligned: bool  # anchoring spans a non-degenerate plane
 
-    Returns:
-        Tuple ``(o, u, v)`` each as shape-(3,) float64 arrays.
+
+@dataclass
+class AtlasToImageResult:
+    """Result of :meth:`VersoRegistration.coord_atlas_to_image`, arrays aligned by row.
+
+    Attributes:
+        section_id: (N,) object array of the matched section id, ``""`` where no
+            section footprint covers the voxel.
+        xy: (N, 2) float array of image pixels on the matched section (in the
+            requested ``space``); ``nan`` where uncovered.
+        distance: (N,) float array of off-plane perpendicular distance in the
+            requested ``units``; ``inf`` where uncovered.
+        valid: (N,) bool array — inside a section footprint and, when
+            ``max_distance`` is given, within it.
     """
-    a = np.asarray(anchoring, dtype=np.float64)
-    if a.shape != (9,):
-        raise ValueError(f"anchoring must have 9 elements, got {len(anchoring)}")
-    return a[0:3], a[3:6], a[6:9]
+
+    section_id: np.ndarray
+    xy: np.ndarray
+    distance: np.ndarray
+    valid: np.ndarray
 
 
-def vectors_to_anchoring(o: np.ndarray, u: np.ndarray, v: np.ndarray) -> list[float]:
-    """Pack origin and direction vectors back into a 9-element anchoring list."""
-    return np.concatenate([o, u, v]).tolist()
+class VersoRegistration:
+    """Convert pixels to Allen CCFv3 atlas coordinates for a VERSO project.
 
+    Construct from the native project file::
 
-# ---------------------------------------------------------------------------
-# Coordinate transforms
-# ---------------------------------------------------------------------------
+        r = VersoRegistration("my_experiment/project-verso.json")
+        xyz = r.coord_image_to_atlas("s001", [[1200, 3400], [1500, 3600]])
+        res = r.coord_atlas_to_image(xyz)
+        labels = r.image_to_atlas("s001", kind="annotation")  # (H, W) int32, full-res
 
-
-def normalized_to_atlas(s: float, t: float, anchoring: list[float]) -> np.ndarray:
-    """Map normalized section coords (s, t) → atlas voxel coords (x, y, z).
-
-    Args:
-        s: Normalized x-coordinate along section width, in [0, 1].
-        t: Normalized y-coordinate along section height, in [0, 1].
-        anchoring: 9-element anchoring vector.
-
-    Returns:
-        Shape-(3,) array of atlas voxel coordinates.
+    A slice is addressed by :attr:`Section.id`, or by the original image's file
+    stem or basename.
     """
-    o, u, v = anchoring_to_vectors(anchoring)
-    return o + s * u + t * v
 
-
-def atlas_to_normalized(
-    xyz: np.ndarray | list[float], anchoring: list[float]
-) -> tuple[float, float]:
-    """Map atlas voxel coords → normalized section coords (s, t).
-
-    Solves the least-squares system  xyz − o = s·u + t·v.
-
-    Args:
-        xyz: Atlas voxel position, shape (3,).
-        anchoring: 9-element anchoring vector.
-
-    Returns:
-        Tuple (s, t).  Values outside [0, 1] indicate the point is outside the
-        section boundary.
-    """
-    o, u, v = anchoring_to_vectors(anchoring)
-    A = np.column_stack([u, v])  # (3, 2)
-    b = np.asarray(xyz, dtype=np.float64) - o
-    result, *_ = np.linalg.lstsq(A, b, rcond=None)
-    return float(result[0]), float(result[1])
-
-
-# ---------------------------------------------------------------------------
-# Anchoring manipulation
-# ---------------------------------------------------------------------------
-
-
-def set_position_along_axis(
-    anchoring: list[float],
-    voxel: float,
-    axis: int,
-) -> list[float]:
-    """Return a new anchoring with the origin shifted to ``voxel`` along ``axis``.
-
-    This is the primary control used in the alignment view: sliding the section
-    along the slicing axis (typically AP for coronal series, ML for sagittal,
-    DV for horizontal) moves ``o[axis]`` while keeping ``u`` and ``v`` unchanged.
-
-    Args:
-        anchoring: Current 9-element anchoring vector.
-        voxel: New position along ``axis`` in atlas voxel units.
-        axis: Index of the slicing axis in QuickNII voxel space
-            (0 = ML / LR, 1 = AP, 2 = DV).
-
-    Returns:
-        New 9-element anchoring vector.
-    """
-    o, u, v = anchoring_to_vectors(anchoring)
-    o = o.copy()
-    o[axis] = voxel
-    return vectors_to_anchoring(o, u, v)
-
-
-def anchoring_center(anchoring: list[float]) -> np.ndarray:
-    """Return the center point of an anchoring plane in atlas voxel space."""
-    o, u, v = anchoring_to_vectors(anchoring)
-    return o + (u + v) / 2.0
-
-
-def set_center_position_along_axis(
-    anchoring: list[float],
-    voxel: float,
-    axis: int,
-) -> list[float]:
-    """Return a new anchoring whose plane center lies at ``voxel`` along ``axis``.
-
-    QuickNII's 11-value registration form stores the section midpoint, so axis
-    navigation should move the plane center rather than the anchoring origin.
-    """
-    o, u, v = anchoring_to_vectors(anchoring)
-    center = o + (u + v) / 2.0
-    o = o.copy()
-    o[axis] += voxel - center[axis]
-    return vectors_to_anchoring(o, u, v)
-
-
-def rotate_anchoring(
-    anchoring: list[float],
-    angle_rad: float,
-    pivot_s: float = 0.5,
-    pivot_t: float = 0.5,
-) -> list[float]:
-    """Rotate the section plane around a pivot point in normalized coords.
-
-    This is a *rigid* in-plane spin: ``u`` and ``v`` are rotated about the plane
-    normal ``cross(u, v)`` via Rodrigues, so their lengths and the angle between
-    them are preserved and the normal direction is left unchanged (tilt is
-    untouched). Rotating in the raw ``u``/``v`` basis instead would distort the
-    section whenever ``|u| != |v|`` (squashing it in height as it spins); this
-    matches the rigid rotation the orthogonal navigator views use.
-
-    Args:
-        anchoring: Current 9-element anchoring vector.
-        angle_rad: Counter-clockwise rotation angle in radians.
-        pivot_s: Pivot s-coordinate in normalized section space (default centre).
-        pivot_t: Pivot t-coordinate in normalized section space (default centre).
-
-    Returns:
-        New 9-element anchoring vector.
-    """
-    o, u, v = anchoring_to_vectors(anchoring)
-
-    normal = np.cross(u, v)
-    n_norm = float(np.linalg.norm(normal))
-    if n_norm == 0.0:
-        # Degenerate plane (collinear u, v): no well-defined rotation axis.
-        return list(anchoring)
-    n = normal / n_norm
-
-    cos_a = np.cos(angle_rad)
-    sin_a = np.sin(angle_rad)
-
-    def _rot(w: np.ndarray) -> np.ndarray:
-        # Rodrigues about the unit normal. The ``-sin`` on the cross term keeps
-        # the legacy drag direction (positive angle spins u toward -v).
-        return cos_a * w - sin_a * np.cross(n, w) + (1.0 - cos_a) * float(np.dot(n, w)) * n
-
-    u_new = _rot(u)
-    v_new = _rot(v)
-
-    # Shift origin so the pivot point stays fixed in atlas space.
-    pivot_atlas = o + pivot_s * u + pivot_t * v
-    o_new = pivot_atlas - pivot_s * u_new - pivot_t * v_new
-
-    return vectors_to_anchoring(o_new, u_new, v_new)
-
-
-def plane_tilt_deg(anchoring: list[float], slicing_axis: int) -> float:
-    """Acute angle in degrees between the plane normal and the slicing axis.
-
-    The plane normal is ``cross(u, v)`` and the slicing axis is the unit vector
-    along ``slicing_axis`` (0=LR, 1=AP, 2=DV in QuickNII voxel space).  A plane
-    perpendicular to the slicing axis (no tilt) returns 0°.  In-plane rotation
-    leaves the direction of ``cross(u, v)`` unchanged, so the result reflects
-    tilt only — making this the reference for clamping tilt.
-
-    Args:
-        anchoring: 9-element anchoring vector.
-        slicing_axis: Atlas voxel axis index the cutting series runs along.
-
-    Returns:
-        Acute tilt angle in degrees, in [0, 90].
-    """
-    _o, u, v = anchoring_to_vectors(anchoring)
-    normal = np.cross(u, v)
-    norm = float(np.linalg.norm(normal))
-    if norm == 0.0:
-        return 0.0
-    cos_t = min(1.0, max(0.0, abs(normal[slicing_axis]) / norm))
-    return float(np.degrees(np.arccos(cos_t)))
-
-
-def scale_anchoring(
-    anchoring: list[float],
-    scale_s: float,
-    scale_t: float | None = None,
-    pivot_s: float = 0.5,
-    pivot_t: float = 0.5,
-) -> list[float]:
-    """Scale the section plane around a pivot point.
-
-    Args:
-        anchoring: Current 9-element anchoring vector.
-        scale_s: Scale factor along the u direction (section width).
-        scale_t: Scale factor along the v direction (section height).
-            Defaults to ``scale_s`` for uniform scaling.
-        pivot_s: Pivot s-coordinate in normalised section space.
-        pivot_t: Pivot t-coordinate in normalised section space.
-
-    Returns:
-        New 9-element anchoring vector.
-    """
-    if scale_t is None:
-        scale_t = scale_s
-
-    o, u, v = anchoring_to_vectors(anchoring)
-
-    pivot_atlas = o + pivot_s * u + pivot_t * v
-    u_new = u * scale_s
-    v_new = v * scale_t
-    o_new = pivot_atlas - pivot_s * u_new - pivot_t * v_new
-
-    return vectors_to_anchoring(o_new, u_new, v_new)
-
-
-def flip_anchoring_horizontal(anchoring: list[float]) -> list[float]:
-    """Mirror an anchoring horizontally in section coordinates.
-
-    A horizontal display flip changes section coordinates as
-    ``s_flipped = 1 - s_original``. The equivalent anchoring is:
-        ``o' = o + u``, ``u' = -u``, ``v' = v``.
-
-    The transform is its own inverse, so the same function can be used when
-    toggling a stored alignment into or out of flipped display space.
-    """
-    o, u, v = anchoring_to_vectors(anchoring)
-    return vectors_to_anchoring(o + u, -u, v)
-
-
-def flip_anchoring_vertical(anchoring: list[float]) -> list[float]:
-    """Mirror an anchoring vertically in section coordinates.
-
-    A vertical display flip changes section coordinates as
-    ``t_flipped = 1 - t_original``. The equivalent anchoring is:
-        ``o' = o + v``, ``u' = u``, ``v' = -v``.
-
-    The transform is its own inverse, so the same function can be used when
-    toggling a stored alignment into or out of flipped display space.
-    """
-    o, u, v = anchoring_to_vectors(anchoring)
-    return vectors_to_anchoring(o + v, u, -v)
-
-
-def _display_space_anchoring(section) -> list[float]:
-    """Return anchoring in display space (exactly as the user positioned it).
-
-    ``stored_anchoring`` and ``anchoring`` are both in display space (the new
-    invariant). This is the value written to QuickNII/VisuAlign exports so that
-    the saved coordinates match what the user saw.
-    """
-    stored = section.alignment.stored_anchoring
-    if stored and any(v != 0.0 for v in stored):
-        return list(stored)
-    return list(section.alignment.anchoring)
-
-
-def _has_user_owned_alignment(section) -> bool:
-    """True when a section's alignment is user-owned and must never be replaced
-    by auto-interpolation or duplicate-slice mirroring.
-
-    Protects two cases: a saved plane (``status == COMPLETE``), and a manual,
-    still-uncommitted edit (a non-zero anchoring that is past ``NOT_STARTED`` and
-    not tagged as an auto proposal). Sections that are ``NOT_STARTED`` or carry an
-    auto ``"quicknii_default"`` plane are *not* protected, so they remain free to
-    receive an interpolated proposal or a mirror of a stored same-index sibling.
-    """
-    from verso.engine.model.alignment import AlignmentStatus
-
-    al = section.alignment
-    if al.status == AlignmentStatus.COMPLETE:
-        return True
-    return bool(
-        al.anchoring
-        and any(v != 0.0 for v in al.anchoring)
-        and al.status != AlignmentStatus.NOT_STARTED
-        and al.source != "quicknii_default"
-    )
-
-
-# ---------------------------------------------------------------------------
-# Pixel ↔ Normalised (convenience wrappers for the GUI)
-# ---------------------------------------------------------------------------
-
-
-def _in_plane_axes(interpolation_axis: int) -> tuple[int, int]:
-    """Return ``(u_default, v_default)`` axis indices for the given slicing axis.
-
-    For a slicing axis ``k``, the two in-plane atlas voxel axes are the other
-    two indices sorted ascending — the lower becomes ``u``'s natural axis, the
-    higher becomes ``v``'s. Examples:
-
-    - ``k = 1`` (coronal, AP) → ``(0, 2)``  i.e. u along ML, v along DV.
-    - ``k = 0`` (sagittal, ML) → ``(1, 2)`` i.e. u along AP, v along DV.
-    - ``k = 2`` (horizontal, DV) → ``(0, 1)`` i.e. u along ML, v along AP.
-    """
-    if interpolation_axis not in (0, 1, 2):
-        raise ValueError(f"interpolation_axis must be 0, 1, or 2, got {interpolation_axis}")
-    others = sorted(i for i in (0, 1, 2) if i != interpolation_axis)
-    return others[0], others[1]
-
-
-def _quicknii_dims(atlas_shape: tuple[int, int, int]) -> tuple[int, int, int]:
-    """Return atlas dims indexed by QuickNII voxel axis (ML=0, AP=1, DV=2).
-
-    BrainGlobe stores annotation shape as ``(AP, DV, LR)`` while VERSO's
-    anchoring math addresses axes in QuickNII order ``(ML, AP, DV)``. This
-    helper converts so callers can index by axis number directly.
-    """
-    ap_dim, dv_dim, lr_dim = atlas_shape
-    return (lr_dim, ap_dim, dv_dim)
-
-
-def quicknii_default_anchoring(
-    image_width: int,
-    image_height: int,
-    max_width: int,
-    max_height: int,
-    atlas_shape: tuple[int, int, int],
-    interpolation_axis: int,
-    voxel: float | None = None,
-) -> list[float]:
-    """Create a centered anchoring using QuickNII stretch semantics.
-
-    QuickNII initializes the atlas-plane scale from image dimensions, not from
-    display aspect ratio alone. For each series it uses a common horizontal
-    stretch ``atlas_u_dim / max_image_width`` and vertical stretch
-    ``atlas_v_dim / max_image_height`` across the series. Each section then
-    gets plane vectors proportional to its own registration image size. Here
-    ``u``/``v`` map to the two in-plane axes derived from
-    :func:`_in_plane_axes`.
-    """
-    if image_width <= 0 or image_height <= 0:
-        raise ValueError("image dimensions must be positive")
-    if max_width <= 0 or max_height <= 0:
-        raise ValueError("maximum image dimensions must be positive")
-
-    k = interpolation_axis
-    u_axis, v_axis = _in_plane_axes(k)
-    qn_dims = _quicknii_dims(atlas_shape)
-    u_dim = float(qn_dims[u_axis])
-    v_dim = float(qn_dims[v_axis])
-
-    axis_voxel = float(qn_dims[k]) / 2.0 if voxel is None else float(voxel)
-
-    h_stretch = u_dim / float(max_width)
-    v_stretch = v_dim / float(max_height)
-    u_span = h_stretch * float(image_width)
-    v_span = v_stretch * float(image_height)
-
-    origin = [0.0, 0.0, 0.0]
-    origin[k] = axis_voxel
-    origin[u_axis] = (u_dim - u_span) / 2.0
-    origin[v_axis] = (v_dim - v_span) / 2.0
-
-    u_vec = [0.0, 0.0, 0.0]
-    u_vec[u_axis] = u_span
-    v_vec = [0.0, 0.0, 0.0]
-    v_vec[v_axis] = v_span
-
-    return [*origin, *u_vec, *v_vec]
-
-
-def quicknii_unpack_anchoring(
-    anchoring: list[float],
-    image_width: int,
-    image_height: int,
-) -> list[float]:
-    """Unpack a QuickNII anchoring into midpoint, unit vectors, and stretches."""
-    if image_width <= 0 or image_height <= 0:
-        raise ValueError("image dimensions must be positive")
-
-    o, u, v = anchoring_to_vectors(anchoring)
-    midpoint = o + (u + v) / 2.0
-
-    u_len = float(np.linalg.norm(u))
-    v_len = float(np.linalg.norm(v))
-    if u_len <= 0 or v_len <= 0:
-        raise ValueError("anchoring vectors must be non-zero")
-
-    u_unit = u / u_len
-    v_unit = v / v_len
-
-    # Match QuickNII's orthonormalization step.
-    u_unit = u_unit / np.linalg.norm(u_unit)
-    v_unit = v_unit - u_unit * float(np.dot(u_unit, v_unit))
-    v_unit = v_unit / np.linalg.norm(v_unit)
-
-    return [
-        float(midpoint[0]),
-        float(midpoint[1]),
-        float(midpoint[2]),
-        float(u_unit[0]),
-        float(u_unit[1]),
-        float(u_unit[2]),
-        float(v_unit[0]),
-        float(v_unit[1]),
-        float(v_unit[2]),
-        u_len / float(image_width),
-        v_len / float(image_height),
-    ]
-
-
-def quicknii_pack_anchoring(
-    unpacked: list[float],
-    image_width: int,
-    image_height: int,
-) -> list[float]:
-    """Pack QuickNII midpoint/unit-vector/stretch values into anchoring."""
-    if len(unpacked) != 11:
-        raise ValueError(f"unpacked anchoring must have 11 elements, got {len(unpacked)}")
-    if image_width <= 0 or image_height <= 0:
-        raise ValueError("image dimensions must be positive")
-
-    midpoint = np.asarray(unpacked[0:3], dtype=np.float64)
-    u_unit = np.asarray(unpacked[3:6], dtype=np.float64)
-    v_unit = np.asarray(unpacked[6:9], dtype=np.float64)
-    u = u_unit * float(unpacked[9]) * float(image_width)
-    v = v_unit * float(unpacked[10]) * float(image_height)
-    o = midpoint - (u + v) / 2.0
-    return vectors_to_anchoring(o, u, v)
-
-
-def quicknii_series_anchorings(
-    image_sizes: list[tuple[int, int]],
-    slice_indices: list[int],
-    atlas_shape: tuple[int, int, int],
-    interpolation_axis: int,
-    stored_anchorings: list[list[float] | None] | None = None,
-    reverse_axis: bool = False,
-    center_proposals: bool = True,
-) -> list[list[float]]:
-    """Propagate anchorings along ``interpolation_axis`` using QuickNII semantics.
-
-    Args:
-        image_sizes: Per-section registration image ``(width, height)``.
-        slice_indices: Per-section slice indices used for interpolation.
-        atlas_shape: BrainGlobe annotation shape ``(AP, DV, LR)``.
-        interpolation_axis: QuickNII voxel axis along which the series runs
-            (0 = ML / LR, 1 = AP, 2 = DV).
-        stored_anchorings: Optional stored/user anchorings. ``None`` entries
-            receive propagated anchorings.
-        reverse_axis: If true, reverse the initial proposal direction along the
-            slicing axis while leaving section order unchanged.
-        center_proposals: If true, generated proposals are recentered on the
-            atlas midpoint of the two in-plane axes while stored anchorings
-            remain unchanged.
-
-    Returns:
-        One packed QuickNII anchoring per section.
-    """
-    if len(image_sizes) != len(slice_indices):
-        raise ValueError("image_sizes and slice_indices must have the same length")
-    if stored_anchorings is not None and len(stored_anchorings) != len(image_sizes):
-        raise ValueError("stored_anchorings must match image_sizes length")
-    if not image_sizes:
-        return []
-
-    k = interpolation_axis
-    u_axis, v_axis = _in_plane_axes(k)
-
-    order = sorted(range(len(slice_indices)), key=lambda i: (slice_indices[i], i))
-    if order != list(range(len(slice_indices))):
-        sorted_anchorings = quicknii_series_anchorings(
-            image_sizes=[image_sizes[i] for i in order],
-            slice_indices=[slice_indices[i] for i in order],
-            atlas_shape=atlas_shape,
-            interpolation_axis=k,
-            stored_anchorings=(
-                [stored_anchorings[i] for i in order] if stored_anchorings is not None else None
-            ),
-            reverse_axis=reverse_axis,
-            center_proposals=center_proposals,
+    def __init__(self, path: str | Path) -> None:
+        """Load a project from its native JSON and build the coordinate snapshot.
+
+
+        Args:
+            path: Path to a ``project-verso.json`` file.
+        """
+        project = Project.load(Path(path))
+        self._init_from_project(project)
+
+    @classmethod
+    def from_project(cls, project: Project) -> VersoRegistration:
+        """Build a registration from an in-memory, fully-populated project.
+
+        Args:
+            project: A project whose section dimensions and atlas metadata are
+                already populated.
+
+        Returns:
+            A ready-to-use :class:`VersoRegistration`.
+        """
+        self = object.__new__(cls)
+        self._init_from_project(project)
+        return self
+
+    # -- construction ------------------------------------------------------
+
+    def _init_from_project(self, project: Project) -> None:
+        atlas = project.atlas
+        if atlas.resolution_um <= 0 or any(d <= 0 for d in atlas.shape):
+            raise ValueError(
+                "Project atlas metadata is incomplete (resolution_um / shape); "
+                "the project file is not self-contained for coordinate math."
+            )
+        self._resolution_um = float(atlas.resolution_um)
+        self._atlas_shape = tuple(int(d) for d in atlas.shape)
+        self._atlas_name = atlas.name
+        self._atlas_volume: AtlasVolume | None = None
+
+        self._snapshots: dict[str, _SectionSnapshot] = {}
+        self._ids: list[str] = []
+        for section in project.sections:
+            snap = self._build_snapshot(section)
+            self._snapshots[snap.id] = snap
+            self._ids.append(snap.id)
+
+    @staticmethod
+    def _build_snapshot(section: Section) -> _SectionSnapshot:
+        work_w, work_h = section.resolution_thumbnail_wh
+        full_w, full_h = section.resolution_original_wh
+        if min(work_w, work_h, full_w, full_h) <= 0:
+            raise ValueError(
+                f"Section {section.id!r} has unpopulated pixel dimensions; the "
+                f"project file is not self-contained for coordinate math."
+            )
+        o, u, v = anchoring_to_vectors(section.alignment.current_anchoring)
+        cps = section.warp.control_points
+        if cps:
+            src_px = np.array([[cp.src_x, cp.src_y] for cp in cps], dtype=np.float64)
+            dst_px = np.array([[cp.dst_x, cp.dst_y] for cp in cps], dtype=np.float64)
+        else:
+            src_px = np.empty((0, 2), dtype=np.float64)
+            dst_px = np.empty((0, 2), dtype=np.float64)
+        aligned = bool(np.linalg.norm(np.cross(u, v)) > 0.0)
+        return _SectionSnapshot(
+            id=section.id,
+            original_path=section.original_path,
+            work_w=int(work_w),
+            work_h=int(work_h),
+            full_w=int(full_w),
+            full_h=int(full_h),
+            o=o,
+            u=u,
+            v=v,
+            src_px=src_px,
+            dst_px=dst_px,
+            flip_h=bool(section.preprocessing.flip_horizontal),
+            flip_v=bool(section.preprocessing.flip_vertical),
+            aligned=aligned,
         )
-        restored: list[list[float] | None] = [None] * len(slice_indices)
-        for sorted_idx, original_idx in enumerate(order):
-            restored[original_idx] = sorted_anchorings[sorted_idx]
-        return [anchoring for anchoring in restored if anchoring is not None]
 
-    qn_dims = _quicknii_dims(atlas_shape)
-    axis_dim = qn_dims[k]
-    u_dim = qn_dims[u_axis]
-    v_dim = qn_dims[v_axis]
-    max_w = max(w for w, _ in image_sizes)
-    max_h = max(h for _, h in image_sizes)
-    if max_w <= 0 or max_h <= 0:
-        raise ValueError("image dimensions must be positive")
+    # -- container protocol ------------------------------------------------
 
-    stored_anchorings = stored_anchorings or [None] * len(image_sizes)
-    stored_indices = [
-        i
-        for i, anchoring in enumerate(stored_anchorings)
-        if anchoring is not None and any(val != 0.0 for val in anchoring)
-    ]
+    def ids(self) -> list[str]:
+        """Return the section ids in project order."""
+        return list(self._ids)
 
-    def default_unpacked(axis_voxel: float) -> list[float]:
-        midpoint = [0.0, 0.0, 0.0]
-        midpoint[k] = float(axis_voxel)
-        midpoint[u_axis] = float(u_dim) / 2.0
-        midpoint[v_axis] = float(v_dim) / 2.0
-        u_unit = [0.0, 0.0, 0.0]
-        u_unit[u_axis] = 1.0
-        v_unit = [0.0, 0.0, 0.0]
-        v_unit[v_axis] = 1.0
-        return [
-            *midpoint,
-            *u_unit,
-            *v_unit,
-            float(u_dim) / float(max_w),
-            float(v_dim) / float(max_h),
-        ]
-
-    unpacked_by_index: dict[int, list[float]] = {}
-    for i in stored_indices:
-        anchoring = stored_anchorings[i]
-        assert anchoring is not None
-        w, h = image_sizes[i]
-        unpacked_by_index[i] = quicknii_unpack_anchoring(anchoring, w, h)
-
-    stored_by_slice_index: dict[int, int] = {}
-    for i in stored_indices:
-        stored_by_slice_index.setdefault(slice_indices[i], i)
-
-    duplicate_index_positions: list[int] = []
-    for i, slice_idx in enumerate(slice_indices):
-        if i in stored_indices or slice_idx not in stored_by_slice_index:
-            continue
-        stored_idx = stored_by_slice_index[slice_idx]
-        unpacked_by_index[i] = list(unpacked_by_index[stored_idx])
-        duplicate_index_positions.append(i)
-
-    anchor_indices = sorted(stored_indices + duplicate_index_positions)
-
-    controls: list[int] = []
-    if not stored_indices:
-        first_voxel = 0.0 if reverse_axis else float(axis_dim - 1)
-        last_voxel = float(axis_dim - 1) if reverse_axis else 0.0
-        unpacked_by_index[0] = default_unpacked(first_voxel)
-        controls.append(0)
-        if len(image_sizes) > 1:
-            unpacked_by_index[len(image_sizes) - 1] = default_unpacked(last_voxel)
-            controls.append(len(image_sizes) - 1)
-    elif len(stored_indices) == 1:
-        idx = stored_indices[0]
-        first_control = anchor_indices[0]
-        last_control = anchor_indices[-1]
-        stored = unpacked_by_index[idx]
-        first_voxel = 0.0 if reverse_axis else float(axis_dim - 1)
-        last_voxel = float(axis_dim - 1) if reverse_axis else 0.0
-        if first_control != 0:
-            first = list(stored)
-            first[k] = first_voxel
-            unpacked_by_index[0] = first
-            controls.append(0)
-        controls.extend(anchor_indices)
-        if last_control != len(image_sizes) - 1:
-            last = list(stored)
-            last[k] = last_voxel
-            unpacked_by_index[len(image_sizes) - 1] = last
-            controls.append(len(image_sizes) - 1)
-    else:
-        controls.extend(anchor_indices)
-        if anchor_indices[0] != 0:
-            unpacked_by_index[0] = _quicknii_regressed_unpacked(
-                stored_indices, unpacked_by_index, slice_indices, slice_indices[0]
-            )
-            controls.insert(0, 0)
-        if anchor_indices[-1] != len(image_sizes) - 1:
-            last_idx = len(image_sizes) - 1
-            unpacked_by_index[last_idx] = _quicknii_regressed_unpacked(
-                stored_indices, unpacked_by_index, slice_indices, slice_indices[last_idx]
-            )
-            controls.append(last_idx)
-
-    controls = sorted(set(controls))
-    propagated = [None] * len(image_sizes)
-
-    for i in controls:
-        propagated[i] = unpacked_by_index[i]
-
-    if len(controls) == 1:
-        propagated = [list(unpacked_by_index[controls[0]]) for _ in image_sizes]
-    else:
-        for left, right in zip(controls, controls[1:]):
-            left_index = slice_indices[left]
-            right_index = slice_indices[right]
-            left_u = unpacked_by_index[left]
-            right_u = unpacked_by_index[right]
-            for i in range(left, right + 1):
-                denom = right_index - left_index
-                t = 0.0 if denom == 0 else (slice_indices[i] - left_index) / denom
-                propagated[i] = [a + t * (b - a) for a, b in zip(left_u, right_u)]
-
-    # Strip in-plane rotation (rotation around the slicing axis) from
-    # proposals while preserving position along the slicing axis, physical
-    # tilt (the slicing-axis component of each unit vector), and stretch.
-    _stored_set = set(stored_indices)
-    for i, row in enumerate(propagated):
-        if row is None or i in _stored_set:
-            continue
-        u_tilt = row[3 + k]
-        v_tilt = row[6 + k]
-        row[3 + v_axis] = 0.0
-        row[6 + u_axis] = 0.0
-        row[3 + u_axis] = float(np.sqrt(max(0.0, 1.0 - u_tilt * u_tilt)))
-        row[6 + v_axis] = float(np.sqrt(max(0.0, 1.0 - v_tilt * v_tilt)))
-
-    packed: list[list[float]] = []
-    for i, (unpacked, (w, h)) in enumerate(zip(propagated, image_sizes)):
-        if unpacked is None:
-            raise RuntimeError("QuickNII propagation left a section without anchoring")
-        if center_proposals and i not in stored_indices:
-            unpacked = list(unpacked)
-            unpacked[u_axis] = float(u_dim) / 2.0
-            unpacked[v_axis] = float(v_dim) / 2.0
-        packed.append(quicknii_pack_anchoring(unpacked, w, h))
-    return packed
-
-
-def _quicknii_regressed_unpacked(
-    stored_indices: list[int],
-    unpacked_by_index: dict[int, list[float]],
-    slice_indices: list[int],
-    target_index: int,
-) -> list[float]:
-    """Linear-regression endpoint estimate matching QuickNII's fallback path."""
-    xs = np.asarray([slice_indices[i] for i in stored_indices], dtype=np.float64)
-    out: list[float] = []
-    for component in range(11):
-        ys = np.asarray([unpacked_by_index[i][component] for i in stored_indices])
-        x_mean = float(xs.mean())
-        y_mean = float(ys.mean())
-        denom = float(((xs - x_mean) ** 2).sum())
-        slope = 0.0 if denom == 0.0 else float(((xs - x_mean) * (ys - y_mean)).sum() / denom)
-        out.append(y_mean + slope * (float(target_index) - x_mean))
-    return out
-
-
-def pixel_to_normalized(px: float, py: float, width: int, height: int) -> tuple[float, float]:
-    """Convert working-resolution pixel coords to normalised section coords."""
-    return px / width, py / height
-
-
-def normalized_to_pixel(s: float, t: float, width: int, height: int) -> tuple[float, float]:
-    """Convert normalised section coords to working-resolution pixel coords."""
-    return s * width, t * height
-
-
-# ---------------------------------------------------------------------------
-# Anchoring interpolation
-# ---------------------------------------------------------------------------
-
-
-def interpolate_anchorings(
-    sections: list,
-    atlas_shape: tuple[int, int, int] | None = None,
-    interpolation_axis: int = 1,
-    reverse_axis: bool = False,
-    center_proposals: bool = True,
-) -> None:
-    """Propagate anchorings for non-stored sections using QuickNII semantics.
-
-    When ``atlas_shape`` is available this follows QuickNII's
-    ``MgmtPanel.dointerpolate`` path, including the no-stored-anchoring and
-    one-stored-anchoring cases where endpoint controls are synthesized before
-    linear interpolation. Without an atlas shape, only the multi-anchor path can
-    be resolved because QuickNII's synthesized endpoint controls depend on atlas
-    dimensions.
-    """
-    from verso.engine.io.image_io import registration_dimensions
-    from verso.engine.model.alignment import AlignmentStatus
-
-    usable = []
-    for section in sections:
+    def __contains__(self, key: object) -> bool:
         try:
-            w, h = registration_dimensions(section)
-        except Exception:
-            continue
-        if w > 0 and h > 0:
-            usable.append((section, w, h))
-    if not usable:
-        return
+            self._resolve_slice(str(key))
+        except (KeyError, ValueError):
+            return False
+        return True
 
-    k = interpolation_axis
-    u_axis, v_axis = _in_plane_axes(k)
+    def __len__(self) -> int:
+        return len(self._ids)
 
-    order = sorted(range(len(usable)), key=lambda i: (usable[i][0].slice_index, i))
-    sorted_usable = [usable[i] for i in order]
-    slice_indices = [section.slice_index for section, _, _ in sorted_usable]
+    # -- slice resolution --------------------------------------------------
 
-    unpacked_by_index: dict[int, list[float]] = {}
-    stored_indices: list[int] = []
-    for idx, (section, w, h) in enumerate(sorted_usable):
-        if section.alignment.status == AlignmentStatus.COMPLETE:
-            display = _display_space_anchoring(section)
-            if any(v != 0.0 for v in display):
-                unpacked_by_index[idx] = quicknii_unpack_anchoring(display, w, h)
-                stored_indices.append(idx)
+    def _resolve_slice(self, key: str) -> str:
+        """Resolve a slice key (id, file stem, or basename) to a section id."""
+        key = str(key)
+        if key in self._snapshots:
+            return key
+        by_stem = [s.id for s in self._snapshots.values() if Path(s.original_path).stem == key]
+        by_name = [s.id for s in self._snapshots.values() if Path(s.original_path).name == key]
+        matches = by_stem or by_name
+        if len(matches) == 1:
+            return matches[0]
+        if not matches:
+            raise KeyError(f"No section matches {key!r}. Available ids: {self._ids}")
+        raise KeyError(f"Slice {key!r} is ambiguous; candidate ids: {matches}")
 
-    if atlas_shape is not None:
-        stored_anchorings_for_series = [
-            _display_space_anchoring(section) if idx in stored_indices else None
-            for idx, (section, _, _) in enumerate(sorted_usable)
-        ]
-        propagated_anchorings = quicknii_series_anchorings(
-            image_sizes=[(w, h) for _, w, h in sorted_usable],
-            slice_indices=slice_indices,
-            atlas_shape=atlas_shape,
-            interpolation_axis=k,
-            stored_anchorings=stored_anchorings_for_series,
-            reverse_axis=reverse_axis,
-            center_proposals=center_proposals,
-        )
+    # -- forward: image -> atlas ------------------------------------------
 
-        for (section, _, _), anchoring in zip(sorted_usable, propagated_anchorings):
-            if _has_user_owned_alignment(section):
+    def coord_image_to_atlas(
+        self,
+        slice: str,
+        xy: np.ndarray | list,
+        *,
+        space: str = "full",
+        units: str = "voxel",
+        return_valid: bool = False,
+    ) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
+        """Map image pixels on ``slice`` to atlas coordinates.
+
+        Args:
+            slice: Section id, original-image file stem, or basename.
+            xy: A single ``(2,)`` point or an ``(N, 2)`` array of image pixels.
+            space: ``"full"`` (original full-resolution pixels, default) or
+                ``"working"`` (working/thumbnail-resolution pixels).
+            units: ``"voxel"`` (default), ``"um"`` or ``"mm"``.
+            return_valid: If True, also return an ``(N,)`` boolean mask that is
+                True where the pixel falls within the section frame.
+
+        Returns:
+            An ``(N, 3)`` array of atlas coordinates, or ``(coords, inside)``
+            when ``return_valid`` is True.
+        """
+        if space not in _SPACES:
+            raise ValueError(f"space must be one of {_SPACES}, got {space!r}")
+        if units not in _UNITS:
+            raise ValueError(f"units must be one of {_UNITS}, got {units!r}")
+        snap = self._snapshots[self._resolve_slice(slice)]
+        if not snap.aligned:
+            raise ValueError(f"Section {snap.id!r} has no alignment; cannot map pixels.")
+
+        pts = np.asarray(xy, dtype=np.float64).reshape(-1, 2)
+        st = self._image_px_to_st(snap, pts, space)
+        if len(snap.src_px):
+            uv = warp_points_section_to_atlas(
+                st, snap.src_px, snap.dst_px, snap.work_w, snap.work_h
+            )
+        else:
+            uv = st
+
+        voxel = self._st_to_voxel(snap, uv)
+        coords = self._to_units(voxel, units)
+        if return_valid:
+            s, t = st[:, 0], st[:, 1]
+            inside = (s >= 0.0) & (s <= 1.0) & (t >= 0.0) & (t <= 1.0)
+            return coords, inside
+        return coords
+
+    # -- reverse: atlas -> image ------------------------------------------
+
+    def coord_atlas_to_image(
+        self,
+        xyz: np.ndarray | list,
+        *,
+        space: str = "full",
+        units: str = "voxel",
+        max_distance: float | None = None,
+    ) -> AtlasToImageResult:
+        """Back-project atlas voxels to image pixels via nearest-section search.
+
+        Sections sparsely sample the atlas, so a voxel usually lies *between*
+        planes. Each voxel is matched to the nearest section whose footprint
+        covers it; the matched section id is an output.
+
+        Args:
+            xyz: A single ``(3,)`` point or an ``(N, 3)`` array of atlas voxel
+                coordinates.
+            space: Image space of the returned pixels — ``"full"`` (default) or
+                ``"working"``.
+            units: Units for the reported ``distance`` (and ``max_distance``):
+                ``"voxel"`` (default), ``"um"`` or ``"mm"``.
+            max_distance: If given, voxels farther than this (in ``units``) from
+                the matched plane are marked invalid.
+
+        Returns:
+            An :class:`AtlasToImageResult` with per-voxel arrays.
+        """
+        if space not in _SPACES:
+            raise ValueError(f"space must be one of {_SPACES}, got {space!r}")
+        if units not in _UNITS:
+            raise ValueError(f"units must be one of {_UNITS}, got {units!r}")
+
+        pts = np.asarray(xyz, dtype=np.float64).reshape(-1, 3)
+        n = len(pts)
+        best_dist = np.full(n, np.inf)
+        section_id = np.full(n, "", dtype=object)
+        xy = np.full((n, 2), np.nan, dtype=np.float64)
+
+        for snap in self._snapshots.values():
+            if not snap.aligned:
                 continue
-            section.alignment.anchoring = anchoring
-            section.alignment.status = AlignmentStatus.IN_PROGRESS
-            # Mark these as auto-generated proposals (same tag the GUI's
-            # _initialize_quicknii_anchorings uses).  Without it, a later
-            # re-interpolation treats these IN_PROGRESS sections as manual
-            # edits and skips them, so a newly-saved keyframe's angle never
-            # propagates here.
-            section.alignment.source = "quicknii_default"
-        return
+            normal = np.cross(snap.u, snap.v)
+            norm = np.linalg.norm(normal)
+            if norm == 0.0:
+                continue
+            normal = normal / norm
 
-    if len(stored_indices) < 2:
-        return
+            rel = pts - snap.o[None, :]
+            dist = np.abs(rel @ normal)  # perpendicular distance, voxels
 
-    controls = list(stored_indices)
-    if stored_indices[0] != 0:
-        unpacked_by_index[0] = _quicknii_regressed_unpacked(
-            stored_indices,
-            unpacked_by_index,
-            slice_indices,
-            slice_indices[0],
-        )
-        controls.insert(0, 0)
-    if stored_indices[-1] != len(sorted_usable) - 1:
-        last_idx = len(sorted_usable) - 1
-        unpacked_by_index[last_idx] = _quicknii_regressed_unpacked(
-            stored_indices,
-            unpacked_by_index,
-            slice_indices,
-            slice_indices[last_idx],
-        )
-        controls.append(last_idx)
+            # Affine inverse onto the section plane -> atlas-overlay (u, v).
+            pinv = np.linalg.pinv(np.column_stack([snap.u, snap.v]))  # (2, 3)
+            uv = rel @ pinv.T  # (N, 2)
+            inside = (uv[:, 0] >= 0.0) & (uv[:, 0] <= 1.0) & (uv[:, 1] >= 0.0) & (uv[:, 1] <= 1.0)
 
-    controls = sorted(set(controls))
-    propagated: dict[int, list[float]] = {}
-    for left, right in zip(controls, controls[1:]):
-        left_index = slice_indices[left]
-        right_index = slice_indices[right]
-        left_unpacked = unpacked_by_index[left]
-        right_unpacked = unpacked_by_index[right]
-        for idx in range(left, right + 1):
-            denom = right_index - left_index
-            t = 0.0 if denom == 0 else (slice_indices[idx] - left_index) / denom
-            propagated[idx] = [a + t * (b - a) for a, b in zip(left_unpacked, right_unpacked)]
+            better = inside & (dist < best_dist)
+            if not np.any(better):
+                continue
 
-    _stored_set_legacy = set(stored_indices)
-    for idx, row in propagated.items():
-        if idx in _stored_set_legacy:
-            continue
-        u_tilt = row[3 + k]
-        v_tilt = row[6 + k]
-        row[3 + v_axis] = 0.0
-        row[6 + u_axis] = 0.0
-        row[3 + u_axis] = float(np.sqrt(max(0.0, 1.0 - u_tilt * u_tilt)))
-        row[6 + v_axis] = float(np.sqrt(max(0.0, 1.0 - v_tilt * v_tilt)))
+            st = warp_points_atlas_to_section(
+                uv[better], snap.src_px, snap.dst_px, snap.work_w, snap.work_h
+            )
+            px, py = self._st_to_image_px(snap, st, space)
 
-    for idx, unpacked in propagated.items():
-        section, w, h = sorted_usable[idx]
-        if _has_user_owned_alignment(section):
-            continue
-        section.alignment.anchoring = quicknii_pack_anchoring(unpacked, w, h)
-        section.alignment.status = AlignmentStatus.IN_PROGRESS
-        section.alignment.source = "quicknii_default"
+            best_dist[better] = dist[better]
+            section_id[better] = snap.id
+            xy[better, 0] = px
+            xy[better, 1] = py
 
+        covered = np.isfinite(best_dist)
+        distance = self._scale_distance(best_dist, units)
+        valid = covered.copy()
+        if max_distance is not None:
+            valid &= distance <= max_distance
+        return AtlasToImageResult(section_id=section_id, xy=xy, distance=distance, valid=valid)
 
-# ---------------------------------------------------------------------------
-# Atlas slice sampling grid
-# ---------------------------------------------------------------------------
+    # -- whole-image atlas resampling ---------------------------------------
 
+    def _get_atlas_volume(self) -> AtlasVolume:
+        """Lazily construct (and cache) the atlas volume this project references."""
+        if self._atlas_volume is None:
+            self._atlas_volume = AtlasVolume(self._atlas_name)
+        return self._atlas_volume
 
-def make_atlas_sample_grid(
-    anchoring: list[float],
-    out_width: int,
-    out_height: int,
-) -> np.ndarray:
-    """Build a (H, W, 3) array of atlas voxel coordinates for a 2D slice.
+    def image_to_atlas(
+        self,
+        slice: str,
+        kind: str = "annotation",
+        *,
+        space: str = "full",
+        return_valid: bool = False,
+    ) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
+        """Resample an atlas volume onto ``slice``'s own image pixel grid.
 
-    The grid covers the full section plane at the given output resolution.
-    Each cell ``grid[row, col]`` contains the atlas voxel (x, y, z) that
-    corresponds to the normalized section coordinate
-    ``(col / (W-1), row / (H-1))``.
+        Unlike :meth:`coord_image_to_atlas` (which maps individual pixel
+        *coordinates*), this maps a whole image: for every pixel of the section
+        image it looks up the corresponding atlas voxel — accounting for the
+        section's affine anchoring, nonlinear (Delaunay) warp, and
+        preprocessing flips — and samples the requested atlas volume there.
+        The result is pixel-matched 1:1 to the section image, suitable for
+        per-pixel quantification (as VisuAlign/PyNutil would produce).
 
-    This grid is passed to the atlas volume sampler (in ``atlas.py``) to
-    extract a 2D slice image.
+        Args:
+            slice: Section id, original-image file stem, or basename.
+            kind: ``"annotation"`` (region-ID labels, default), ``"template"``
+                (reference/Nissl grayscale intensity), ``"boundary"``
+                (region-boundary edge mask), or ``"hemisphere"`` (per-pixel L/R
+                hemisphere value, ``1``/``2`` in-brain, ``0`` out-of-atlas).
 
-    Args:
-        anchoring: 9-element anchoring vector.
-        out_width: Width of the desired output slice image in pixels.
-        out_height: Height of the desired output slice image in pixels.
+        Note:
+            The ``"hemisphere"`` kind is an intentional Python-only extension used
+            by per-hemisphere quantification; it has no MATLAB mirror in
+            ``matlab/+verso/VersoRegistration.m`` because quantification (its only
+            consumer) is not mirrored in MATLAB. See ``.claude/matlab-port.md``.
+            space: ``"full"`` (original full-resolution pixels, default) or
+                ``"working"`` (working/thumbnail-resolution pixels).
+            return_valid: If True, also return an ``(H, W)`` boolean mask that
+                is True where the pixel's atlas voxel lies inside the atlas
+                volume.
 
-    Returns:
-        Float64 array of shape (out_height, out_width, 3).
-    """
-    o, u, v = anchoring_to_vectors(anchoring)
-    s = np.linspace(0.0, 1.0, out_width)
-    t = np.linspace(0.0, 1.0, out_height)
-    ss, tt = np.meshgrid(s, t)  # (H, W) each
-    grid = o + ss[..., np.newaxis] * u + tt[..., np.newaxis] * v  # (H, W, 3)
-    return grid
+        Returns:
+            ``kind="annotation"``: ``(H, W)`` int32 region-ID array (``0`` for
+            background/out-of-atlas pixels).
+            ``kind="template"``: ``(H, W)`` uint8 grayscale array (``0``
+            outside the atlas volume).
+            ``kind="boundary"``: ``(H, W)`` bool edge mask.
+            ``kind="hemisphere"``: ``(H, W)`` uint8 hemisphere map (``1``/``2``
+            in-brain, ``0`` out-of-atlas).
+            Or ``(array, in_bounds)`` when ``return_valid`` is True.
+        """
+        if kind not in _KINDS:
+            raise ValueError(f"kind must be one of {_KINDS}, got {kind!r}")
+        if space not in _SPACES:
+            raise ValueError(f"space must be one of {_SPACES}, got {space!r}")
+        snap = self._snapshots[self._resolve_slice(slice)]
+        if not snap.aligned:
+            raise ValueError(f"Section {snap.id!r} has no alignment; cannot map pixels.")
+
+        out_w, out_h = (snap.full_w, snap.full_h) if space == "full" else (snap.work_w, snap.work_h)
+        atlas = self._get_atlas_volume()
+
+        needs_labels = kind in ("annotation", "boundary")
+        labels = np.zeros((out_h, out_w), dtype=np.int32) if needs_labels else None
+        gray = np.zeros((out_h, out_w), dtype=np.uint8) if kind == "template" else None
+        hemi = np.zeros((out_h, out_w), dtype=np.uint8) if kind == "hemisphere" else None
+        in_bounds = np.zeros((out_h, out_w), dtype=bool)
+
+        xs = (np.arange(out_w, dtype=np.float64) + 0.5) / out_w
+        rows_per_chunk = max(1, _IMAGE_TO_ATLAS_CHUNK_PIXELS // out_w)
+        for r0 in range(0, out_h, rows_per_chunk):
+            r1 = min(out_h, r0 + rows_per_chunk)
+            ys = (np.arange(r0, r1, dtype=np.float64) + 0.5) / out_h
+            ss, tt = np.meshgrid(xs, ys)  # (rows, out_w)
+            if snap.flip_h:
+                ss = 1.0 - ss
+            if snap.flip_v:
+                tt = 1.0 - tt
+
+            st = np.column_stack([ss.ravel(), tt.ravel()])
+            if len(snap.src_px):
+                uv = warp_points_section_to_atlas(
+                    st, snap.src_px, snap.dst_px, snap.work_w, snap.work_h
+                )
+            else:
+                uv = st
+
+            voxel = self._st_to_voxel(snap, uv).reshape(r1 - r0, out_w, 3)
+
+            if kind == "template":
+                chunk_gray, chunk_inside = atlas.sample_reference_at(voxel)
+                gray[r0:r1] = chunk_gray
+            elif kind == "hemisphere":
+                chunk_hemi, chunk_inside = atlas.sample_hemispheres_at(voxel)
+                hemi[r0:r1] = chunk_hemi
+            else:
+                chunk_labels, chunk_inside = atlas.sample_labels_at(voxel)
+                chunk_labels = chunk_labels.copy()
+                chunk_labels[~chunk_inside] = 0
+                labels[r0:r1] = chunk_labels
+            in_bounds[r0:r1] = chunk_inside
+
+        if kind == "boundary":
+            result = boundary_mask(labels, in_bounds)
+        elif kind == "template":
+            result = gray
+        elif kind == "hemisphere":
+            result = hemi
+        else:
+            result = labels
+
+        if return_valid:
+            return result, in_bounds
+        return result
+
+    # -- coordinate plumbing -------------------------------------------------
+
+    @staticmethod
+    def _image_px_to_st(snap: _SectionSnapshot, pts: np.ndarray, space: str) -> np.ndarray:
+        """Image pixels (full/working, on-disk orientation) -> normalized display st (N,2).
+
+        Args:
+            snap: Section snapshot providing working/full dimensions and flips.
+            pts: ``(N, 2)`` array of image pixels in the requested ``space``.
+            space: ``"full"`` (original full-resolution pixels) or ``"working"``
+                (working/thumbnail-resolution pixels).
+
+        Returns:
+            An ``(N, 2)`` array of normalized display coordinates ``(s, t)``.
+        """
+        if space == "full":
+            px = pts[:, 0] * snap.work_w / snap.full_w
+            py = pts[:, 1] * snap.work_h / snap.full_h
+        else:  # "working"
+            px, py = pts[:, 0], pts[:, 1]
+        if snap.flip_h:
+            px = snap.work_w - px
+        if snap.flip_v:
+            py = snap.work_h - py
+        return np.column_stack([px / snap.work_w, py / snap.work_h])
+
+    @staticmethod
+    def _st_to_image_px(
+        snap: _SectionSnapshot, st: np.ndarray, space: str
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Normalized display st -> image pixels (px, py) in the requested space.
+
+        Args:
+            snap: Section snapshot providing working/full dimensions and flips.
+            st: ``(N, 2)`` array of normalized display coordinates ``(s, t)``.
+            space: ``"full"`` (original full-resolution pixels) or ``"working"``
+                (working/thumbnail-resolution pixels).
+
+        Returns:
+            A ``(px, py)`` tuple of ``(N,)`` arrays, image pixels in ``space``.
+        """
+        px = st[:, 0] * snap.work_w
+        py = st[:, 1] * snap.work_h
+        if snap.flip_h:
+            px = snap.work_w - px
+        if snap.flip_v:
+            py = snap.work_h - py
+        if space == "full":
+            px = px * snap.full_w / snap.work_w
+            py = py * snap.full_h / snap.work_h
+        return px, py
+
+    @staticmethod
+    def _st_to_voxel(snap: _SectionSnapshot, uv: np.ndarray) -> np.ndarray:
+        """Normalized atlas-plane coords -> atlas voxel via the anchoring affine (N,3).
+
+        Args:
+            snap: Section snapshot providing the anchoring origin/right/down vectors.
+            uv: ``(N, 2)`` array of normalized atlas-plane coordinates.
+
+        Returns:
+            An ``(N, 3)`` array of atlas voxel coordinates.
+        """
+        return snap.o[None, :] + uv[:, 0, None] * snap.u[None, :] + uv[:, 1, None] * snap.v[None, :]
+
+    # -- units -------------------------------------------------------------
+
+    def _to_units(self, voxel: np.ndarray, units: str) -> np.ndarray:
+        if units == "voxel":
+            return voxel
+        if units == "um":
+            return voxel * self._resolution_um
+        return voxel * self._resolution_um / 1000.0  # "mm"
+
+    def _scale_distance(self, dist_voxel: np.ndarray, units: str) -> np.ndarray:
+        if units == "voxel":
+            return dist_voxel
+        if units == "um":
+            return dist_voxel * self._resolution_um
+        return dist_voxel * self._resolution_um / 1000.0  # "mm"

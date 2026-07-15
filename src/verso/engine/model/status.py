@@ -15,6 +15,8 @@ module stays UI-agnostic and importable from the pure engine layer.
 
 from __future__ import annotations
 
+__all__ = ["STATUS_COLOR", "section_step_color", "section_step_status"]
+
 from typing import TYPE_CHECKING
 
 from verso.engine.model.alignment import AlignmentStatus
@@ -29,8 +31,6 @@ STATUS_COLOR: dict[AlignmentStatus, str] = {
     AlignmentStatus.IN_PROGRESS: "#E6A817",  # yellow
     AlignmentStatus.COMPLETE: "#4CAF50",  # green
 }
-
-STEPS = ("prep", "align", "warp")
 
 
 def section_step_status(section: Section, step: str, *, dirty: bool) -> AlignmentStatus:
@@ -85,6 +85,3 @@ def section_step_status(section: Section, step: str, *, dirty: bool) -> Alignmen
 def section_step_color(section: Section, step: str, *, dirty: bool) -> str:
     """Convenience: the hex colour for :func:`section_step_status`."""
     return STATUS_COLOR[section_step_status(section, step, dirty=dirty)]
-
-
-__all__ = ["STATUS_COLOR", "STEPS", "section_step_status", "section_step_color"]

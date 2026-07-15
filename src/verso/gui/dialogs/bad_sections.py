@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
 )
 
 from verso.engine.model.project import Section
+from verso.gui.utils import require
 
 
 class BadSectionsDialog(QDialog):
@@ -114,7 +115,7 @@ class BadSectionsDialog(QDialog):
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Run DeepSlice")
+        require(buttons.button(QDialogButtonBox.StandardButton.Ok)).setText("Run DeepSlice")
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)

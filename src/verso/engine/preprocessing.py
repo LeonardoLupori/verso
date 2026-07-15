@@ -162,7 +162,7 @@ def mask_to_rgba(
     """
     mask_bool = np.asarray(mask, dtype=bool)
     visible = ~mask_bool if negative else mask_bool
-    alpha = int(round(min(max(opacity, 0.0), 1.0) * 255))
+    alpha = round(min(max(opacity, 0.0), 1.0) * 255)
 
     rgba = np.zeros((*mask_bool.shape, 4), dtype=np.uint8)
     rgba[:, :, 0] = color[0]
@@ -189,10 +189,7 @@ def morph_mask(mask: np.ndarray, pixels: int, operation: str) -> np.ndarray:
     diameter = 2 * radius + 1
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (diameter, diameter))
     src = np.asarray(mask, dtype=np.uint8) * 255
-    if operation == "erode":
-        result = cv2.erode(src, kernel)
-    else:
-        result = cv2.dilate(src, kernel)
+    result = cv2.erode(src, kernel) if operation == "erode" else cv2.dilate(src, kernel)
     return result > 0
 
 

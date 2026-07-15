@@ -153,10 +153,10 @@ def _smooth_label_map(
 
         # Output window covering this crop. Use round() at both edges so adjacent
         # crops tile the output grid without gaps or overlaps.
-        or0 = int(round(r0 * sy))
-        or1 = int(round(r1 * sy))
-        oc0 = int(round(c0 * sx))
-        oc1 = int(round(c1 * sx))
+        or0 = round(r0 * sy)
+        or1 = round(r1 * sy)
+        oc0 = round(c0 * sx)
+        oc1 = round(c1 * sx)
         ow = oc1 - oc0
         oh = or1 - or0
         if ow <= 0 or oh <= 0:
@@ -226,8 +226,8 @@ def render_overlay_rgba(
     Returns:
         uint8 ``(out_h, out_w, 4)`` RGBA. Background pixels have alpha 0.
     """
-    anchoring = section.alignment.anchoring
-    if not anchoring or all(v == 0.0 for v in anchoring):
+    anchoring = section.alignment.current_anchoring
+    if not section.alignment.is_anchored:
         return np.zeros((out_h, out_w, 4), dtype=np.uint8)
 
     base_w = max(1, round(out_w / scale))
@@ -245,8 +245,7 @@ def render_overlay_rgba(
     if cps:
         src = np.array([[cp.src_x, cp.src_y] for cp in cps], dtype=np.float64)
         dst = np.array([[cp.dst_x, cp.dst_y] for cp in cps], dtype=np.float64)
-        aspect = out_w / out_h if out_h else 1.0
-        map_x, map_y = build_backward_remap(base_h, base_w, src, dst, aspect=aspect)
+        map_x, map_y = build_backward_remap(base_h, base_w, src, dst, out_w, out_h)
         labels = cv2.remap(
             labels.astype(np.float32),
             map_x,
@@ -264,7 +263,7 @@ def render_overlay_rgba(
 
     if overlay_style == "filled":
         rgb = atlas.colorize_labels(smooth_ids)
-        alpha = np.where(smooth_ids > 0, int(round(alpha_scalar * 255)), 0).astype(np.uint8)
+        alpha = np.where(smooth_ids > 0, round(alpha_scalar * 255), 0).astype(np.uint8)
         canvas[..., :3] = rgb
         canvas[..., 3] = alpha
         return canvas
@@ -316,8 +315,8 @@ def _output_long_side(section: Section, scale: float) -> int:
     magnitudes give the voxel count spanned along the plane. Falls back to a
     fixed default when the section has no usable anchoring.
     """
-    anchoring = section.alignment.anchoring
-    if not anchoring or all(v == 0.0 for v in anchoring):
+    anchoring = section.alignment.current_anchoring
+    if not section.alignment.is_anchored:
         return _NO_ANCHOR_LONG_SIDE
     u = np.asarray(anchoring[3:6], dtype=np.float64)
     v = np.asarray(anchoring[6:9], dtype=np.float64)

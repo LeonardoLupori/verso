@@ -21,7 +21,9 @@ list (per-channel color + brightness scale + visibility).
 
 from __future__ import annotations
 
+import itertools
 import re
+from collections.abc import Sequence
 from pathlib import Path
 
 import numpy as np
@@ -37,6 +39,10 @@ WORKING_SCALE: float = 0.2
 THUMBNAIL_MAX_SIDE = 2000
 FILMSTRIP_MAX_SIDE = 150
 
+# File extensions accepted as section images (New Project dialog file picker,
+# drag-and-drop onto the overview).
+SUPPORTED_IMAGE_EXTENSIONS = (".tif", ".tiff", ".png", ".jpg", ".jpeg")
+
 # Heuristic upper bound on plausible channel count. Used to disambiguate
 # (C, H, W) vs (H, W, C) layouts: channel axes are always small.
 _MAX_PLAUSIBLE_CHANNELS = 8
@@ -47,7 +53,7 @@ def _natural_key(stem: str) -> list[object]:
     return [int(chunk) if chunk.isdigit() else chunk for chunk in re.split(r"(\d+)", stem)]
 
 
-def guess_slice_indices(paths: list[str | Path]) -> list[int]:
+def guess_slice_indices(paths: Sequence[str | Path]) -> list[int]:
     """Guess a slice index per file from numbers embedded in the filenames.
 
     A batch of histology filenames usually shares a layout where one numeric
@@ -87,7 +93,7 @@ def guess_slice_indices(paths: list[str | Path]) -> list[int]:
         distinct = len(set(values))
         spread = max(values) - min(values)
         ordered = [per_file[i][j] for i in name_order]
-        rising = sum(a < b for a, b in zip(ordered, ordered[1:]))
+        rising = sum(a < b for a, b in itertools.pairwise(ordered))
         monotonic = rising / (n - 1) if n > 1 else 0.0
         score = (distinct, spread, monotonic, -j)
         if best is None or score > best:
@@ -223,10 +229,10 @@ def _stretch_per_channel(image: np.ndarray) -> np.ndarray:
     return out
 
 
-def to_multichannel(image: np.ndarray) -> np.ndarray:
-    """Normalise any raw array into uint8 ``(H, W, C)`` channels-last layout.
+def _normalize_layout(image: np.ndarray) -> np.ndarray:
+    """Normalise any raw array to channels-last ``(H, W, C)`` — dtype preserved.
 
-    Handles:
+    Layout only (no contrast stretch, no dtype change). Handles:
       * 2-D grayscale → ``(H, W, 1)``
       * Channels-last RGB / RGBA ``(H, W, 3 | 4)`` → drops alpha if present
       * Channels-first ``(C, H, W)`` (typical OME-TIFF) → transposed
@@ -250,7 +256,34 @@ def to_multichannel(image: np.ndarray) -> np.ndarray:
             # Channels-last RGBA → drop alpha.
             img = img[:, :, :3]
 
-    return _stretch_per_channel(img)
+    return img
+
+
+def to_multichannel(image: np.ndarray) -> np.ndarray:
+    """Normalise any raw array into uint8 ``(H, W, C)`` channels-last, contrast-stretched.
+
+    Layout via :func:`_normalize_layout`, then a per-channel percentile stretch to
+    uint8 for display. **Not** for quantification — use :func:`load_full_res_raw`
+    when you need the untouched pixel values.
+    """
+    return _stretch_per_channel(_normalize_layout(image))
+
+
+def load_full_res_raw(path: str | Path) -> np.ndarray:
+    """Load an original image as ``(H, W, C)`` in its **native dtype**, un-stretched.
+
+    Unlike :func:`ensure_working_copy` / :func:`to_multichannel` (which percentile-
+    stretch to uint8 for display), this preserves the raw pixel values so intensity
+    quantification is faithful. Reads the full-resolution file every call — callers
+    that need it repeatedly should cache the result.
+
+    Args:
+        path: Path to the original image file.
+
+    Returns:
+        ``(H, W, C)`` array in the file's native dtype and channel layout.
+    """
+    return _normalize_layout(load_image(path))
 
 
 # ---------------------------------------------------------------------------
@@ -415,7 +448,7 @@ def _save_ome_tiff(image: np.ndarray, path: Path, channel_names: list[str]) -> N
     """
     import tifffile
 
-    if image.ndim == 2:
+    if image.ndim == 2:  # noqa: SIM108 — per-branch shape comments are clearer than a ternary
         data = image[np.newaxis, ...]  # (1, H, W)
     else:
         data = np.transpose(image, (2, 0, 1))  # (H, W, C) → (C, H, W)
@@ -486,19 +519,6 @@ def probe_channels(path: str | Path) -> list[str]:
 def _extract_ome_channel_names(ome_xml: str) -> list[str]:
     """Pull <Channel Name="..."> values out of an OME XML string."""
     return re.findall(r'<Channel[^>]*Name="([^"]+)"', ome_xml)
-
-
-def registration_dimensions(section) -> tuple[int, int]:
-    """Return dimensions of the image used for interactive registration.
-
-    Checks the canonical OME-TIFF path first, then the stored thumbnail_path
-    (legacy PNG), and falls back to the original image.
-    """
-    thumbnail = Path(section.thumbnail_path) if section.thumbnail_path else None
-    for candidate in (_canonical_thumbnail(section), thumbnail):
-        if candidate and candidate.exists():
-            return image_dimensions(candidate)
-    return image_dimensions(section.original_path)
 
 
 def load_filmstrip_thumbnail(

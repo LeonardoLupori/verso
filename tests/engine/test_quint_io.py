@@ -1,17 +1,12 @@
 """Tests for engine/io/quint_io.py — QuickNII / VisuAlign I/O."""
 
-import gzip
 import json
-import struct
 from pathlib import Path
-
-import numpy as np
 
 from verso.engine.io.quint_io import (
     _control_points_to_markers,
     _markers_to_control_points,
     _to_quicknii_convention,
-    export_brainglobe_atlas_for_visualign,
     load_deepslice,
     load_quicknii,
     load_visualign,
@@ -74,16 +69,16 @@ VISUALIGN_JSON = {
 
 
 def test_markers_to_control_points_pixel_array():
-    """Native VisuAlign format: pixel-coordinate arrays."""
+    """Native VisuAlign format: pixel-coordinate arrays stored as-is."""
     markers = [[500.0, 200.0, 600.0, 180.0]]
     cps = _markers_to_control_points(markers, width=1000, height=800)
 
     assert len(cps) == 1
     cp = cps[0]
-    assert abs(cp.src_x - 0.5) < 1e-6  # 500 / 1000
-    assert abs(cp.src_y - 0.25) < 1e-6  # 200 / 800
-    assert abs(cp.dst_x - 0.6) < 1e-6  # 600 / 1000
-    assert abs(cp.dst_y - 0.225) < 1e-6  # 180 / 800
+    assert abs(cp.src_x - 500.0) < 1e-6
+    assert abs(cp.src_y - 200.0) < 1e-6
+    assert abs(cp.dst_x - 600.0) < 1e-6
+    assert abs(cp.dst_y - 180.0) < 1e-6
 
 
 def test_markers_to_control_points_legacy_dict():
@@ -101,16 +96,16 @@ def test_markers_to_control_points_legacy_dict():
 
 def test_control_points_to_markers():
     """Output should be pixel-coordinate arrays matching VisuAlign native format."""
-    cps = [ControlPoint(src_x=0.5, src_y=0.25, dst_x=0.6, dst_y=0.20)]
-    markers = _control_points_to_markers(cps, width=1000, height=800)
+    cps = [ControlPoint(src_x=500.0, src_y=200.0, dst_x=600.0, dst_y=160.0)]
+    markers = _control_points_to_markers(cps)
 
     assert len(markers) == 1
     m = markers[0]
     assert isinstance(m, list)
-    assert abs(m[0] - 500.0) < 1e-3  # src_x * 1000
-    assert abs(m[1] - 200.0) < 1e-3  # src_y * 800
-    assert abs(m[2] - 600.0) < 1e-3  # dst_x * 1000
-    assert abs(m[3] - 160.0) < 1e-3  # dst_y * 800
+    assert abs(m[0] - 500.0) < 1e-3
+    assert abs(m[1] - 200.0) < 1e-3
+    assert abs(m[2] - 600.0) < 1e-3
+    assert abs(m[3] - 160.0) < 1e-3
 
 
 def test_marker_control_point_round_trip():
@@ -121,9 +116,9 @@ def test_marker_control_point_round_trip():
         [800.0, 80.0, 770.0, 136.0],
     ]
     cps = _markers_to_control_points(original, width=W, height=H)
-    restored = _control_points_to_markers(cps, width=W, height=H)
+    restored = _control_points_to_markers(cps)
 
-    for orig, res in zip(original, restored):
+    for orig, res in zip(original, restored, strict=True):
         for i in range(4):
             assert abs(orig[i] - res[i]) < 1e-3, f"component {i} mismatch"
 
@@ -147,7 +142,7 @@ def test_load_quicknii_anchoring(tmp_path: Path):
     p.write_text(json.dumps(QUICKNII_JSON))
 
     project = load_quicknii(p)
-    assert project.sections[0].alignment.anchoring == _LOADED_ANCHORING_0
+    assert project.sections[0].alignment.current_anchoring == _LOADED_ANCHORING_0
 
 
 def test_load_quicknii_atlas_name(tmp_path: Path):
@@ -174,9 +169,6 @@ def test_load_deepslice_marks_suggestions_in_progress(tmp_path: Path):
 
     assert s0.alignment.status == AlignmentStatus.IN_PROGRESS
     assert s0.alignment.source == "deepslice"
-    # proposal_anchoring is set from the already-converted BrainGlobe anchoring
-    assert s0.alignment.proposal_anchoring == _LOADED_ANCHORING_0
-    assert s0.alignment.proposal_confidence == 0.91
 
 
 # ---------------------------------------------------------------------------
@@ -206,7 +198,7 @@ def test_load_visualign_section_without_markers(tmp_path: Path):
 
 
 def test_load_visualign_marker_values(tmp_path: Path):
-    """Pixel-array markers are correctly normalised on load."""
+    """Pixel-array markers are stored as-is (working-resolution pixels) on load."""
     p = tmp_path / "va.json"
     p.write_text(json.dumps(VISUALIGN_JSON))
 
@@ -214,11 +206,11 @@ def test_load_visualign_marker_values(tmp_path: Path):
     s0 = project.sections[0]
     cp0 = s0.warp.control_points[0]
 
-    # First marker: [500, 240, 520, 232] at 1000×800
-    assert abs(cp0.src_x - 0.5) < 1e-5  # 500 / 1000
-    assert abs(cp0.src_y - 0.3) < 1e-5  # 240 / 800
-    assert abs(cp0.dst_x - 0.52) < 1e-5  # 520 / 1000
-    assert abs(cp0.dst_y - 0.29) < 1e-5  # 232 / 800
+    # First marker: [500, 240, 520, 232] — stored directly as pixels
+    assert abs(cp0.src_x - 500.0) < 1e-5
+    assert abs(cp0.src_y - 240.0) < 1e-5
+    assert abs(cp0.dst_x - 520.0) < 1e-5
+    assert abs(cp0.dst_y - 232.0) < 1e-5
 
 
 # ---------------------------------------------------------------------------
@@ -236,9 +228,11 @@ def test_quicknii_save_load_round_trip(tmp_path: Path):
 
     reloaded = load_quicknii(dst)
     assert len(reloaded.sections) == len(project.sections)
-    for orig, rel in zip(project.sections, reloaded.sections):
+    for orig, rel in zip(project.sections, reloaded.sections, strict=True):
         # Both loaded in BrainGlobe convention — must be identical
-        for a, b in zip(orig.alignment.anchoring, rel.alignment.anchoring):
+        for a, b in zip(
+            orig.alignment.current_anchoring, rel.alignment.current_anchoring, strict=True
+        ):
             assert abs(a - b) < 1e-3
         assert rel.slice_index == orig.slice_index
 
@@ -260,6 +254,7 @@ def test_save_quicknii_uses_registration_thumbnail_dimensions(tmp_path: Path):
                 slice_index=1,
                 original_path=str(original),
                 thumbnail_path=str(thumbnail),
+                resolution_thumbnail_wh=(200, 160),
             )
         ],
         working_scale=0.2,
@@ -326,7 +321,7 @@ def test_save_quicknii_xml_infers_atlas_shape(tmp_path: Path):
                 original_path="a.tif",
                 thumbnail_path="",
                 alignment=Alignment(
-                    anchoring=[10.0, 100.0, 40.0, 20.0, 3.0, 4.0, 5.0, 6.0, 7.0],
+                    current_anchoring=[10.0, 100.0, 40.0, 20.0, 3.0, 4.0, 5.0, 6.0, 7.0],
                     status=AlignmentStatus.COMPLETE,
                 ),
             )
@@ -397,7 +392,7 @@ def test_sagittal_export_independent_of_slicing_direction(tmp_path: Path):
                     original_path="a.tif",
                     thumbnail_path="",
                     alignment=Alignment(
-                        anchoring=list(stored),
+                        current_anchoring=list(stored),
                         status=AlignmentStatus.COMPLETE,
                     ),
                 )
@@ -425,121 +420,20 @@ def test_sagittal_export_independent_of_slicing_direction(tmp_path: Path):
 
 
 def test_visualign_save_load_round_trip(tmp_path: Path):
-    from PIL import Image
-
-    # Create actual thumbnail images so _registration_dims returns non-zero values
-    thumb = tmp_path / "s001-thumb.png"
-    Image.new("RGB", (1000, 800)).save(thumb)
-
     src = tmp_path / "va.json"
     src.write_text(json.dumps(VISUALIGN_JSON))
 
-    # Patch thumbnail paths so save_visualign can read dimensions
     project = load_visualign(src)
-    for section in project.sections:
-        section.thumbnail_path = str(thumb)
 
     dst = tmp_path / "va_out.json"
     save_visualign(project, dst)
 
     reloaded = load_visualign(dst)
 
-    for orig, rel in zip(project.sections, reloaded.sections):
+    for orig, rel in zip(project.sections, reloaded.sections, strict=True):
         assert len(rel.warp.control_points) == len(orig.warp.control_points)
-        for cp_orig, cp_rel in zip(orig.warp.control_points, rel.warp.control_points):
+        for cp_orig, cp_rel in zip(orig.warp.control_points, rel.warp.control_points, strict=True):
             assert abs(cp_orig.src_x - cp_rel.src_x) < 1e-4
             assert abs(cp_orig.src_y - cp_rel.src_y) < 1e-4
             assert abs(cp_orig.dst_x - cp_rel.dst_x) < 1e-4
             assert abs(cp_orig.dst_y - cp_rel.dst_y) < 1e-4
-
-
-# ---------------------------------------------------------------------------
-# export_brainglobe_atlas_for_visualign
-# ---------------------------------------------------------------------------
-
-
-class _MockBGAtlas:
-    """Minimal BrainGlobeAtlas stand-in for testing the NIfTI writer."""
-
-    def __init__(self, annotation: np.ndarray) -> None:
-        self.annotation = annotation
-        self.structures = {
-            8: {"name": "Basic cell groups", "rgb_triplet": [191, 218, 227]},
-            997: {"name": "root", "rgb_triplet": [255, 255, 255]},
-        }
-
-
-def _run_export(annotation: np.ndarray, tmp_path: Path) -> Path:
-    """Call export_brainglobe_atlas_for_visualign with a mocked BrainGlobeAtlas."""
-    import unittest.mock as mock
-
-    mock_bg = _MockBGAtlas(annotation)
-    with mock.patch(
-        "brainglobe_atlasapi.BrainGlobeAtlas",
-        return_value=mock_bg,
-    ):
-        return export_brainglobe_atlas_for_visualign("test_atlas", tmp_path)
-
-
-def test_export_creates_cutlas_directory(tmp_path: Path):
-    ann = np.zeros((4, 3, 5), dtype=np.uint32)  # (AP, DV, LR)
-    cutlas_dir = _run_export(ann, tmp_path)
-
-    assert cutlas_dir.is_dir()
-    assert (cutlas_dir / "labels.nii.gz").exists()
-    assert (cutlas_dir / "labels.txt").exists()
-    assert cutlas_dir.name == "test_atlas.cutlas"
-
-
-def test_export_nifti_header_shape(tmp_path: Path):
-    """NIfTI dim fields must reflect transposed volume shape (LR, AP, DV)."""
-    # BG shape: (AP=4, DV=3, LR=5)  → expected NIfTI shape: (LR=5, AP=4, DV=3)
-    ann = np.zeros((4, 3, 5), dtype=np.uint32)
-    cutlas_dir = _run_export(ann, tmp_path)
-
-    with gzip.open(cutlas_dir / "labels.nii.gz", "rb") as f:
-        hdr = f.read(348)
-
-    ndims, x, y, z = struct.unpack_from("<4h", hdr, 40)
-    assert ndims == 3
-    assert x == 5  # LR (was axis 2 of BG annotation)
-    assert y == 4  # AP (was axis 0)
-    assert z == 3  # DV (was axis 1)
-
-    datatype = struct.unpack_from("<h", hdr, 70)[0]
-    assert datatype == 768  # uint32
-
-
-def test_export_nifti_volume_transposition(tmp_path: Path):
-    """Voxel at BG [ap, dv, lr] must appear at NIfTI [lr, ap_flipped, dv_flipped]."""
-    # (AP=4, DV=3, LR=5) — place a sentinel value at a known position
-    ann = np.zeros((4, 3, 5), dtype=np.uint32)
-    ann[1, 2, 4] = 999  # BG ap=1, dv=2, lr=4
-
-    cutlas_dir = _run_export(ann, tmp_path)
-
-    # Read back raw voxel data. NIfTI stores the first axis (x = LR) fastest, so
-    # the on-disk bytes are Fortran-ordered for our (LR, AP, DV) volume.
-    with gzip.open(cutlas_dir / "labels.nii.gz", "rb") as f:
-        raw = f.read()
-    vox_data = np.frombuffer(raw[352:], dtype=np.uint32).reshape(5, 4, 3, order="F")
-
-    # After flip+transpose:
-    #   NIfTI[lr, ap_qn, dv_qn] = BG[AP_max-1-ap_qn, DV_max-1-dv_qn, lr]
-    #   sentinel at BG ap=1, dv=2, lr=4:
-    #     ap_qn = AP_max - 1 - ap_bg = 4 - 1 - 1 = 2
-    #     dv_qn = DV_max - 1 - dv_bg = 3 - 1 - 2 = 0
-    #     lr_qn = lr_bg = 4  (LR not flipped)
-    assert vox_data[4, 2, 0] == 999
-
-
-def test_export_labels_txt_format(tmp_path: Path):
-    """labels.txt must be ITK-SNAP format with correct region entries."""
-    ann = np.zeros((4, 3, 5), dtype=np.uint32)
-    cutlas_dir = _run_export(ann, tmp_path)
-
-    text = (cutlas_dir / "labels.txt").read_text(encoding="utf-8")
-    assert "ITK-SnAP" in text
-    assert '"Clear Label"' in text
-    assert '"root"' in text
-    assert "255  255  255" in text  # root RGB

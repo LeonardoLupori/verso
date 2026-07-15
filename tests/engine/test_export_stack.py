@@ -65,7 +65,7 @@ def _canonical_section(
         preprocessing=Preprocessing(
             flip_horizontal=flip_h, flip_vertical=flip_v, slice_mask_path=mask_path
         ),
-        alignment=Alignment(anchoring=anchoring),
+        alignment=Alignment(current_anchoring=anchoring),
         warp=WarpState(control_points=cps or []),
     )
 
@@ -89,7 +89,7 @@ def test_canonical_plane_anchoring_is_axis_aligned():
     """The canonical plane holds the slicing axis constant and spans the rest."""
     atlas = _fake_atlas()
     anchoring = atlas.canonical_plane_anchoring(position=4.0, axis=1)  # AP
-    from verso.engine.registration import make_atlas_sample_grid
+    from verso.engine.anchoring import make_atlas_sample_grid
 
     grid = make_atlas_sample_grid(anchoring, out_width=10, out_height=6)
     # AP (component 1) is constant at the requested position across the plane.
@@ -142,7 +142,7 @@ def test_build_canonical_remap_marks_uncovered_pixels():
     # Anchoring spans only the left half in LR (u = LR/2) → right half has s > 1.
     anchoring = [0.0, 4.0, 0.0, _LR / 2, 0.0, 0.0, 0.0, 0.0, float(_DV)]
     section = _canonical_section(atlas)
-    section.alignment.anchoring = anchoring
+    section.alignment.current_anchoring = anchoring
     map_x, _, out_w, _ = build_canonical_remap(section, atlas, 1, 1.0, 20, 12)
     covered = map_x >= 0
     assert covered[:, : out_w // 2].all()  # left half covered
@@ -155,7 +155,7 @@ def test_build_canonical_remap_marks_uncovered_pixels():
 def test_export_section_aligned_none_without_anchoring(monkeypatch):
     atlas = _fake_atlas()
     section = _canonical_section(atlas)
-    section.alignment.anchoring = [0.0] * 9  # degenerate
+    section.alignment.current_anchoring = [0.0] * 9  # degenerate
     # ensure_working_copy must not even be called for a degenerate anchoring.
     monkeypatch.setattr(
         export_stack, "ensure_working_copy", lambda *a, **k: pytest.fail("should not load")
@@ -335,7 +335,7 @@ def test_has_usable_anchoring():
     atlas = _fake_atlas()
     assert _has_usable_anchoring(_canonical_section(atlas))
     bad = _canonical_section(atlas)
-    bad.alignment.anchoring = [0.0] * 9
+    bad.alignment.current_anchoring = [0.0] * 9
     assert not _has_usable_anchoring(bad)
 
 
@@ -351,7 +351,7 @@ def test_export_aligned_stack_skips_unaligned_and_writes(monkeypatch, tmp_path):
     good.id = "good"
     bad = _canonical_section(atlas, slice_index=2)
     bad.id = "bad"
-    bad.alignment.anchoring = [0.0] * 9
+    bad.alignment.current_anchoring = [0.0] * 9
     project = SimpleNamespace(
         working_scale=0.2,
         interpolation_axis_index=1,

@@ -26,6 +26,7 @@ Job directory contents (written by the parent):
 
 from __future__ import annotations
 
+import contextlib
 import json
 import sys
 from pathlib import Path
@@ -109,12 +110,10 @@ def serve() -> None:
             _process_job(Path(cmd))
         except Exception as exc:
             # Ensure the parent always finds a result file so it isn't stuck.
-            try:
+            with contextlib.suppress(Exception):
                 (Path(cmd) / "result.json").write_text(
                     json.dumps({"results": {}, "errors": [f"job failed: {exc}"]})
                 )
-            except Exception:
-                pass
         sys.stdout.write(_WORKER_DONE + "\n")
         sys.stdout.flush()
 

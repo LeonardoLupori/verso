@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from verso.engine.model.alignment import AlignmentStatus
+from verso.engine.anchoring import is_anchored
 from verso.engine.model.project import Project, Section
 
 
@@ -150,11 +150,12 @@ def run_deepslice_suggestions(
         )
 
 
-def apply_deepslice_suggestions(project: Project, result: DeepSliceRunResult) -> int:
+def apply_deepslice_suggestions(project: Project, result: DeepSliceRunResult) -> set[str]:
     """Apply DeepSlice suggestions to matching project sections.
 
     Matching prefers copied filename stem, then serial number.  Matching
-    sections become editable ``IN_PROGRESS`` alignments with DeepSlice metadata.
+    sections become editable ``IN_PROGRESS`` alignments. Returns the ids of the
+    sections whose alignment was set.
     """
     return apply_deepslice_suggestions_with_atlas(project, result, atlas_shape=None)
 
@@ -164,7 +165,7 @@ def apply_deepslice_suggestions_with_atlas(
     result: DeepSliceRunResult,
     atlas_shape: tuple[int, int, int] | None,
     reverse_axis: bool = False,
-) -> int:
+) -> set[str]:
     """Apply DeepSlice suggestions to project sections.
 
     Suggestions from :func:`run_deepslice_suggestions` carry anchorings in raw
@@ -176,15 +177,15 @@ def apply_deepslice_suggestions_with_atlas(
     DeepSlice ≥1.2.7 auto-detects the indexing direction from image content
     (``enforce_section_ordering``), so the staged-filename ``_s{nr}`` reflection
     no longer controls anything and DeepSlice may order the AP series opposite
-    to VERSO's own QuickNII proposals.  After conversion the series is therefore
+    to VERSO's own default proposals.  After conversion the series is therefore
     re-oriented to match VERSO's default-proposal direction for *reverse_axis*
     (see :func:`_orient_series_to_convention`) — the same convention that drives
-    ``quicknii_series_anchorings`` — so DeepSlice and the built-in proposals
+    ``propagate_series_anchorings`` — so DeepSlice and the built-in proposals
     always scroll the same way.
 
     Sections listed in ``result.bad_section_ids`` get their DeepSlice
     prediction discarded.  Once the good predictions are in place, VERSO's
-    standard QuickNII series-interpolation fills the bad sections from their
+    standard series-interpolation fills the bad sections from their
     neighbours — far more reliable than trusting a network output the user
     already marked as untrustworthy.
     """
@@ -196,7 +197,6 @@ def apply_deepslice_suggestions_with_atlas(
     by_original_stem = {Path(s.original_path).stem: s for s in project.sections}
     by_slice_index = {s.slice_index: s for s in project.sections}
     bad_ids = set(result.bad_section_ids)
-    applied = 0
     applied_section_ids: set[str] = set()
 
     for suggestion in result.suggestions:
@@ -224,16 +224,8 @@ def apply_deepslice_suggestions_with_atlas(
             continue
         raw = list(suggestion.anchoring)
         anchoring = _to_quicknii_convention(raw, atlas_shape) if atlas_shape is not None else raw
-        section.alignment.anchoring = anchoring
-        section.alignment.status = AlignmentStatus.IN_PROGRESS
-        section.alignment.source = "deepslice"
-        section.alignment.stored_anchoring = None
-        section.alignment.proposal_anchoring = list(anchoring)
-        section.alignment.proposal_confidence = suggestion.confidence
-        section.alignment.proposal_run_id = result.run_id
-        section.warp.control_points.clear()
-        section.warp.status = AlignmentStatus.NOT_STARTED
-        applied += 1
+        section.alignment.set_auto_proposal(anchoring, source="deepslice")
+        section.warp.reset()
         applied_section_ids.add(section.id)
 
     if atlas_shape is not None and applied_section_ids:
@@ -241,16 +233,11 @@ def apply_deepslice_suggestions_with_atlas(
         # are interpolated, so they fill from correctly-oriented neighbours.
         _orient_series_to_convention(project, applied_section_ids, reverse_axis)
 
+    filled_ids: set[str] = set()
     if atlas_shape is not None and bad_ids and applied_section_ids:
-        applied += _interpolate_bad_sections(
-            project,
-            atlas_shape,
-            applied_section_ids,
-            bad_ids,
-            result.run_id,
-        )
+        filled_ids = _interpolate_bad_sections(project, atlas_shape, applied_section_ids, bad_ids)
 
-    return applied
+    return applied_section_ids | filled_ids
 
 
 def _orient_series_to_convention(
@@ -260,8 +247,8 @@ def _orient_series_to_convention(
 ) -> None:
     """Align DeepSlice's AP series direction with VERSO's default proposals.
 
-    DeepSlice is coronal-only, so the slicing axis is AP (QuickNII voxel
-    index 1).  ``quicknii_series_anchorings`` places the first section
+    DeepSlice is coronal-only, so the slicing axis is AP (anchoring voxel
+    index 1).  ``propagate_series_anchorings`` places the first section
     (lowest ``slice_index``) at the *high* AP voxel and the last at AP 0 when
     ``reverse_axis`` is False, and the reverse when True.  DeepSlice's own
     ordering can come out either way, so if its AP trend across ``slice_index``
@@ -270,7 +257,7 @@ def _orient_series_to_convention(
     swapped with its mirror partner.  The AP *positions* DeepSlice predicted are
     preserved as a set — they are correct — only their order is corrected.
     """
-    from verso.engine.registration import (
+    from verso.engine.anchoring import (
         anchoring_center,
         set_center_position_along_axis,
     )
@@ -282,15 +269,14 @@ def _orient_series_to_convention(
     )
     if len(good) < 2:
         return
-    ap_centers = [float(anchoring_center(s.alignment.anchoring)[ap_axis]) for s in good]
+    ap_centers = [float(anchoring_center(s.alignment.current_anchoring)[ap_axis]) for s in good]
     # VERSO convention: AP decreases with slice_index unless reverse_axis.
     ascending = ap_centers[-1] > ap_centers[0]
     if ascending == bool(reverse_axis):
         return  # already matches the built-in proposal direction
-    for section, ap in zip(good, reversed(ap_centers)):
-        flipped = set_center_position_along_axis(section.alignment.anchoring, ap, ap_axis)
-        section.alignment.anchoring = flipped
-        section.alignment.proposal_anchoring = list(flipped)
+    for section, ap in zip(good, reversed(ap_centers), strict=False):
+        flipped = set_center_position_along_axis(section.alignment.current_anchoring, ap, ap_axis)
+        section.alignment.current_anchoring = flipped
 
 
 def _interpolate_bad_sections(
@@ -298,33 +284,28 @@ def _interpolate_bad_sections(
     atlas_shape: tuple[int, int, int],
     applied_section_ids: set[str],
     bad_ids: set[str],
-    run_id: str,
-) -> int:
-    """Fill bad-section anchorings by interpolating from the good DeepSlice ones."""
-    from verso.engine.io.image_io import registration_dimensions
-    from verso.engine.registration import quicknii_series_anchorings
+) -> set[str]:
+    """Fill bad-section anchorings by interpolating from the good DeepSlice ones.
 
-    usable: list[tuple[Section, int, int]] = []
-    for section in project.sections:
-        try:
-            w, h = registration_dimensions(section)
-        except Exception:
-            continue
-        if w > 0 and h > 0:
-            usable.append((section, w, h))
+    Returns the ids of the sections that were filled.
+    """
+    from verso.engine.anchoring import propagate_series_anchorings
 
+    usable: list[tuple[Section, int, int]] = [
+        (section, *section.resolution_thumbnail_wh) for section in project.sections
+    ]
     if not usable:
-        return 0
+        return set()
 
     stored = [
-        section.alignment.anchoring if section.id in applied_section_ids else None
+        section.alignment.current_anchoring if section.id in applied_section_ids else None
         for section, _, _ in usable
     ]
     if not any(a is not None for a in stored):
-        return 0
+        return set()
 
     # DeepSlice is coronal-only, so this interpolation always runs along AP.
-    propagated = quicknii_series_anchorings(
+    propagated = propagate_series_anchorings(
         image_sizes=[(w, h) for _, w, h in usable],
         slice_indices=[s.slice_index for s, _, _ in usable],
         atlas_shape=atlas_shape,
@@ -333,85 +314,14 @@ def _interpolate_bad_sections(
         center_proposals=False,
     )
 
-    filled = 0
-    for (section, _, _), anchoring, st in zip(usable, propagated, stored):
+    filled: set[str] = set()
+    for (section, _, _), anchoring, st in zip(usable, propagated, stored, strict=False):
         if st is not None or section.id not in bad_ids:
             continue
-        section.alignment.anchoring = anchoring
-        section.alignment.status = AlignmentStatus.IN_PROGRESS
-        section.alignment.source = "deepslice_bad_interpolated"
-        section.alignment.stored_anchoring = None
-        section.alignment.proposal_anchoring = list(anchoring)
-        section.alignment.proposal_confidence = None
-        section.alignment.proposal_run_id = run_id
-        section.warp.control_points.clear()
-        section.warp.status = AlignmentStatus.NOT_STARTED
-        filled += 1
+        section.alignment.set_auto_proposal(anchoring, source="deepslice_bad_interpolated")
+        section.warp.reset()
+        filled.add(section.id)
     return filled
-
-
-def reset_in_progress_to_default_proposals(
-    sections: list[Section],
-    atlas_shape: tuple[int, int, int],
-    interpolation_axis: int = 1,
-    reverse_axis: bool = False,
-    include_complete: bool = False,
-) -> int:
-    """Clear editable suggestions and regenerate QuickNII-style default proposals."""
-    from verso.engine.io.image_io import registration_dimensions
-    from verso.engine.registration import (
-        _display_space_anchoring,
-        quicknii_series_anchorings,
-    )
-
-    usable: list[tuple[Section, int, int]] = []
-    for section in sections:
-        try:
-            w, h = registration_dimensions(section)
-        except Exception:
-            continue
-        if w > 0 and h > 0:
-            usable.append((section, w, h))
-
-    if not usable:
-        return 0
-
-    stored_anchorings = []
-    for section, _, _ in usable:
-        is_stored = not include_complete and section.alignment.status == AlignmentStatus.COMPLETE
-        if not is_stored:
-            stored_anchorings.append(None)
-            continue
-        display = _display_space_anchoring(section)
-        stored_anchorings.append(display if any(v != 0.0 for v in display) else None)
-    propagated = quicknii_series_anchorings(
-        image_sizes=[(w, h) for _, w, h in usable],
-        slice_indices=[section.slice_index for section, _, _ in usable],
-        atlas_shape=atlas_shape,
-        interpolation_axis=interpolation_axis,
-        stored_anchorings=stored_anchorings,
-        reverse_axis=reverse_axis,
-        center_proposals=True,
-    )
-
-    changed = 0
-    for (section, _, _), anchoring, stored in zip(usable, propagated, stored_anchorings):
-        if stored is not None:
-            continue
-        section.alignment.anchoring = anchoring
-        section.alignment.position_mm = None
-        section.alignment.status = AlignmentStatus.IN_PROGRESS
-        section.alignment.source = "quicknii_default"
-        if include_complete:
-            section.alignment.stored_anchoring = None
-        section.alignment.proposal_anchoring = None
-        section.alignment.proposal_confidence = None
-        section.alignment.proposal_run_id = None
-        section.warp.control_points.clear()
-        section.warp.status = AlignmentStatus.NOT_STARTED
-        changed += 1
-
-    return changed
 
 
 def _copy_registration_images(
@@ -601,7 +511,7 @@ def _load_suggestions(path: Path) -> list[DeepSliceSectionSuggestion]:
 
     for i, raw_section in enumerate(raw_sections):
         anchoring = [float(x) for x in raw_section.get("anchoring", [])]
-        if len(anchoring) < 9 or not any(v != 0.0 for v in anchoring):
+        if len(anchoring) < 9 or not is_anchored(anchoring):
             continue
         confidence = raw_section.get("confidence")
         suggestions.append(
