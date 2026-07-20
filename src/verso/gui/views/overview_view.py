@@ -465,10 +465,17 @@ class OverviewView(QWidget):
 
         self._set_summary(len(p.sections), complete, in_progress)
 
-        # One-shot fit for the Interactive content columns (the Stretch File
-        # column is unaffected).  Doing this only on a structural rebuild keeps
-        # the frequent status-only refreshes cheap.
-        t.resizeColumnsToContents()
+        # One-shot fit for the content columns, but never the File column:
+        # QTableWidget.resizeColumnsToContents() resizes EVERY column
+        # regardless of its configured resize mode, which would collapse the
+        # Stretch File column to its text width and leave a gap that never
+        # refills (no widget-resize event follows a rebuild). Resizing only
+        # the fixed columns re-triggers the header's stretch redistribution,
+        # so File refills the remaining width. Doing this only on a
+        # structural rebuild keeps the frequent status-only refreshes cheap.
+        for col in range(t.columnCount()):
+            if col != _COL_FILE:
+                t.resizeColumnToContents(col)
 
     def _sync_selection(self) -> None:
         """Highlight and scroll to the row for the current section.
