@@ -73,7 +73,7 @@ def make_added_sections(
     """Build :class:`Section` objects for images added to an existing project.
 
     Each source path is expanded into its scenes (a multi-scene container such as
-    CZI/LIF yields one candidate section per scene; every other format yields a
+    CZI yields one candidate section per scene; every other format yields a
     single scene at index 0). New sections are appended *after* the current
     series: their provisional ``slice_index`` runs from
     ``max(existing slice_index) + 1`` upward, assigned in natural-filename then

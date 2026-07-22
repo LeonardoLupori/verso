@@ -565,18 +565,6 @@ wheels = [
 ]
 
 [[package]]
-name = "liffile"
-version = "2026.7.14"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "numpy" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/bf/69/6511241a1b6e2aad9339d5072ce2928aaf158abe0f8eee430b7a693029ff/liffile-2026.7.14.tar.gz", hash = "sha256:68217989c621dcda6647e740b6ea925ac43eb9382bc216cbd0e9210b7c72069b", size = 60140, upload-time = "2026-07-15T02:50:02.007Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/16/f9/f54eb1663c7ae5224765fdf6ec65225bc96eab48c494f71e370b811ea268/liffile-2026.7.14-py3-none-any.whl", hash = "sha256:9bf5faf2a5ed5dfe09298c4244ebe0f8d5568144045d90d48b6447972e8328d6", size = 38742, upload-time = "2026-07-15T02:50:00.74Z" },
-]
-
-[[package]]
 name = "lxml"
 version = "6.1.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1709,7 +1697,6 @@ dependencies = [
     { name = "brainglobe-atlasapi" },
     { name = "imagecodecs" },
     { name = "itk-elastix" },
-    { name = "liffile" },
     { name = "numpy" },
     { name = "opencv-python" },
     { name = "pylibczirw" },
@@ -1743,7 +1730,6 @@ requires-dist = [
     { name = "deepslice", marker = "extra == 'deepslice'", specifier = "==1.2.8" },
     { name = "imagecodecs", specifier = ">=2026.3.6" },
     { name = "itk-elastix", specifier = ">=0.13" },
-    { name = "liffile", specifier = ">=2026.7" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "opencv-python", specifier = ">=4.9" },
     { name = "pylibczirw", specifier = ">=6.1" },

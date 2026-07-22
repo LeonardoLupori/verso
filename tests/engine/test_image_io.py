@@ -107,7 +107,7 @@ def test_thumbnail_filename_scene_gets_infix():
 
 def test_container_extensions_supported():
     assert ".czi" in SUPPORTED_IMAGE_EXTENSIONS
-    assert ".lif" in SUPPORTED_IMAGE_EXTENSIONS
+    assert ".lif" not in SUPPORTED_IMAGE_EXTENSIONS
 
 
 def test_enumerate_scenes_single_image_is_one_scene(tmp_path: Path):

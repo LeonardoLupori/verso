@@ -43,8 +43,8 @@ THUMBNAIL_MAX_SIDE = 2000
 FILMSTRIP_MAX_SIDE = 150
 
 # File extensions accepted as section images (New Project dialog file picker,
-# drag-and-drop onto the overview). The trailing two are multi-scene container
-# formats (see scene_readers.CONTAINER_EXTENSIONS) — one file may yield several
+# drag-and-drop onto the overview). The trailing one is a multi-scene container
+# format (see scene_readers.CONTAINER_EXTENSIONS) — one file may yield several
 # sections, distinguished by Section.scene_index.
 SUPPORTED_IMAGE_EXTENSIONS = (
     ".tif",
@@ -138,7 +138,7 @@ def thumbnail_filename(path: str | Path, scene_index: int = 0) -> str:
 def enumerate_scenes(path: str | Path) -> list[SceneInfo]:
     """List the importable scenes in *path*.
 
-    Container formats (CZI/LIF) may expose several scenes; every other format is
+    Container formats (CZI) may expose several scenes; every other format is
     a single scene at index 0. Each :class:`~verso.engine.io.scene_readers.SceneInfo`
     carries a display name and the scene's full-resolution ``(width, height)``.
     """
@@ -177,7 +177,7 @@ def load_image(path: str | Path) -> np.ndarray:
 def image_dimensions(path: str | Path, scene_index: int = 0) -> tuple[int, int]:
     """Return image dimensions as ``(width, height)`` without full decoding.
 
-    For container formats (CZI/LIF) the dimensions are those of the requested
+    For container formats (CZI) the dimensions are those of the requested
     *scene* at full resolution.
     """
     if scene_readers.is_container(path):
@@ -223,7 +223,7 @@ def compute_working_scale(
     Args:
         paths: Source images in the import batch. Each entry is a path, or a
             ``(path, scene_index)`` tuple for a specific scene of a container
-            file (so a multi-scene CZI/LIF is measured scene-by-scene).
+            file (so a multi-scene CZI is measured scene-by-scene).
         max_side: Target longest-side, in pixels, for the largest image.
 
     Returns:
@@ -344,7 +344,7 @@ def _read_tiff_scene_native(path: str | Path) -> np.ndarray:
 def _read_original_native(path: str | Path, scene_index: int = 0, zoom: float = 1.0) -> np.ndarray:
     """Read one scene of an original image as ``(H, W, C)`` native dtype.
 
-    Dispatches by format: container files (CZI/LIF) via
+    Dispatches by format: container files (CZI) via
     :mod:`verso.engine.io.scene_readers` (honouring ``zoom`` for a memory-cheap
     reduced read); multipage TIFF via the axis-aware reader; everything else via
     PIL + layout normalisation. The returned array is already channels-last and
@@ -368,7 +368,7 @@ def load_full_res_raw(path: str | Path, scene_index: int = 0) -> np.ndarray:
 
     Args:
         path: Path to the original image file.
-        scene_index: Scene to read for container formats (CZI/LIF); ignored for
+        scene_index: Scene to read for container formats (CZI); ignored for
             single-image formats.
 
     Returns:
@@ -574,7 +574,7 @@ def _save_ome_tiff(image: np.ndarray, path: Path, channel_names: list[str]) -> N
 def probe_channels(path: str | Path, scene_index: int = 0) -> list[str]:
     """Return channel names for a source image without fully decoding it.
 
-    For container formats (CZI/LIF) the names come from the file's metadata and
+    For container formats (CZI) the names come from the file's metadata and
     are aligned to :func:`load_full_res_raw` / the working copy. For OME-TIFFs
     with named channels in the metadata, returns those names. Otherwise returns
     generic ``["Ch 0", "Ch 1", …]`` based on the channel count detected from the

@@ -115,7 +115,7 @@ class Section:
     slice_index: int
     original_path: str
     thumbnail_path: str
-    # Index of the scene/image within a multi-scene container file (CZI/LIF).
+    # Index of the scene/image within a multi-scene container file (CZI).
     # ``0`` for single-image formats (TIFF/PNG/JPG) and for the first scene of a
     # container. Sections from the same container share ``original_path`` but
     # differ in ``scene_index``; it also disambiguates their thumbnail names.

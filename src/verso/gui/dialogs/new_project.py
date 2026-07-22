@@ -453,7 +453,7 @@ class NewProjectDialog(QDialog):
     def _expand_scenes(self, paths: list[str]) -> list[tuple[str, int, str]]:
         """Expand paths into ``(path, scene_index, display_name)``.
 
-        Container files (CZI/LIF) contribute one entry per scene; other files a
+        Container files (CZI) contribute one entry per scene; other files a
         single entry. Files whose scenes cannot be read are reported and skipped.
         """
         out: list[tuple[str, int, str]] = []
