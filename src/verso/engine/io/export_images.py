@@ -21,7 +21,11 @@ import cv2
 import numpy as np
 
 from verso.engine.atlas import AtlasVolume
-from verso.engine.io.image_io import _resize_multichannel, load_image, to_multichannel
+from verso.engine.io.image_io import (
+    _resize_multichannel,
+    _stretch_per_channel,
+    load_full_res_raw,
+)
 from verso.engine.model.project import Project, Section
 from verso.engine.preprocessing import apply_flip, composite_channels
 from verso.engine.warping import build_backward_remap
@@ -79,8 +83,8 @@ def render_section_rgb(section: Section, project: Project, long_side: int) -> np
     Returns:
         uint8 ``(H, W, 3)`` array with longest side equal to *long_side*.
     """
-    raw = load_image(section.original_path)
-    img = to_multichannel(raw)  # uint8 (H, W, C), percentile-stretched per channel
+    raw = load_full_res_raw(section.original_path, section.scene_index)
+    img = _stretch_per_channel(raw)  # uint8 (H, W, C), percentile-stretched per channel
     img = apply_flip(img, section.preprocessing)
 
     orig_h, orig_w = img.shape[:2]

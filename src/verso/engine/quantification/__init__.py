@@ -259,7 +259,7 @@ def _pixel_unit(
             reg, atlas, section, split_hemispheres=options.split_hemispheres
         )
         scope = scope_fn(section, slice_sc)
-        raw = load_full_res_raw(_resolve_original(section, project_dir))
+        raw = load_full_res_raw(_resolve_original(section, project_dir), section.scene_index)
         labels, scope, hemi = match_to_raw(labels, scope, raw.shape[:2], hemi)
         acc.add(labels, scope, raw[..., idxs], hemi)
 
@@ -410,7 +410,7 @@ def _dots_unit(
         )
         raw = None
         if intensity_idxs:
-            raw = load_full_res_raw(_resolve_original(section, project_dir))
+            raw = load_full_res_raw(_resolve_original(section, project_dir), section.scene_index)
             labels, scope, hemi = match_to_raw(labels, scope, raw.shape[:2], hemi)
         add_region_counts(counts, labels, scope, hemi)
 
