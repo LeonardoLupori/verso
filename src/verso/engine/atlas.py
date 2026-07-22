@@ -9,9 +9,13 @@ Coordinate mapping (anchoring voxel order → brainglobe Allen Mouse 25µm):
 
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 
 from verso.engine.anchoring import make_atlas_sample_grid
+
+_log = logging.getLogger(__name__)
 
 
 def _sample_voxel_indices(
@@ -102,6 +106,8 @@ class AtlasVolume:
     def __init__(self, atlas_name: str) -> None:
         from brainglobe_atlasapi import BrainGlobeAtlas
 
+        # First use of an atlas downloads it (hundreds of MB) — can take a while.
+        _log.info("Loading atlas %r (downloads on first use)", atlas_name)
         self._bg = BrainGlobeAtlas(atlas_name, check_latest=False)
         self.atlas_name = atlas_name
         self.resolution_um: float = float(self._bg.resolution[0])
@@ -113,6 +119,13 @@ class AtlasVolume:
         ref_max = float(self._reference.max())
         self._reference_scale: float = 255.0 / ref_max if ref_max > 0 else 1.0
         self._color_dict: dict[int, tuple[int, int, int]] = self._build_color_dict()
+        _log.info(
+            "Atlas %r ready: shape=%s resolution=%.1fµm regions=%d",
+            atlas_name,
+            self._annotation.shape,
+            self.resolution_um,
+            len(self._color_dict) - 1,
+        )
 
     def _build_color_dict(self) -> dict[int, tuple[int, int, int]]:
         d: dict[int, tuple[int, int, int]] = {0: (0, 0, 0)}

@@ -28,6 +28,7 @@ Two optional post-steps:
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -40,6 +41,8 @@ from verso.engine.io.image_io import ensure_working_copy
 from verso.engine.model.project import Project, Section
 from verso.engine.preprocessing import apply_flip, load_mask
 from verso.engine.warping import warp_points_atlas_to_section
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -300,6 +303,7 @@ def export_aligned_stack(
         ``(written_path, skipped)`` where ``skipped`` lists section ids that were
         omitted (no usable anchoring or unreadable working image).
     """
+    _log.info("Exporting aligned stack: %d section(s) → %s", len(sections), out_path)
     entries: list[tuple[int, np.ndarray, np.ndarray]] = []
     skipped: list[str] = []
     for section in sections:
@@ -317,4 +321,7 @@ def export_aligned_stack(
         f"Ch {i}" for i in range(pages[0].shape[2] if pages else 0)
     ]
     write_aligned_stack(pages, channel_names, out_path)
+    if skipped:
+        _log.warning("Aligned-stack export skipped %d section(s): %s", len(skipped), skipped)
+    _log.info("Aligned stack written: %d page(s) → %s", len(pages), out_path)
     return out_path, skipped

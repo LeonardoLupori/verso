@@ -22,6 +22,7 @@ list (per-channel color + brightness scale + visibility).
 from __future__ import annotations
 
 import itertools
+import logging
 import re
 from collections.abc import Sequence
 from pathlib import Path
@@ -30,6 +31,8 @@ import numpy as np
 
 from verso.engine.io import scene_readers
 from verso.engine.io.scene_readers import SceneInfo
+
+_log = logging.getLogger(__name__)
 
 # Default scale factor for working copies (fraction of original resolution).
 # Used as a fallback when no per-import scale has been computed (e.g. lazily
@@ -149,6 +152,7 @@ def enumerate_scenes(path: str | Path) -> list[SceneInfo]:
     try:
         w, h = image_dimensions(path)
     except Exception:
+        _log.debug("Could not read dimensions for %s; using 0×0", path, exc_info=True)
         w, h = 0, 0
     return [SceneInfo(0, Path(path).stem, w, h)]
 
@@ -198,7 +202,7 @@ def image_dimensions(path: str | Path, scene_index: int = 0) -> tuple[int, int]:
             if len(shape) >= 2:
                 return int(shape[-1]), int(shape[-2])
         except Exception:
-            pass
+            _log.debug("tifffile dimension probe failed for %s; using PIL", path, exc_info=True)
 
     from PIL import Image
 
@@ -236,6 +240,7 @@ def compute_working_scale(
         try:
             w, h = image_dimensions(path, scene_index)
         except Exception:
+            _log.warning("Skipping %s in working-scale calc: unreadable dims", path, exc_info=True)
             continue
         longest = max(longest, w, h)
 
@@ -485,7 +490,7 @@ def ensure_working_copy(
             section.thumbnail_path = str(canonical)
             return img
         except Exception:
-            pass
+            _log.warning("Cached thumbnail %s unreadable; regenerating", canonical, exc_info=True)
 
     # 2. Legacy thumbnail (e.g. PNG from old project) — load and migrate.
     if existing and existing != canonical and existing.exists():
@@ -497,16 +502,23 @@ def ensure_working_copy(
                 _save_ome_tiff(img, canonical, channel_names=_default_channel_names(img.shape[2]))
                 section.thumbnail_path = str(canonical)
             except OSError:
-                pass
+                _log.warning("Could not migrate legacy thumbnail to %s", canonical, exc_info=True)
             return img
         except Exception:
-            pass
+            _log.warning("Legacy thumbnail %s unreadable; regenerating", existing, exc_info=True)
 
     # 3. No cached thumbnail — generate from original image.
     orig = Path(section.original_path)
     scene_index = section.scene_index
     if not orig.exists():
+        _log.warning("Original image missing for section %s: %s", section.id, orig)
         return None
+    _log.info(
+        "Generating working copy for %s (scene %d, scale=%.3f)",
+        orig.name,
+        scene_index,
+        working_scale,
+    )
 
     is_container = scene_readers.is_container(orig)
     try:
@@ -542,7 +554,7 @@ def ensure_working_copy(
         _save_ome_tiff(img, canonical, channel_names=channel_names)
         section.thumbnail_path = str(canonical)
     except OSError:
-        pass
+        _log.warning("Could not cache working copy to %s", canonical, exc_info=True)
 
     return img
 
@@ -584,6 +596,7 @@ def probe_channels(path: str | Path, scene_index: int = 0) -> list[str]:
         try:
             return scene_readers.channel_names(path, scene_index)
         except Exception:
+            _log.debug("Channel-name probe failed for container %s", path, exc_info=True)
             return _default_channel_names(1)
     path = Path(path)
     if path.suffix.lower() in (".tif", ".tiff"):
@@ -614,7 +627,7 @@ def probe_channels(path: str | Path, scene_index: int = 0) -> list[str]:
                     return _default_channel_names(int(shape[0]))
                 return _default_channel_names(1)
         except Exception:
-            pass
+            _log.debug("TIFF channel-name probe failed for %s", path, exc_info=True)
 
     # PNG / JPG path
     try:
@@ -629,7 +642,7 @@ def probe_channels(path: str | Path, scene_index: int = 0) -> list[str]:
         if mode == "RGBA":
             return _default_channel_names(3)  # alpha is dropped on load
     except Exception:
-        pass
+        _log.debug("PIL channel-name probe failed for %s", path, exc_info=True)
     return _default_channel_names(1)
 
 

@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
 from verso.gui.draft_store import DraftStore
+
+_log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from verso.engine.atlas import AtlasVolume
@@ -28,6 +31,7 @@ class _AtlasLoader(QObject):
 
             self.done.emit(AtlasVolume(self._name))
         except Exception as exc:
+            _log.exception("Atlas load failed for %r", self._name)
             self.error.emit(str(exc))
 
 

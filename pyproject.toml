@@ -23,6 +23,7 @@ dependencies = [
     "imagecodecs>=2026.3.6",
     "itk-elastix>=0.13",
     "pylibCZIrw>=6.1",
+    "platformdirs>=4.0",
 ]
 
 [project.scripts]

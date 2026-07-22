@@ -8,6 +8,7 @@ DLLs are isolated from VERSO's process.
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
 import sys
 import textwrap
@@ -18,6 +19,8 @@ from tempfile import TemporaryDirectory
 
 from verso.engine.anchoring import is_anchored
 from verso.engine.model.project import Project, Section
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -86,6 +89,12 @@ def run_deepslice_suggestions(
     opts = options or DeepSliceOptions()
     run_id = uuid.uuid4().hex
     executable = sys.executable
+    _log.info(
+        "Running DeepSlice on %d section(s) (species=%s, reverse=%s)",
+        len(project.sections),
+        opts.species,
+        opts.reverse_section_order,
+    )
 
     with TemporaryDirectory(prefix="verso-deepslice-") as tmp:
         tmp_dir = Path(tmp)
@@ -140,6 +149,7 @@ def run_deepslice_suggestions(
         suggestions = _load_suggestions(output_json)
         if not suggestions:
             raise DeepSliceError("DeepSlice completed but produced no usable suggestions")
+        _log.info("DeepSlice produced %d suggestion(s)", len(suggestions))
 
         return DeepSliceRunResult(
             run_id=run_id,

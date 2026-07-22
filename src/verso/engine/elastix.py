@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import tempfile
 from functools import lru_cache
 from pathlib import Path
@@ -38,6 +39,8 @@ from verso.engine.anchoring import anchoring_to_vectors, atlas_to_normalized
 from verso.engine.model.alignment import ControlPoint
 from verso.engine.model.elastix import ElastixParams
 from verso.engine.preprocessing import morph_mask
+
+_log = logging.getLogger(__name__)
 
 # resources/ lives at the package root (src/verso/resources), alongside gui/engine.
 _RESOURCES = Path(__file__).parent.parent / "resources"
@@ -454,6 +457,7 @@ class ElastixWorker:
         if not inputs:
             return {}, []
 
+        _log.info("Registering %d section(s) via elastix worker", len(inputs))
         self._ensure_started()
         proc = self._proc
         tmp = Path(tempfile.mkdtemp(prefix="verso_elastix_"))
@@ -497,6 +501,8 @@ class ElastixWorker:
                     break
                 if line.strip() == _WORKER_DONE:
                     break
+            if crashed:
+                _log.warning("elastix worker died mid-batch; returning partial results")
             return self._read_result(tmp, crashed)
         finally:
             shutil.rmtree(tmp, ignore_errors=True)

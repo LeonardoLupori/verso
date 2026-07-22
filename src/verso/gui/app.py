@@ -1,3 +1,5 @@
+import logging
+import os
 import sys
 from pathlib import Path
 
@@ -6,6 +8,8 @@ from PyQt6.QtCore import QSize, QTimer
 from PyQt6.QtGui import QColor, QIcon, QPalette
 from PyQt6.QtWidgets import QApplication
 
+from verso.engine.logconf import configure_logging
+from verso.gui import crash_handler
 from verso.gui.main_window import MainWindow
 
 _APP_ID = "verso.app"
@@ -91,7 +95,15 @@ def _build_dark_palette() -> QPalette:
     return palette
 
 
-def run(project_path: Path | None = None) -> None:
+def run(project_path: Path | None = None, log_level: int | str | None = None) -> None:
+    # Configure logging first so even startup failures are captured, and install
+    # the thread excepthook (does not need a QApplication). The Qt-dependent
+    # hooks are installed once the QApplication exists, below.
+    log_path = configure_logging(process_tag="app", level=log_level)
+    crash_handler.install_thread_excepthook()
+    log = logging.getLogger("verso")
+    log.info("VERSO starting (pid=%s, log=%s)", os.getpid(), log_path)
+
     # Must be called before any pg widget is created.
     pg.setConfigOption("imageAxisOrder", "row-major")
     pg.setConfigOption("antialias", True)
@@ -101,6 +113,10 @@ def run(project_path: Path | None = None) -> None:
     _set_taskbar_identity()
 
     app = QApplication(sys.argv)
+    # Now that the event loop object exists, route uncaught main-thread
+    # exceptions and Qt's own messages into the log (and, for crashes, a dialog).
+    crash_handler.install_excepthook(log_path)
+    crash_handler.install_qt_message_handler()
     app.setApplicationName("VERSO")
     app.setOrganizationName("VERSO")
     if sys.platform.startswith("linux"):

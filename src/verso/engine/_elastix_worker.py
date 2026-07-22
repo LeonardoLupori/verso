@@ -28,10 +28,13 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import sys
 from pathlib import Path
 
 from verso.engine.elastix import _WORKER_DONE, _WORKER_QUIT, _WORKER_READY
+
+_log = logging.getLogger(__name__)
 
 
 def _prewarm() -> None:
@@ -55,7 +58,9 @@ def _prewarm() -> None:
         )
     except Exception:
         # Warming is best-effort; real jobs will pay the cost if it failed.
-        pass
+        _log.warning(
+            "Elastix prewarm failed; first real job will pay the cold-start cost", exc_info=True
+        )
 
 
 def _process_job(job_dir: Path) -> None:
@@ -94,11 +99,19 @@ def _process_job(job_dir: Path) -> None:
             )
             out["results"][name] = [cp.to_dict() for cp in cps]
         except Exception as exc:
+            _log.exception("Registration failed for section %s", name)
             out["errors"].append(f"{name}: {exc}")
         flush()  # incremental: a native crash on a later section keeps earlier results
 
 
 def serve() -> None:
+    # File-only logging: stdout is the READY/DONE IPC channel to the parent and
+    # must carry nothing else, so never attach a stdout handler here.
+    from verso.engine.logconf import configure_logging
+
+    configure_logging(process_tag="elastix", console=False)
+    _log.info("Elastix worker starting")
+
     _prewarm()
     sys.stdout.write(_WORKER_READY + "\n")
     sys.stdout.flush()
@@ -109,6 +122,7 @@ def serve() -> None:
         try:
             _process_job(Path(cmd))
         except Exception as exc:
+            _log.exception("Elastix job failed: %s", cmd)
             # Ensure the parent always finds a result file so it isn't stuck.
             with contextlib.suppress(Exception):
                 (Path(cmd) / "result.json").write_text(

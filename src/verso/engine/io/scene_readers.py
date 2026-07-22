@@ -31,10 +31,13 @@ format-agnostic so additional container formats can be added later.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+
+_log = logging.getLogger(__name__)
 
 # Extensions dispatched to a scene reader here instead of the plain
 # tifffile/PIL path in image_io.
@@ -182,6 +185,7 @@ def czi_channel_names(path: str | Path, scene_index: int = 0) -> list[str]:
         try:
             raw = doc.raw_metadata
         except Exception:
+            _log.debug("CZI raw_metadata unavailable for %s; using generic names", path)
             raw = ""
         # Prefer the acquisition channel list (Information/Image/Dimensions);
         # fall back to any <Channel ... Name="..."> then to generic names.
@@ -197,6 +201,7 @@ def czi_channel_names(path: str | Path, scene_index: int = 0) -> list[str]:
             try:
                 pixel_bgr.append("bgr" in doc.get_channel_pixel_type(ci).lower())
             except Exception:
+                _log.debug("CZI pixel-type probe failed for channel %d of %s", ci, path)
                 pixel_bgr.append(False)
 
     out: list[str] = []
@@ -279,6 +284,7 @@ def enumerate_scenes(path: str | Path) -> list[SceneInfo]:
     try:
         return list(_reader_for(path).list_scenes(path))
     except Exception as exc:
+        _log.debug("Scene enumeration failed for %s", path, exc_info=True)
         raise RuntimeError(f"Cannot read scenes from '{Path(path).name}': {exc}") from exc
 
 
@@ -287,6 +293,7 @@ def read_scene(path: str | Path, scene_index: int = 0, zoom: float = 1.0) -> np.
     try:
         return _reader_for(path).read_scene(path, scene_index, zoom)
     except Exception as exc:
+        _log.debug("Scene %d read failed for %s (zoom=%s)", scene_index, path, zoom, exc_info=True)
         raise RuntimeError(
             f"Cannot read scene {scene_index} of '{Path(path).name}': {exc}"
         ) from exc

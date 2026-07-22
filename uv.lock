@@ -1095,6 +1095,15 @@ wheels = [
 ]
 
 [[package]]
+name = "platformdirs"
+version = "4.11.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/78/9b/560e4be8e26f6fd133a03630a8df0c663b9e8d61b4ade152b72005aec83b/platformdirs-4.11.0.tar.gz", hash = "sha256:0555d18370482847566ffabcaa53ad7c6c1c29f195989ae1ed634a05f76ea1e0", size = 31953, upload-time = "2026-07-21T13:09:36.565Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7d/68/d8d58938dfb1370b266a1a729e6d77a985be23689a0496498ee17b2cbf90/platformdirs-4.11.0-py3-none-any.whl", hash = "sha256:360ccded2b7fce0af0ff80cc8f5942a1c5d99b0e856033acb030bfc634709e74", size = 23247, upload-time = "2026-07-21T13:09:35.422Z" },
+]
+
+[[package]]
 name = "pluggy"
 version = "1.6.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1699,6 +1708,7 @@ dependencies = [
     { name = "itk-elastix" },
     { name = "numpy" },
     { name = "opencv-python" },
+    { name = "platformdirs" },
     { name = "pylibczirw" },
     { name = "pyqt6" },
     { name = "pyqtgraph" },
@@ -1732,6 +1742,7 @@ requires-dist = [
     { name = "itk-elastix", specifier = ">=0.13" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "opencv-python", specifier = ">=4.9" },
+    { name = "platformdirs", specifier = ">=4.0" },
     { name = "pylibczirw", specifier = ">=6.1" },
     { name = "pyqt6", specifier = ">=6.7.0" },
     { name = "pyqtgraph", specifier = ">=0.13.7" },

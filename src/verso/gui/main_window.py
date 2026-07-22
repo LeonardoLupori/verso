@@ -765,3 +765,12 @@ class MainWindow(QMainWindow):
 
     def _show_about(self) -> None:
         show_about_dialog(self)
+
+    def _open_log_folder(self) -> None:
+        """Open the VERSO log directory in the system file browser."""
+        from PyQt6.QtCore import QUrl
+        from PyQt6.QtGui import QDesktopServices
+
+        from verso.engine.logconf import default_log_dir
+
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(default_log_dir())))

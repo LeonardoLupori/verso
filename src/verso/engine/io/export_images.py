@@ -14,6 +14,7 @@ upscale would show.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -29,6 +30,8 @@ from verso.engine.io.image_io import (
 from verso.engine.model.project import Project, Section
 from verso.engine.preprocessing import apply_flip, composite_channels
 from verso.engine.warping import build_backward_remap
+
+_log = logging.getLogger(__name__)
 
 # Smoothing slider (0–100) maps to a Gaussian sigma applied to the per-region
 # SDF at *base* (atlas-voxel) resolution, so the smoothing strength is
@@ -343,6 +346,12 @@ def export_section(
     separate-overlay mode).
     """
     long_side = _output_long_side(section, options.scale)
+    _log.debug(
+        "Exporting section %s (%s, long_side=%d)",
+        section.id,
+        Path(section.original_path).name,
+        long_side,
+    )
     rgb = render_section_rgb(section, project, long_side)
     out_h, out_w = rgb.shape[:2]
     overlay = render_overlay_rgba(

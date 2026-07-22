@@ -7,11 +7,14 @@ the standard signal wiring so call sites in the main window stay short.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast
 
 from PyQt6.QtCore import QObject, QThread, pyqtBoundSignal, pyqtSignal
 from PyQt6.QtWidgets import QProgressDialog, QWidget
+
+_log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -53,6 +56,7 @@ class DeepSliceWorker(QObject):
             )
             self.done.emit(result)
         except Exception as exc:
+            _log.exception("DeepSlice suggestion run failed")
             self.error.emit(str(exc))
 
 
@@ -81,6 +85,7 @@ class AnnotationLoadWorker(QObject):
         try:
             annotations = load_annotations(self._project_dir)
         except Exception:
+            _log.exception("Failed to load annotations from %s", self._project_dir)
             annotations = []
         self.done.emit(annotations, self._generation)
 
@@ -113,6 +118,7 @@ class BatchMaskWorker(QObject):
                 self.results[section.id] = detect_foreground(image)
                 completed += 1
             except Exception as exc:
+                _log.exception("Mask autodetect failed for %s", section.original_path)
                 errors.append(f"{Path(section.original_path).name}: {exc}")
         self.done.emit(completed, errors)
 
@@ -159,6 +165,7 @@ class AutoCPWorker(QObject):
                 errors = errors + gen_errors
             self.done.emit(len(self.results), errors)
         except Exception as exc:
+            _log.exception("Auto control-point generation failed")
             self.done.emit(0, [str(exc)])
 
 
@@ -182,6 +189,7 @@ class QuantifyWorker(QObject):
         try:
             self.done.emit(self._run_fn())
         except Exception as exc:  # QuantificationError + any I/O failure
+            _log.exception("Quantification run failed")
             self.error.emit(str(exc))
 
 
