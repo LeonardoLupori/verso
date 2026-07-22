@@ -32,10 +32,10 @@ def _spots(overlay: ControlPointOverlay) -> list:
 def test_items_ordered_low_to_high_z(_qapp):
     overlay = ControlPointOverlay()
     items = overlay.items()
-    assert items == (overlay.disp_halo_item, overlay.disp_item, overlay.cp_item)
+    assert items == (overlay.disp_item, overlay.disp_auto_item, overlay.cp_item)
     zs = [it.zValue() for it in items]
-    assert zs == sorted(zs)  # halo < line < dots
-    assert zs == [14, 15, 20]
+    assert zs == sorted(zs)  # lines < dots
+    assert zs == [15, 15, 20]
 
 
 # ---------------------------------------------------------------------------
@@ -77,10 +77,6 @@ def test_displacement_line_drawn_when_src_matches(_qapp):
     # One src→dst segment: [src, dst] pairs in display pixels.
     assert list(x) == [10.0, 50.0]
     assert list(y) == [20.0, 50.0]
-    # Halo mirrors the same vertices.
-    hx, hy = overlay.disp_halo_item.getData()
-    assert list(hx) == [10.0, 50.0]
-    assert list(hy) == [20.0, 50.0]
 
 
 def test_displacement_line_absent_when_src_length_mismatch(_qapp):
@@ -135,6 +131,25 @@ def test_auto_flagged_point_uses_auto_colour(_qapp):
     spots = _spots(overlay)
     assert spots[0]["brush"].color().getRgb()[:3] == (255, 96, 0)  # manual → palette
     assert spots[1]["brush"].color().getRgb()[:3] == (0, 200, 255)  # auto → fixed
+
+
+def test_displacement_lines_match_their_cp_colour(_qapp):
+    overlay = ControlPointOverlay()
+    overlay.set(
+        [(0.5, 0.5), (0.6, 0.6)],
+        display_w=100,
+        display_h=100,
+        cp_color="Orange",
+        src_pts=[(0.1, 0.2), (0.3, 0.4)],
+        auto_flags=[False, True],
+    )
+    # Manual segment goes on the palette-coloured line; auto on the auto line.
+    assert overlay.disp_item.opts["pen"].color().getRgb()[:3] == (255, 96, 0)
+    assert overlay.disp_auto_item.opts["pen"].color().getRgb()[:3] == (0, 200, 255)
+    man_x, _ = overlay.disp_item.getData()
+    assert list(man_x) == [10.0, 50.0]  # src→dst of the manual CP
+    auto_x, _ = overlay.disp_auto_item.getData()
+    assert list(auto_x) == [30.0, 60.0]  # src→dst of the auto CP
 
 
 # ---------------------------------------------------------------------------

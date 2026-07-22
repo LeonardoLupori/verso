@@ -42,7 +42,7 @@ class ControlPointsBox(QGroupBox):
 
         self._shape_combo = QComboBox()
         self._shape_combo.addItems(_CP_SHAPES)
-        self._shape_combo.setCurrentText("Cross")
+        self._shape_combo.setCurrentText("Circle")
         self._shape_combo.currentTextChanged.connect(self._emit_style)
 
         self._color_rgb: tuple[int, int, int] = (255, 245, 0)

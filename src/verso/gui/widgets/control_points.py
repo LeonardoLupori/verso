@@ -1,8 +1,9 @@
 """Warp control-point overlay for the image canvas.
 
-``ControlPointOverlay`` bundles the three pyqtgraph items used to render warp
-control points — the dot scatter plus the two displacement-vector curves (a dark
-halo under a coloured line) — together with the draw logic and the shape/colour
+``ControlPointOverlay`` bundles the pyqtgraph items used to render warp
+control points — the dot scatter plus the displacement-vector curves (one for
+manual CPs, one for auto-generated CPs) — together with the draw logic and the
+shape/colour
 palettes. It is not a widget: the canvas owns one instance, adds its items to the
 plot via :meth:`items` (the canvas keeps ownership of the item stack and its
 z-ordering), and delegates :meth:`set` / :meth:`clear`. Only the Warp view feeds
@@ -33,34 +34,35 @@ class ControlPointOverlay:
         "White": (255, 255, 255),
         "Magenta": (255, 0, 255),
     }
-    # Fixed, contrasting colour for automatically-generated control points so
-    # they stand apart from the user's manual ones regardless of the CP palette.
+    # Fixed default colour for automatically-generated control points and their
+    # displacement line, setting them apart from the user's manual points (which
+    # take the palette colour for both dot and line).
     _AUTO_CP_COLOR_RGB: tuple[int, int, int] = (0, 200, 255)
 
-    # z-values in the canvas item stack: halo below the coloured line, dots on top.
-    _Z_DISP_HALO = 14
+    # z-values in the canvas item stack: displacement line below, dots on top.
     _Z_DISP = 15
     _Z_DOTS = 20
 
     def __init__(self) -> None:
-        # Displacement lines (src → dst), drawn below the dots.
-        self.disp_halo_item = pg.PlotCurveItem(
-            pen=pg.mkPen((0, 0, 0, 220), width=5.0),
-            connect="pairs",
-        )
-        self.disp_halo_item.setZValue(self._Z_DISP_HALO)
+        # Displacement lines (src → dst), drawn below the dots. Manual and auto
+        # CPs use separate curves so each can be coloured to match its dots.
         self.disp_item = pg.PlotCurveItem(
             pen=pg.mkPen((255, 255, 255, 255), width=2.75),
             connect="pairs",
         )
         self.disp_item.setZValue(self._Z_DISP)
+        self.disp_auto_item = pg.PlotCurveItem(
+            pen=pg.mkPen((*self._AUTO_CP_COLOR_RGB, 255), width=2.75),
+            connect="pairs",
+        )
+        self.disp_auto_item.setZValue(self._Z_DISP)
         # Control-point scatter.
         self.cp_item = pg.ScatterPlotItem(size=10, pxMode=True)
         self.cp_item.setZValue(self._Z_DOTS)
 
     def items(self) -> tuple[pg.GraphicsObject, ...]:
         """Graphics items to add to the canvas plot, ordered low z to high."""
-        return (self.disp_halo_item, self.disp_item, self.cp_item)
+        return (self.disp_item, self.disp_auto_item, self.cp_item)
 
     def set(
         self,
@@ -86,8 +88,9 @@ class ControlPointOverlay:
             src_pts: Atlas-space normalised origins for each CP. When provided,
                 a dashed line is drawn from each src to its dst (the displacement
                 vector, matching VisuAlign's pin rendering).
-            auto_flags: Per-point flags; points marked True are drawn in the
-                automatic-CP colour to distinguish them from manual points.
+            auto_flags: Per-point flags; points marked True (and their
+                displacement lines) are drawn in the fixed automatic-CP colour,
+                setting them apart from the user's manual, palette-coloured points.
         """
         if not dst_pts:
             self.clear()
@@ -100,24 +103,35 @@ class ControlPointOverlay:
             r, g, b = self._CP_COLOR_RGB.get(cp_color, (255, 80, 0))
         hov_size = cp_size + 4
 
-        # Displacement lines (src → dst)
-        if src_pts and len(src_pts) == len(dst_pts):
-            xs, ys = [], []
-            for (ss, st), (ds, dt) in zip(src_pts, dst_pts, strict=False):
-                xs += [ss * display_w, ds * display_w]
-                ys += [st * display_h, dt * display_h]
-            self.disp_halo_item.setData(x=xs, y=ys)
-            self.disp_item.setPen(pg.mkPen((r, g, b, 255), width=2.75))
-            self.disp_item.setData(x=xs, y=ys)
-        else:
-            self.disp_halo_item.clear()
-            self.disp_item.clear()
-
         ar, ag, ab = self._AUTO_CP_COLOR_RGB
+
+        def _is_auto(i: int) -> bool:
+            return bool(auto_flags[i]) if auto_flags and i < len(auto_flags) else False
+
+        # Displacement lines (src → dst): each segment matches its CP's colour, so
+        # manual points get the palette line and auto points the fixed auto line.
+        if src_pts and len(src_pts) == len(dst_pts):
+            man_xs, man_ys, auto_xs, auto_ys = [], [], [], []
+            for i, ((ss, st), (ds, dt)) in enumerate(zip(src_pts, dst_pts, strict=False)):
+                seg_x = [ss * display_w, ds * display_w]
+                seg_y = [st * display_h, dt * display_h]
+                if _is_auto(i):
+                    auto_xs += seg_x
+                    auto_ys += seg_y
+                else:
+                    man_xs += seg_x
+                    man_ys += seg_y
+            self.disp_item.setPen(pg.mkPen((r, g, b, 255), width=2.75))
+            self.disp_item.setData(x=man_xs, y=man_ys)
+            self.disp_auto_item.setData(x=auto_xs, y=auto_ys)
+        else:
+            self.disp_item.clear()
+            self.disp_auto_item.clear()
+
         spots = []
         for i, (s, t) in enumerate(dst_pts):
             px, py = s * display_w, t * display_h
-            is_auto = bool(auto_flags[i]) if auto_flags and i < len(auto_flags) else False
+            is_auto = _is_auto(i)
             br, bg, bb = (ar, ag, ab) if is_auto else (r, g, b)
             if i == hovered_idx:
                 spots.append(
@@ -126,7 +140,7 @@ class ControlPointOverlay:
                         "size": hov_size,
                         "symbol": symbol,
                         "brush": pg.mkBrush(br, bg, bb, 255),
-                        "pen": pg.mkPen(255, 255, 255, 255, width=2.5),
+                        "pen": pg.mkPen(255, 255, 255, 255, width=1.5),
                     }
                 )
             else:
@@ -136,7 +150,7 @@ class ControlPointOverlay:
                         "size": cp_size,
                         "symbol": symbol,
                         "brush": pg.mkBrush(br, bg, bb, 255),
-                        "pen": pg.mkPen(0, 0, 0, 240, width=1.5),
+                        "pen": pg.mkPen(255, 255, 255, 240, width=1.0),
                     }
                 )
         self.cp_item.setData(spots)
@@ -144,5 +158,5 @@ class ControlPointOverlay:
     def clear(self) -> None:
         """Remove all drawn points and displacement lines."""
         self.cp_item.clear()
-        self.disp_halo_item.clear()
         self.disp_item.clear()
+        self.disp_auto_item.clear()

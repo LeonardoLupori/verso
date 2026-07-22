@@ -64,7 +64,7 @@ class WarpView(BaseCanvasView):
         self._cp_drag_start_px: tuple[float, float] | None = None
         self._cp_drag_start_dst: tuple[float, float] | None = None
         self._cp_size = 10
-        self._cp_shape = "Cross"
+        self._cp_shape = "Circle"
         self._cp_color = "Yellow"
 
         # Real-time warp throttle: fires update_overlay at ~30fps during CP drag

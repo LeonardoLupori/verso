@@ -179,7 +179,7 @@ class Project:
     sections: list[Section] = field(default_factory=list)
     channels: list[ChannelSpec] = field(default_factory=list)
     cp_size: int = 10
-    cp_shape: str = "Cross"
+    cp_shape: str = "Circle"
     cp_color: str = "#fff500"
     interpolation_axis: str = "AP"
     # Derived once at import from the largest image (see compute_working_scale);
@@ -239,7 +239,7 @@ class Project:
             sections=[Section.from_dict(s) for s in d.get("sections", [])],
             channels=[ChannelSpec.from_dict(c) for c in d.get("channels", [])],
             cp_size=int(d.get("cp_size", 10)),
-            cp_shape=str(d.get("cp_shape", "Cross")),
+            cp_shape=str(d.get("cp_shape", "Circle")),
             cp_color=cp_color,
             interpolation_axis=interpolation_axis,
             working_scale=float(d.get("working_scale", 0.2)),
