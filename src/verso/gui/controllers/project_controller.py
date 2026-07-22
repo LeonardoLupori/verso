@@ -20,7 +20,6 @@ from typing import TYPE_CHECKING, cast
 
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
-from verso.engine.io.quint_io import load_quicknii, load_visualign
 from verso.engine.model.alignment import AlignmentStatus
 from verso.engine.model.project import DEFAULT_PROJECT_FILENAME, Project
 from verso.gui.dialogs.new_project import NewProjectDialog
@@ -185,21 +184,17 @@ class ProjectController:
             if project is not None:
                 self._state.load_project(project, dlg.result_project_path())
 
-    def open_quicknii(self) -> None:
-        self._open_foreign("Open QuickNII JSON", load_quicknii)
-
-    def open_visualign(self) -> None:
-        self._open_foreign("Open VisuAlign JSON", load_visualign)
-
-    def _open_foreign(self, title: str, loader) -> None:
-        """Import a QuickNII/VisuAlign JSON as a new (path-less) project."""
+    def import_quint_project(self) -> None:
+        """Import a QuickNII/VisuAlign JSON + its images as a new, saved project."""
         if not self._window.confirm_discard_active_draft():
             return
-        path, _ = QFileDialog.getOpenFileName(
-            self._window, title, "", "JSON files (*.json);;All files (*)"
-        )
-        if path:
-            self._state.load_project(loader(Path(path)))
+        from verso.gui.dialogs.import_quint import ImportQuintDialog
+
+        dlg = ImportQuintDialog(self._window)
+        if dlg.exec() == ImportQuintDialog.DialogCode.Accepted:
+            project = dlg.result_project()
+            if project is not None:
+                self._state.load_project(project, dlg.result_project_path())
 
     # ------------------------------------------------------------------
     # Saving / discarding

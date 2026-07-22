@@ -48,13 +48,9 @@ def build_menus(window: MainWindow) -> None:
 
     import_menu = require(file_menu.addMenu("&Import"))
 
-    act_open_qn = QAction("&QuickNII XML file…", window)
-    act_open_qn.triggered.connect(window._project.open_quicknii)
-    import_menu.addAction(act_open_qn)
-
-    act_open_va = QAction("&VisuAlign JSON file…", window)
-    act_open_va.triggered.connect(window._project.open_visualign)
-    import_menu.addAction(act_open_va)
+    act_import_quint = QAction("&QuickNII / VisuAlign project…", window)
+    act_import_quint.triggered.connect(window._project.import_quint_project)
+    import_menu.addAction(act_import_quint)
 
     import_menu.addSeparator()
 

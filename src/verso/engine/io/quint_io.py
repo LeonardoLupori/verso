@@ -4,29 +4,23 @@ QuickNII format (per-section):
     {
         "filename": "IMG_0234.png",
         "nr": 1,
+        "width": 1000,
+        "height": 800,
         "anchoring": [ox, oy, oz, ux, uy, uz, vx, vy, vz]
     }
 
-VisuAlign extends each section with a ``"markers"`` array:
-    {
-        ...QuickNII fields...
-        "markers": [
-            {"x": 0.5, "y": 0.3, "dx": 0.02, "dy": -0.01},
-            ...
-        ]
-    }
+VisuAlign extends each section with a ``"markers"`` array of nonlinear warp
+control points. Each marker is a 4-element pixel-coordinate array at the
+section's working resolution:
+    "markers": [[src_x, src_y, dst_x, dst_y], ...]
 
-Marker coordinates:
-    x, y  — normalised atlas overlay position in [0, 1]²  (left=0, top=0)
-    dx, dy — displacement from atlas position (x, y) to the matching
-              position on the histological section (dst − src).
+    src = (src_x, src_y) — position on the atlas overlay
+    dst = (dst_x, dst_y) — matching position on the histological section
 
-    In warp terms:
-        src = (x, y)           — position on the atlas overlay
-        dst = (x + dx, y + dy) — matching position on the section
-
-VERSO stores control points in working-resolution pixel coordinates.  The
-conversion functions here handle the normalisation/denormalisation.
+VERSO stores control points in working-resolution pixel coordinates too, so
+markers pass through with no scaling. A legacy normalised dict form
+``{"x", "y", "dx", "dy"}`` (with ``dst = (x + dx, y + dy)``) is still accepted on
+load for backward compatibility but is never written.
 """
 
 from __future__ import annotations
@@ -68,6 +62,22 @@ _BG_ATLAS_SHAPE: dict[str, tuple[int, int, int]] = {
     "allen_mouse_10um": (1320, 800, 1140),
     "allen_mouse_50um": (264, 160, 228),
 }
+
+# Inverse of _BG_TO_VA_TARGET: VisuAlign .cutlas identifier → BrainGlobe name.
+_VA_TO_BG_TARGET: dict[str, str] = {va: bg for bg, va in _BG_TO_VA_TARGET.items()}
+
+
+def _resolve_atlas_name(target: str) -> str:
+    """Map a JSON ``target`` string to a BrainGlobe atlas name.
+
+    QuickNII/DeepSlice exports name the atlas by its BrainGlobe id directly;
+    VisuAlign exports name it by the ``.cutlas`` bundle identifier. Mapping the
+    latter back is what lets a VisuAlign file load with a usable atlas name *and*
+    have its anchoring converted from QuickNII to BrainGlobe convention (that
+    conversion is keyed on :data:`_BG_ATLAS_SHAPE`). Unknown identifiers pass
+    through unchanged so the caller can surface a warning.
+    """
+    return _VA_TO_BG_TARGET.get(target, target)
 
 
 def _visualign_target(atlas_name: str) -> tuple[str, list[float] | None]:
@@ -191,7 +201,7 @@ def load_quicknii(path: Path, atlas_name: str = "allen_mouse_25um") -> Project:
         A :class:`Project` with one :class:`Section` per entry in the JSON.
     """
     data = json.loads(Path(path).read_text(encoding="utf-8"))
-    atlas_name = data.get("target", atlas_name)
+    atlas_name = _resolve_atlas_name(data.get("target", atlas_name))
     project_name = data.get("name", Path(path).stem)
 
     # QuickNII/VisuAlign use "slices"; accept "sections" for forward compatibility
@@ -237,8 +247,10 @@ def load_visualign(
 ) -> Project:
     """Load a VisuAlign JSON file (with control points) into a VERSO :class:`Project`.
 
-    Marker coordinates are normalised [0, 1] in both atlas and section space,
-    matching the VisuAlign JSON format directly.
+    Markers are 4-element ``[src_x, src_y, dst_x, dst_y]`` pixel arrays at the
+    section's working resolution and map directly onto VERSO control points (a
+    legacy normalised-dict form is also accepted; see
+    :func:`_markers_to_control_points`).
 
     Args:
         path: Path to the VisuAlign ``*.json`` file.

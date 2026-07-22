@@ -49,6 +49,9 @@ _EXPORTS = {
     # io.export_stack
     "ExportStackOptions": "verso.engine.io.export_stack",
     "export_aligned_stack": "verso.engine.io.export_stack",
+    # io.quint_import
+    "build_quint_project": "verso.engine.io.quint_import",
+    "match_registration_images": "verso.engine.io.quint_import",
     # io.quint_io
     "load_deepslice": "verso.engine.io.quint_io",
     "load_quicknii": "verso.engine.io.quint_io",
@@ -115,6 +118,7 @@ __all__ = [
     "WarpState",
     "annotation_images",
     "annotations_dir",
+    "build_quint_project",
     "export_aligned_stack",
     "export_section",
     "find_atlas_position",
@@ -122,6 +126,7 @@ __all__ = [
     "load_deepslice",
     "load_quicknii",
     "load_visualign",
+    "match_registration_images",
     "orientation_labels",
     "point_coords_by_image",
     "points_in_polygon",
@@ -169,6 +174,7 @@ if TYPE_CHECKING:
     )
     from verso.engine.io.export_images import ExportOptions, export_section
     from verso.engine.io.export_stack import ExportStackOptions, export_aligned_stack
+    from verso.engine.io.quint_import import build_quint_project, match_registration_images
     from verso.engine.io.quint_io import (
         load_deepslice,
         load_quicknii,
