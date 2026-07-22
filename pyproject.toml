@@ -22,6 +22,7 @@ dependencies = [
     "brainglobe-atlasapi>=2.0",
     "imagecodecs>=2026.3.6",
     "itk-elastix>=0.13",
+    "pylibCZIrw>=6.1",
 ]
 
 [project.scripts]

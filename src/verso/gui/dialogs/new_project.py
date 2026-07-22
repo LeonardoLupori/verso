@@ -43,6 +43,7 @@ from PyQt6.QtWidgets import (
 from verso.engine.io.image_io import (
     SUPPORTED_IMAGE_EXTENSIONS,
     compute_working_scale,
+    enumerate_scenes,
     guess_slice_indices,
     probe_channels,
     thumbnail_filename,
@@ -211,6 +212,24 @@ def _natural_name_key(path: str) -> list[object]:
 
     stem = Path(path).stem
     return [int(c) if c.isdigit() else c for c in re.split(r"(\d+)", stem)]
+
+
+def _seed_slice_indices(entries: list[tuple[str, int, str]]) -> list[int]:
+    """Guess a slice index per ``(path, scene_index, display)`` entry.
+
+    Single-scene files behave exactly like before (the heuristic sees the plain
+    filename stems). For a file contributing several scenes, a ``_scene{NN}``
+    label suffix lets the filename heuristic discriminate scenes within a file
+    while still ordering across files. Users can correct any index in the table.
+    """
+    from collections import Counter
+
+    counts = Counter(path for path, _, _ in entries)
+    labels: list[str] = []
+    for path, scene_index, _ in entries:
+        stem = Path(path).stem
+        labels.append(f"{stem}_scene{scene_index:04d}" if counts[path] > 1 else stem)
+    return guess_slice_indices(labels)
 
 
 def generate_thumbnails(
@@ -396,25 +415,26 @@ class NewProjectDialog(QDialog):
         folder = Path(location) / slug
         self._path_preview.setText(f"Creates:  {folder}{os.sep}")
 
-    def _current_entries(self) -> list[tuple[str, int]]:
-        """Return ``(path, slice_index)`` for every table row, in row order."""
-        entries: list[tuple[str, int]] = []
+    def _current_entries(self) -> list[tuple[str, int, str, int]]:
+        """Return ``(path, scene_index, display_name, slice_index)`` per table row."""
+        entries: list[tuple[str, int, str, int]] = []
         for row in range(self._file_table.rowCount()):
             file_item = require(self._file_table.item(row, _FILE_COL))
             idx_item = require(self._file_table.item(row, _IDX_COL))
-            path = file_item.data(Qt.ItemDataRole.UserRole)
-            entries.append((path, int(idx_item.data(Qt.ItemDataRole.UserRole))))
+            path, scene_index, display = file_item.data(Qt.ItemDataRole.UserRole)
+            slice_index = int(idx_item.data(Qt.ItemDataRole.UserRole))
+            entries.append((path, int(scene_index), display, slice_index))
         return entries
 
-    def _set_entries(self, entries: list[tuple[str, int]]) -> None:
-        """Rebuild the table from ``(path, slice_index)`` pairs, sorted by index."""
-        ordered = sorted(entries, key=lambda e: (e[1], _natural_name_key(e[0])))
+    def _set_entries(self, entries: list[tuple[str, int, str, int]]) -> None:
+        """Rebuild the table from entries, sorted by slice index then file/scene."""
+        ordered = sorted(entries, key=lambda e: (e[3], _natural_name_key(e[0]), e[1]))
         self._file_table.blockSignals(True)
         self._file_table.setRowCount(len(ordered))
-        for row, (path, index) in enumerate(ordered):
-            file_item = QTableWidgetItem(os.path.basename(path))
-            file_item.setData(Qt.ItemDataRole.UserRole, path)
-            file_item.setToolTip(path)
+        for row, (path, scene_index, display, index) in enumerate(ordered):
+            file_item = QTableWidgetItem(display)
+            file_item.setData(Qt.ItemDataRole.UserRole, (path, scene_index, display))
+            file_item.setToolTip(path if scene_index == 0 else f"{path}  ·  scene {scene_index}")
             file_item.setFlags(file_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             idx_item = QTableWidgetItem(str(index))
             idx_item.setData(Qt.ItemDataRole.UserRole, int(index))
@@ -430,29 +450,62 @@ class NewProjectDialog(QDialog):
         if paths:
             self._add_paths(paths)
 
-    def _add_paths(self, paths: list[str]) -> None:
-        """Merge ``paths`` into the table, skipping ones already present."""
-        existing = {p for p, _ in self._current_entries()}
-        merged = [p for p, _ in self._current_entries()]
+    def _expand_scenes(self, paths: list[str]) -> list[tuple[str, int, str]]:
+        """Expand paths into ``(path, scene_index, display_name)``.
+
+        Container files (CZI) contribute one entry per scene; other files a
+        single entry. Files whose scenes cannot be read are reported and skipped.
+        """
+        out: list[tuple[str, int, str]] = []
+        failed: list[str] = []
         for path in paths:
-            if path not in existing:
-                merged.append(path)
-                existing.add(path)
-        # Re-guess across the whole set so the heuristic sees every filename.
-        self._set_entries(list(zip(merged, guess_slice_indices(merged), strict=False)))
+            try:
+                scenes = enumerate_scenes(path)
+            except Exception:
+                failed.append(path)
+                continue
+            multi = len(scenes) > 1
+            for scene in scenes:
+                display = scene.name if (scene.scene_index or multi) else os.path.basename(path)
+                out.append((path, scene.scene_index, display))
+        if failed:
+            names = "\n".join(f"  • {os.path.basename(p)}" for p in failed)
+            QMessageBox.warning(
+                self,
+                "Some files could not be read",
+                f"{len(failed)} file(s) were skipped because their scenes could not "
+                f"be read:\n\n{names}",
+            )
+        return out
+
+    def _add_paths(self, paths: list[str]) -> None:
+        """Merge ``paths`` (expanded into scenes) into the table, skipping duplicates."""
+        current = self._current_entries()
+        seen = {(p, s) for p, s, _, _ in current}
+        merged: list[tuple[str, int, str]] = [(p, s, d) for p, s, d, _ in current]
+        for path, scene_index, display in self._expand_scenes(paths):
+            if (path, scene_index) not in seen:
+                merged.append((path, scene_index, display))
+                seen.add((path, scene_index))
+        self._set_seeded(merged)
+
+    def _set_seeded(self, entries: list[tuple[str, int, str]]) -> None:
+        """Seed slice indices for scene entries and rebuild the table."""
+        indices = _seed_slice_indices(entries)
+        self._set_entries([(p, s, d, idx) for (p, s, d), idx in zip(entries, indices, strict=True)])
 
     def _remove_selected(self) -> None:
         selected = {idx.row() for idx in self._file_table.selectedIndexes()}
         if not selected:
             return
         entries = self._current_entries()
-        kept = [e for row, e in enumerate(entries) if row not in selected]
-        self._set_entries(kept)
+        kept = [(p, s, d) for row, (p, s, d, _) in enumerate(entries) if row not in selected]
+        self._set_seeded(kept)
 
     def _auto_number(self) -> None:
         """Re-run the filename heuristic, discarding any manual edits."""
-        paths = [p for p, _ in self._current_entries()]
-        self._set_entries(list(zip(paths, guess_slice_indices(paths), strict=False)))
+        entries = [(p, s, d) for p, s, d, _ in self._current_entries()]
+        self._set_seeded(entries)
 
     def _on_index_edited(self, item: QTableWidgetItem) -> None:
         """Validate an edited slice-index cell; revert non-integer input."""
@@ -512,33 +565,39 @@ class NewProjectDialog(QDialog):
 
         # Build sections in increasing slice-index order so ``id`` (s001, s002…)
         # follows the physical series; sort_sections keeps the same order later.
-        entries = sorted(self._current_entries(), key=lambda e: (e[1], _natural_name_key(e[0])))
+        # Entries are (path, scene_index, display_name, slice_index).
+        entries = sorted(
+            self._current_entries(), key=lambda e: (e[3], _natural_name_key(e[0]), e[1])
+        )
+        thumbnails = folder_path / "thumbnails"
         sections: list[Section] = []
-        for i, (orig_path, slice_index) in enumerate(entries):
+        for i, (orig_path, scene_index, _display, slice_index) in enumerate(entries):
             sections.append(
                 Section(
                     id=f"s{i + 1:03d}",
                     slice_index=slice_index,
                     original_path=orig_path,
-                    thumbnail_path=str(folder_path / "thumbnails" / thumbnail_filename(orig_path)),
+                    scene_index=scene_index,
+                    thumbnail_path=str(thumbnails / thumbnail_filename(orig_path, scene_index)),
                     alignment=Alignment(status=AlignmentStatus.NOT_STARTED),
                     warp=WarpState(status=AlignmentStatus.NOT_STARTED),
                 )
             )
 
-        # Probe channels from the first source image to seed Project.channels
+        # Probe channels from the first source scene to seed Project.channels
         # with sensible defaults. The user can edit these in the Adjust
         # brightness panel afterwards.
-        first_path = Path(sections[0].original_path)
+        first = sections[0]
+        first_path = Path(first.original_path)
         try:
-            channel_names = probe_channels(first_path)
+            channel_names = probe_channels(first_path, first.scene_index)
         except Exception:
             channel_names = ["Ch 0"]
         project_channels = _default_channel_specs(channel_names, first_path.suffix)
 
-        # One working scale for the whole batch, derived from the largest image
+        # One working scale for the whole batch, derived from the largest scene
         # so its longest side fits within THUMBNAIL_MAX_SIDE.
-        working_scale = compute_working_scale([s.original_path for s in sections])
+        working_scale = compute_working_scale([(s.original_path, s.scene_index) for s in sections])
 
         self._project = Project(
             name=name,

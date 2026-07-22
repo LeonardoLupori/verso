@@ -5,10 +5,13 @@ from pathlib import Path
 import numpy as np
 
 from verso.engine.io.image_io import (
+    SUPPORTED_IMAGE_EXTENSIONS,
     WORKING_SCALE,
     _save_ome_tiff,
     compute_working_scale,
+    enumerate_scenes,
     guess_slice_indices,
+    load_full_res_raw,
     load_image,
     probe_channels,
     thumbnail_filename,
@@ -86,6 +89,70 @@ def test_guess_slice_indices_empty():
 
 def test_thumbnail_filename_is_ome_tiff():
     assert thumbnail_filename("MOUSE_0042_CODEs.tif") == "MOUSE_0042_CODEs-thumb.ome.tif"
+
+
+def test_thumbnail_filename_scene_zero_unchanged():
+    # Scene 0 keeps the historical name so existing projects are unaffected.
+    assert thumbnail_filename("stack.czi", 0) == "stack-thumb.ome.tif"
+
+
+def test_thumbnail_filename_scene_gets_infix():
+    assert thumbnail_filename("stack.czi", 3) == "stack-scene03-thumb.ome.tif"
+
+
+# ---------------------------------------------------------------------------
+# container extensions + scene enumeration
+# ---------------------------------------------------------------------------
+
+
+def test_container_extensions_supported():
+    assert ".czi" in SUPPORTED_IMAGE_EXTENSIONS
+    assert ".lif" not in SUPPORTED_IMAGE_EXTENSIONS
+
+
+def test_enumerate_scenes_single_image_is_one_scene(tmp_path: Path):
+    p = _write_tiff(tmp_path / "img.tif", 40, 30)
+    scenes = enumerate_scenes(p)
+    assert len(scenes) == 1
+    assert scenes[0].scene_index == 0
+    assert (scenes[0].width, scenes[0].height) == (30, 40)
+
+
+def test_enumerate_scenes_tolerates_missing_file():
+    # Pure path handling: no scene read required for single-image formats.
+    scenes = enumerate_scenes("does/not/exist.tif")
+    assert len(scenes) == 1
+    assert scenes[0].scene_index == 0
+
+
+# ---------------------------------------------------------------------------
+# axis-aware full-resolution reads (Z max-projection)
+# ---------------------------------------------------------------------------
+
+
+def test_load_full_res_raw_max_projects_labelled_zstack(tmp_path: Path):
+    import tifffile
+
+    zc = np.random.randint(0, 1000, size=(4, 2, 10, 12)).astype(np.uint16)
+    p = tmp_path / "zstack.tif"
+    tifffile.imwrite(str(p), zc, metadata={"axes": "ZCYX"})
+    raw = load_full_res_raw(p)
+    assert raw.shape == (10, 12, 2)
+    assert raw.dtype == np.uint16
+    # per-channel maximum-intensity projection over Z
+    assert np.array_equal(raw[:, :, 0], zc[:, 0].max(axis=0))
+
+
+def test_load_full_res_raw_keeps_unlabelled_channels_first(tmp_path: Path):
+    import tifffile
+
+    # No axis metadata: tifffile labels the leading axis generically, so the
+    # channels-first heuristic (not the Z-flatten) must keep both channels.
+    cf = np.random.randint(0, 255, size=(2, 10, 12)).astype(np.uint8)
+    p = tmp_path / "cf.tif"
+    tifffile.imwrite(str(p), cf)
+    raw = load_full_res_raw(p)
+    assert raw.shape == (10, 12, 2)
 
 
 # ---------------------------------------------------------------------------

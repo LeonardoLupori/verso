@@ -23,9 +23,17 @@ from verso.engine.preprocessing import save_mask
 
 
 def slice_mask_path_for(section: Section) -> Path:
-    """Canonical on-disk path for a section's slice mask PNG."""
+    """Canonical on-disk path for a section's slice mask PNG.
+
+    Scene ``0`` keeps the historical ``{stem}-slice-mask.png`` name so existing
+    projects are unaffected; additional scenes of a multi-scene container file
+    get a ``-scene{NN}`` infix so each section's mask stays unique.
+    """
     masks_dir = Path(section.thumbnail_path).parent.parent / "masks"
-    return masks_dir / f"{Path(section.original_path).stem}-slice-mask.png"
+    stem = Path(section.original_path).stem
+    if section.scene_index:
+        stem = f"{stem}-scene{section.scene_index:02d}"
+    return masks_dir / f"{stem}-slice-mask.png"
 
 
 def reset_alignment(section: Section) -> None:

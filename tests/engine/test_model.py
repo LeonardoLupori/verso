@@ -160,6 +160,35 @@ def test_section_round_trip_preserves_dims():
     assert loaded == s
 
 
+def test_section_scene_index_defaults_to_zero():
+    s = Section(id="s001", slice_index=1, original_path="a.czi", thumbnail_path="t.ome.tif")
+    assert s.scene_index == 0
+
+
+def test_section_scene_index_round_trip():
+    s = Section(
+        id="s003",
+        slice_index=5,
+        original_path="/data/raw/stack.czi",
+        thumbnail_path="thumbnails/stack-scene02-thumb.ome.tif",
+        scene_index=2,
+    )
+    d = s.to_dict()
+    assert d["scene_index"] == 2
+    assert Section.from_dict(d) == s
+
+
+def test_section_scene_index_absent_loads_as_zero():
+    # Pre-existing project files have no scene_index key.
+    d = {
+        "id": "s001",
+        "slice_index": 1,
+        "original_path": "a.tif",
+        "thumbnail_path": "t.ome.tif",
+    }
+    assert Section.from_dict(d).scene_index == 0
+
+
 def test_atlas_ref_defaults_and_round_trip():
     ref = AtlasRef(name="allen_mouse_25um")
     assert ref.resolution_um == 0.0

@@ -115,6 +115,11 @@ class Section:
     slice_index: int
     original_path: str
     thumbnail_path: str
+    # Index of the scene/image within a multi-scene container file (CZI).
+    # ``0`` for single-image formats (TIFF/PNG/JPG) and for the first scene of a
+    # container. Sections from the same container share ``original_path`` but
+    # differ in ``scene_index``; it also disambiguates their thumbnail names.
+    scene_index: int = 0
     resolution_original_wh: tuple[int, int] = (0, 0)
     resolution_thumbnail_wh: tuple[int, int] = (0, 0)
     preprocessing: Preprocessing = field(default_factory=Preprocessing)
@@ -127,6 +132,7 @@ class Section:
             "slice_index": self.slice_index,
             "original_path": self.original_path,
             "thumbnail_path": self.thumbnail_path,
+            "scene_index": self.scene_index,
             "resolution_original_wh": list(self.resolution_original_wh),
             "resolution_thumbnail_wh": list(self.resolution_thumbnail_wh),
             "preprocessing": self.preprocessing.to_dict(),
@@ -141,6 +147,7 @@ class Section:
             slice_index=d["slice_index"],
             original_path=d["original_path"],
             thumbnail_path=d["thumbnail_path"],
+            scene_index=int(d.get("scene_index", 0)),
             resolution_original_wh=tuple(d.get("resolution_original_wh", [0, 0])),
             resolution_thumbnail_wh=tuple(d.get("resolution_thumbnail_wh", [0, 0])),
             preprocessing=Preprocessing.from_dict(d.get("preprocessing", {})),

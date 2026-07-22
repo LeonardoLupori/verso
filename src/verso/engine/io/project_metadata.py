@@ -70,7 +70,7 @@ def populate_metadata(
                     f"Cannot populate dimensions for section {section.id!r}: "
                     f"original image not found at {orig}"
                 )
-            section.resolution_original_wh = image_dimensions(orig)
+            section.resolution_original_wh = image_dimensions(orig, section.scene_index)
         if min(section.resolution_thumbnail_wh) <= 0:
             thumb = _resolve(section.thumbnail_path, project_dir)
             if not thumb.exists():  # noqa: SIM102 — keep the regeneration side effect explicit

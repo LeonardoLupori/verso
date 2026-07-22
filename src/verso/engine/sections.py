@@ -17,7 +17,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from verso.engine.drafts import slice_mask_path_for
-from verso.engine.io.image_io import thumbnail_filename
+from verso.engine.io.image_io import enumerate_scenes, thumbnail_filename
 from verso.engine.model.alignment import Alignment, AlignmentStatus, WarpState
 from verso.engine.model.project import Section
 
@@ -72,16 +72,19 @@ def make_added_sections(
 ) -> tuple[list[Section], list[str]]:
     """Build :class:`Section` objects for images added to an existing project.
 
-    New sections are appended *after* the current series: their provisional
-    ``slice_index`` runs from ``max(existing slice_index) + 1`` upward, assigned
-    in natural-filename order. The user is expected to correct these in the
-    Overview table. ``working_scale`` is deliberately not consulted or changed.
+    Each source path is expanded into its scenes (a multi-scene container such as
+    CZI yields one candidate section per scene; every other format yields a
+    single scene at index 0). New sections are appended *after* the current
+    series: their provisional ``slice_index`` runs from
+    ``max(existing slice_index) + 1`` upward, assigned in natural-filename then
+    scene order. The user is expected to correct these in the Overview table.
+    ``working_scale`` is deliberately not consulted or changed.
 
-    A path is skipped (and reported) when it duplicates an existing section's
-    original image, or when its canonical thumbnail filename would collide with
-    an existing section's or an already-accepted new section's thumbnail (two
-    sources sharing a filename stem). Skipping protects existing thumbnails from
-    being clobbered and keeps per-section artifact paths unique.
+    A ``(path, scene)`` is skipped (and its path reported) when it duplicates an
+    existing section, when its scenes cannot be read, or when its canonical
+    thumbnail filename would collide with an existing or already-accepted
+    thumbnail. Skipping protects existing thumbnails from being clobbered and
+    keeps per-section artifact paths unique.
 
     Args:
         existing_sections: The project's current sections.
@@ -90,37 +93,47 @@ def make_added_sections(
 
     Returns:
         ``(new_sections, skipped_paths)`` — the sections to append (in
-        slice-index order) and the input paths that were skipped.
+        slice-index order) and the input paths that were skipped (deduplicated).
     """
-    existing_originals = {_norm(s.original_path) for s in existing_sections}
+    existing_keys = {(_norm(s.original_path), s.scene_index) for s in existing_sections}
     used_thumbs = {_norm(s.thumbnail_path) for s in existing_sections}
 
-    kept: list[str] = []
+    kept: list[tuple[str, int]] = []
     skipped: list[str] = []
     for path in new_paths:
         path = str(path)
-        thumb = _norm(thumbnails_dir / thumbnail_filename(path))
-        if _norm(path) in existing_originals or thumb in used_thumbs:
+        try:
+            scenes = enumerate_scenes(path)
+        except Exception:
             skipped.append(path)
             continue
-        kept.append(path)
-        used_thumbs.add(thumb)
+        for scene in scenes:
+            thumb = _norm(thumbnails_dir / thumbnail_filename(path, scene.scene_index))
+            if (_norm(path), scene.scene_index) in existing_keys or thumb in used_thumbs:
+                skipped.append(path)
+                continue
+            kept.append((path, scene.scene_index))
+            used_thumbs.add(thumb)
+
+    # Deduplicate reported paths (a container may skip several of its scenes).
+    skipped = list(dict.fromkeys(skipped))
 
     if not kept:
         return [], skipped
 
-    kept.sort(key=_natural_name_key)
+    kept.sort(key=lambda e: (_natural_name_key(e[0]), e[1]))
     base_index = max((s.slice_index for s in existing_sections), default=0)
     new_ids = next_section_ids([s.id for s in existing_sections], len(kept))
 
     sections: list[Section] = []
-    for i, path in enumerate(kept):
+    for i, (path, scene_index) in enumerate(kept):
         sections.append(
             Section(
                 id=new_ids[i],
                 slice_index=base_index + 1 + i,
                 original_path=path,
-                thumbnail_path=str(thumbnails_dir / thumbnail_filename(path)),
+                scene_index=scene_index,
+                thumbnail_path=str(thumbnails_dir / thumbnail_filename(path, scene_index)),
                 alignment=Alignment(status=AlignmentStatus.NOT_STARTED),
                 warp=WarpState(status=AlignmentStatus.NOT_STARTED),
             )

@@ -100,6 +100,7 @@ download requires internet the first time an atlas is used; creation fails loudl
   "slice_index": 17,
   "original_path": "/data/raw/IMG_0234.tif",
   "thumbnail_path": "thumbnails/IMG_0234-thumb.ome.tif",
+  "scene_index": 0,
   "resolution_original_wh": [20000, 15000],
   "resolution_thumbnail_wh": [1200, 900],
   "preprocessing": { ... },
@@ -112,8 +113,9 @@ download requires internet the first time an atlas is used; creation fails loudl
 |---|---|---|
 | `id` | str | Stable identifier (used internally; not user-edited). Breaks ties when two sections share a `slice_index`. |
 | `slice_index` | int | Section's physical position along the project's interpolation axis (e.g. AP). Ground truth for ordering everywhere (overview / filmstrip / interpolation). **Need not be contiguous** (1, 2, 18, 19 encodes a gap) and **may repeat** (a slice that broke into several images shares one index). Guessed from filenames on import via `guess_slice_indices` and editable afterwards in the overview `#` column. |
-| `original_path` | str | Absolute path to the full-resolution source image. |
+| `original_path` | str | Absolute path to the full-resolution source image. For multi-scene container formats (CZI) several sections share one path, distinguished by `scene_index`. |
 | `thumbnail_path` | str | Path to the working-resolution OME-TIFF (relative or absolute). |
+| `scene_index` | int | Index of the scene/image within a multi-scene container file (CZI). `0` for single-image formats and the first scene of a container. Defaults to `0` for pre-existing project files. |
 | `resolution_original_wh` | `[int, int]` | Pixel dimensions `[width, height]` of the original (full-resolution) image. Cached so the file alone maps pixels ↔ atlas voxels; `[0, 0]` until populated (added in v1.2). |
 | `resolution_thumbnail_wh` | `[int, int]` | Pixel dimensions `[width, height]` of the working-resolution thumbnail. `[0, 0]` until populated (added in v1.2). |
 

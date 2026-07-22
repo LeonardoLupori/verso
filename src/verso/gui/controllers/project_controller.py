@@ -539,7 +539,7 @@ class ProjectController:
         mismatched: list[str] = []
         for s in new_sections:
             try:
-                n = len(probe_channels(s.original_path))
+                n = len(probe_channels(s.original_path, s.scene_index))
             except Exception:
                 continue
             if n != expected:

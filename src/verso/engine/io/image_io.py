@@ -28,6 +28,9 @@ from pathlib import Path
 
 import numpy as np
 
+from verso.engine.io import scene_readers
+from verso.engine.io.scene_readers import SceneInfo
+
 # Default scale factor for working copies (fraction of original resolution).
 # Used as a fallback when no per-import scale has been computed (e.g. lazily
 # generating a thumbnail for a QuickNII-imported section).
@@ -40,8 +43,17 @@ THUMBNAIL_MAX_SIDE = 2000
 FILMSTRIP_MAX_SIDE = 150
 
 # File extensions accepted as section images (New Project dialog file picker,
-# drag-and-drop onto the overview).
-SUPPORTED_IMAGE_EXTENSIONS = (".tif", ".tiff", ".png", ".jpg", ".jpeg")
+# drag-and-drop onto the overview). The trailing one is a multi-scene container
+# format (see scene_readers.CONTAINER_EXTENSIONS) — one file may yield several
+# sections, distinguished by Section.scene_index.
+SUPPORTED_IMAGE_EXTENSIONS = (
+    ".tif",
+    ".tiff",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    *scene_readers.CONTAINER_EXTENSIONS,
+)
 
 # Heuristic upper bound on plausible channel count. Used to disambiguate
 # (C, H, W) vs (H, W, C) layouts: channel axes are always small.
@@ -110,9 +122,35 @@ def guess_slice_indices(paths: Sequence[str | Path]) -> list[int]:
     return [nums[chosen] for nums in per_file]
 
 
-def thumbnail_filename(path: str | Path) -> str:
-    """Return the working-thumbnail filename for a source image path."""
-    return f"{Path(path).stem}-thumb.ome.tif"
+def thumbnail_filename(path: str | Path, scene_index: int = 0) -> str:
+    """Return the working-thumbnail filename for a source image path + scene.
+
+    Scene ``0`` keeps the historical ``{stem}-thumb.ome.tif`` name so existing
+    single-image projects are unaffected. Additional scenes of a container file
+    get a ``-scene{NN}`` infix to keep each section's thumbnail unique.
+    """
+    stem = Path(path).stem
+    if scene_index:
+        return f"{stem}-scene{scene_index:02d}-thumb.ome.tif"
+    return f"{stem}-thumb.ome.tif"
+
+
+def enumerate_scenes(path: str | Path) -> list[SceneInfo]:
+    """List the importable scenes in *path*.
+
+    Container formats (CZI) may expose several scenes; every other format is
+    a single scene at index 0. Each :class:`~verso.engine.io.scene_readers.SceneInfo`
+    carries a display name and the scene's full-resolution ``(width, height)``.
+    """
+    if scene_readers.is_container(path):
+        return scene_readers.enumerate_scenes(path)
+    # Single-image formats are always one scene; dimensions are best-effort so
+    # this stays pure path handling when the file is missing or not yet on disk.
+    try:
+        w, h = image_dimensions(path)
+    except Exception:
+        w, h = 0, 0
+    return [SceneInfo(0, Path(path).stem, w, h)]
 
 
 # ---------------------------------------------------------------------------
@@ -136,8 +174,14 @@ def load_image(path: str | Path) -> np.ndarray:
     return np.asarray(Image.open(str(path)))
 
 
-def image_dimensions(path: str | Path) -> tuple[int, int]:
-    """Return image dimensions as ``(width, height)`` without full decoding."""
+def image_dimensions(path: str | Path, scene_index: int = 0) -> tuple[int, int]:
+    """Return image dimensions as ``(width, height)`` without full decoding.
+
+    For container formats (CZI) the dimensions are those of the requested
+    *scene* at full resolution.
+    """
+    if scene_readers.is_container(path):
+        return scene_readers.scene_dimensions(path, scene_index)
     path = Path(path)
     if path.suffix.lower() in (".tif", ".tiff"):
         try:
@@ -162,7 +206,10 @@ def image_dimensions(path: str | Path) -> tuple[int, int]:
         return im.size
 
 
-def compute_working_scale(paths: list[str | Path], max_side: int = THUMBNAIL_MAX_SIDE) -> float:
+def compute_working_scale(
+    paths: list[str | Path | tuple[str | Path, int]],
+    max_side: int = THUMBNAIL_MAX_SIDE,
+) -> float:
     """Compute a single working-copy scale factor for an import batch.
 
     Reads the dimensions of every image (without fully decoding them), finds the
@@ -174,7 +221,9 @@ def compute_working_scale(paths: list[str | Path], max_side: int = THUMBNAIL_MAX
     ``1.0``). Images whose dimensions cannot be read are skipped.
 
     Args:
-        paths: Source image paths in the import batch.
+        paths: Source images in the import batch. Each entry is a path, or a
+            ``(path, scene_index)`` tuple for a specific scene of a container
+            file (so a multi-scene CZI is measured scene-by-scene).
         max_side: Target longest-side, in pixels, for the largest image.
 
     Returns:
@@ -182,9 +231,10 @@ def compute_working_scale(paths: list[str | Path], max_side: int = THUMBNAIL_MAX
         :data:`WORKING_SCALE` when no dimensions could be read.
     """
     longest = 0
-    for path in paths:
+    for entry in paths:
+        path, scene_index = entry if isinstance(entry, tuple) else (entry, 0)
         try:
-            w, h = image_dimensions(path)
+            w, h = image_dimensions(path, scene_index)
         except Exception:
             continue
         longest = max(longest, w, h)
@@ -269,21 +319,62 @@ def to_multichannel(image: np.ndarray) -> np.ndarray:
     return _stretch_per_channel(_normalize_layout(image))
 
 
-def load_full_res_raw(path: str | Path) -> np.ndarray:
+def _read_tiff_scene_native(path: str | Path) -> np.ndarray:
+    """Read a (possibly multi-page) TIFF as ``(H, W, C)`` native dtype.
+
+    When the first series carries an explicit focal (``Z``) or time (``T``) axis,
+    the axis labels drive a correct flatten: ``Z`` is max-projected, ``T`` (and
+    any other non-spatial, non-channel axis) is reduced to its first element, and
+    ``C``/``S`` become the channel axis. For everything else — including the
+    common unlabelled channels-first ``(C, H, W)`` array, which tifffile reports
+    with a generic axis letter — we defer to :func:`_normalize_layout`'s
+    small-first-axis heuristic, preserving the historical behaviour.
+    """
+    import tifffile
+
+    with tifffile.TiffFile(str(path)) as tif:
+        series = tif.series[0]
+        axes = series.axes.upper()
+        arr = series.asarray()
+    if ("Z" in axes or "T" in axes) and "Y" in axes and "X" in axes:
+        return scene_readers.reduce_to_hwc(arr, axes)
+    return _normalize_layout(arr)
+
+
+def _read_original_native(path: str | Path, scene_index: int = 0, zoom: float = 1.0) -> np.ndarray:
+    """Read one scene of an original image as ``(H, W, C)`` native dtype.
+
+    Dispatches by format: container files (CZI) via
+    :mod:`verso.engine.io.scene_readers` (honouring ``zoom`` for a memory-cheap
+    reduced read); multipage TIFF via the axis-aware reader; everything else via
+    PIL + layout normalisation. The returned array is already channels-last and
+    Z/T-flattened — feed it to :func:`_stretch_per_channel` for a display copy.
+    """
+    if scene_readers.is_container(path):
+        return scene_readers.read_scene(path, scene_index, zoom)
+    if Path(path).suffix.lower() in (".tif", ".tiff"):
+        return _read_tiff_scene_native(path)
+    return _normalize_layout(load_image(path))
+
+
+def load_full_res_raw(path: str | Path, scene_index: int = 0) -> np.ndarray:
     """Load an original image as ``(H, W, C)`` in its **native dtype**, un-stretched.
 
     Unlike :func:`ensure_working_copy` / :func:`to_multichannel` (which percentile-
     stretch to uint8 for display), this preserves the raw pixel values so intensity
-    quantification is faithful. Reads the full-resolution file every call — callers
-    that need it repeatedly should cache the result.
+    quantification is faithful. Z-stacks are max-projected and the first timepoint
+    is used (uniform flattening rule). Reads the full-resolution file every call —
+    callers that need it repeatedly should cache the result.
 
     Args:
         path: Path to the original image file.
+        scene_index: Scene to read for container formats (CZI); ignored for
+            single-image formats.
 
     Returns:
         ``(H, W, C)`` array in the file's native dtype and channel layout.
     """
-    return _normalize_layout(load_image(path))
+    return _read_original_native(path, scene_index, zoom=1.0)
 
 
 # ---------------------------------------------------------------------------
@@ -351,7 +442,7 @@ def _canonical_thumbnail(section) -> Path:
         thumb_dir = existing.parent
     else:
         thumb_dir = Path(section.original_path).parent / "thumbnails"
-    return thumb_dir / thumbnail_filename(section.original_path)
+    return thumb_dir / thumbnail_filename(section.original_path, section.scene_index)
 
 
 def ensure_working_copy(
@@ -413,23 +504,42 @@ def ensure_working_copy(
 
     # 3. No cached thumbnail — generate from original image.
     orig = Path(section.original_path)
+    scene_index = section.scene_index
     if not orig.exists():
         return None
 
+    is_container = scene_readers.is_container(orig)
     try:
-        raw = load_image(orig)
+        # Containers can decode a reduced-resolution scene directly (memory-cheap);
+        # other formats read full-res then downscale the uint8 copy.
+        raw = _read_original_native(orig, scene_index, zoom=working_scale if is_container else 1.0)
     except Exception as exc:
         raise RuntimeError(
             f"Cannot load image '{orig.name}': {exc}\n\n"
             "If this is a compressed TIFF, make sure 'imagecodecs' is installed."
         ) from exc
 
-    img = to_multichannel(raw)
-    img, _ = resize_by_scale(img, working_scale)
+    img = _stretch_per_channel(raw)  # uint8 (H, W, C), already channels-last
+
+    if is_container:
+        # The reduced read is ~working_scale already; snap to the exact target so
+        # every section shares one uniform working_scale (full-res × working_scale).
+        full_w, full_h = image_dimensions(orig, scene_index)
+        target_w = max(1, round(full_w * working_scale))
+        target_h = max(1, round(full_h * working_scale))
+        if (img.shape[1], img.shape[0]) != (target_w, target_h):
+            img = _resize_multichannel(img, (target_w, target_h))
+        channel_names = probe_channels(orig, scene_index)
+    else:
+        img, _ = resize_by_scale(img, working_scale)
+        channel_names = _default_channel_names(img.shape[2])
+
+    if len(channel_names) != img.shape[2]:
+        channel_names = _default_channel_names(img.shape[2])
 
     try:
         canonical.parent.mkdir(parents=True, exist_ok=True)
-        _save_ome_tiff(img, canonical, channel_names=_default_channel_names(img.shape[2]))
+        _save_ome_tiff(img, canonical, channel_names=channel_names)
         section.thumbnail_path = str(canonical)
     except OSError:
         pass
@@ -461,13 +571,20 @@ def _save_ome_tiff(image: np.ndarray, path: Path, channel_names: list[str]) -> N
     )
 
 
-def probe_channels(path: str | Path) -> list[str]:
+def probe_channels(path: str | Path, scene_index: int = 0) -> list[str]:
     """Return channel names for a source image without fully decoding it.
 
-    For OME-TIFFs with named channels in the metadata, returns those names.
-    Otherwise returns generic ``["Ch 0", "Ch 1", …]`` based on the channel
-    count detected from the array shape.
+    For container formats (CZI) the names come from the file's metadata and
+    are aligned to :func:`load_full_res_raw` / the working copy. For OME-TIFFs
+    with named channels in the metadata, returns those names. Otherwise returns
+    generic ``["Ch 0", "Ch 1", …]`` based on the channel count detected from the
+    array shape.
     """
+    if scene_readers.is_container(path):
+        try:
+            return scene_readers.channel_names(path, scene_index)
+        except Exception:
+            return _default_channel_names(1)
     path = Path(path)
     if path.suffix.lower() in (".tif", ".tiff"):
         try:
