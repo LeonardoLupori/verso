@@ -101,7 +101,13 @@ class ExportController:
         if reply == QMessageBox.StandardButton.Yes:
             from verso.engine.io.quint_io import write_section_pngs
 
-            write_section_pngs(project, out_dir)
+            progress = self._make_progress(
+                "Creating PNG copies…", "PNG export", len(project.sections)
+            )
+            try:
+                write_section_pngs(project, out_dir, on_progress=self._progress_tick(progress))
+            finally:
+                progress.close()
 
     # ------------------------------------------------------------------
     # Images with overlay / aligned stack
@@ -138,23 +144,19 @@ class ExportController:
         out_dir = project_path.parent / "exports" / f"images_with_overlay_{timestamp}"
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        progress = QProgressDialog("Exporting images...", "Cancel", 0, len(sections), self._window)
-        progress.setWindowTitle("Export images with atlas overlay")
-        progress.setMinimumDuration(0)
-        progress.setAutoClose(False)
-        progress.setAutoReset(False)
-        progress.setModal(True)
-        progress.show()
-        QApplication.processEvents()
+        progress = self._make_progress(
+            "Exporting images...",
+            "Export images with atlas overlay",
+            len(sections),
+            cancellable=True,
+        )
+        tick = self._progress_tick(progress)
 
         errors: list[str] = []
         for idx, section in enumerate(sections):
             if progress.wasCanceled():
                 break
-            progress.setLabelText(
-                f"Exporting {idx + 1} / {len(sections)}: {Path(section.original_path).name}"
-            )
-            QApplication.processEvents()
+            tick(idx, len(sections), Path(section.original_path).name)
             try:
                 export_section(section, project, atlas, options, out_dir)
             except Exception as exc:
@@ -209,16 +211,13 @@ class ExportController:
         out_dir = project_path.parent / "exports"
         out_path = out_dir / f"aligned_stack_{timestamp}.ome.tif"
 
-        progress = QProgressDialog(
-            "Resampling sections...", "Cancel", 0, len(sections), self._window
+        progress = self._make_progress(
+            "Resampling sections...",
+            "Export aligned section stack",
+            len(sections),
+            cancellable=True,
         )
-        progress.setWindowTitle("Export aligned section stack")
-        progress.setMinimumDuration(0)
-        progress.setAutoClose(False)
-        progress.setAutoReset(False)
-        progress.setModal(True)
-        progress.show()
-        QApplication.processEvents()
+        tick = self._progress_tick(progress)
 
         entries: list = []
         skipped: list[str] = []
@@ -228,10 +227,7 @@ class ExportController:
             if progress.wasCanceled():
                 canceled = True
                 break
-            progress.setLabelText(
-                f"Resampling {idx + 1} / {len(sections)}: {Path(section.original_path).name}"
-            )
-            QApplication.processEvents()
+            tick(idx, len(sections), Path(section.original_path).name)
             try:
                 result = export_section_aligned(
                     section,
@@ -289,6 +285,49 @@ class ExportController:
         if notes:
             msg += "\n\n" + "\n".join(notes)
         self._show_export_done(out_dir, msg)
+
+    # ------------------------------------------------------------------
+    # Shared progress dialogs
+    # ------------------------------------------------------------------
+
+    def _make_progress(
+        self, message: str, title: str, total: int, *, cancellable: bool = False
+    ) -> QProgressDialog:
+        """A modal 0..``total`` dialog, shown immediately."""
+        from PyQt6.QtWidgets import QApplication
+
+        progress = QProgressDialog(message, "Cancel" if cancellable else "", 0, total, self._window)
+        progress.setWindowTitle(title)
+        if not cancellable:
+            progress.setCancelButton(None)
+        progress.setMinimumWidth(320)
+        progress.setMinimumDuration(0)
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+        progress.setModal(True)
+        progress.show()
+        QApplication.processEvents()
+        return progress
+
+    @staticmethod
+    def _progress_tick(progress: QProgressDialog) -> Callable[[int, int, str], None]:
+        """A ``(done, total, name)`` callback that advances ``progress``.
+
+        The label names only the section being worked on — the bar itself shows
+        how far along the run is. The work runs on the UI thread here, so each
+        tick pumps the event loop to keep the dialog painting.
+        """
+        from PyQt6.QtWidgets import QApplication
+
+        message = progress.labelText()
+
+        def tick(done: int, total: int, name: str) -> None:
+            progress.setValue(min(done, total))
+            if name:
+                progress.setLabelText(f"{message}\n{name}")
+            QApplication.processEvents()
+
+        return tick
 
     # ------------------------------------------------------------------
     # Shared pre-flight / selection / completion
@@ -387,25 +426,36 @@ class ExportController:
         options = dlg.quant_options()
         options.out_dir = str(out_base)
 
+        # ``on_progress`` is the worker's progress signal: the engine calls it
+        # once per section so the dialog can name the section being quantified.
         if kind == "intensity":
 
-            def run_fn():
+            def run_fn(on_progress):
                 return quantify_intensity(
-                    project, project_dir=project_dir, atlas=atlas, options=options
+                    project,
+                    project_dir=project_dir,
+                    atlas=atlas,
+                    options=options,
+                    on_progress=on_progress,
                 )
         elif kind == "area":
             annotation = dlg.annotation()
 
-            def run_fn():
+            def run_fn(on_progress):
                 return quantify_area(
-                    project, annotation, project_dir=project_dir, atlas=atlas, options=options
+                    project,
+                    annotation,
+                    project_dir=project_dir,
+                    atlas=atlas,
+                    options=options,
+                    on_progress=on_progress,
                 )
         else:  # dots
             annotation = dlg.annotation()
             intensity_channels = dlg.intensity_channels()
             diameter = dlg.dot_diameter()
 
-            def run_fn():
+            def run_fn(on_progress):
                 return quantify_dots(
                     project,
                     annotation,
@@ -414,6 +464,7 @@ class ExportController:
                     project_dir=project_dir,
                     atlas=atlas,
                     options=options,
+                    on_progress=on_progress,
                 )
 
         self._launch_quantify(run_fn, out_base, kind)
@@ -426,6 +477,8 @@ class ExportController:
             QuantifyWorker(run_fn),
             title="Quantification",
             message=f"Running {kind} quantification…",
+            # BackgroundJob wires QuantifyWorker.progress into the dialog: the bar
+            # advances per section and the label names the one being quantified.
             modal=True,
             min_width=320,
         )

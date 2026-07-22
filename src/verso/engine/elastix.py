@@ -32,8 +32,12 @@ import logging
 import tempfile
 from functools import lru_cache
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 from verso.engine.anchoring import anchoring_to_vectors, atlas_to_normalized
 from verso.engine.model.alignment import ControlPoint
@@ -332,6 +336,7 @@ def prepare_registration_inputs(
     sections: list,
     atlas,
     working_scale: float,
+    on_progress: Callable[[int, object], None] | None = None,
 ) -> tuple[list[dict], list[str]]:
     """Build per-section registration inputs (arrays + metadata), in-process.
 
@@ -340,6 +345,10 @@ def prepare_registration_inputs(
     This is the *non-itk* preparation step: it is safe to run in a host worker
     thread, and lets the heavy registration run on arrays in a separate process
     without that process needing to reload the atlas.
+
+    ``on_progress``, when given, is called as ``on_progress(done, section)``
+    before each section is prepared, where ``done`` is the number of sections
+    already handled — used to drive a progress dialog.
 
     Returns ``(inputs, errors)`` where each input is a dict with keys
     ``id``, ``anchoring``, ``manual_cps`` (list[ControlPoint]), ``section``
@@ -351,7 +360,9 @@ def prepare_registration_inputs(
 
     inputs: list[dict] = []
     errors: list[str] = []
-    for section in sections:
+    for done, section in enumerate(sections):
+        if on_progress is not None:
+            on_progress(done, section)
         name = Path(section.original_path).name
         try:
             anchoring = section.alignment.current_anchoring
@@ -391,6 +402,9 @@ def prepare_registration_inputs(
 _WORKER_READY = "VERSO_ELASTIX_READY"
 _WORKER_DONE = "VERSO_ELASTIX_DONE"
 _WORKER_QUIT = "VERSO_ELASTIX_QUIT"
+# Followed by a JSON payload {"done", "total", "id"} — one line before each
+# section the child starts, so the parent can drive a determinate progress bar.
+_WORKER_PROGRESS = "VERSO_ELASTIX_PROGRESS "
 
 
 class ElastixWorker:
@@ -443,6 +457,7 @@ class ElastixWorker:
         inputs: list[dict],
         atlas_shape: tuple[int, int, int],
         params: ElastixParams,
+        on_progress: Callable[[int, int, str], None] | None = None,
     ) -> tuple[dict[str, list[ControlPoint]], list[str]]:
         """Register ``inputs`` in the warm child process.
 
@@ -450,6 +465,11 @@ class ElastixWorker:
         ``(results, errors)`` where ``results`` maps ``section.id`` to its new
         ``auto=True`` control points. Must be called from a background thread:
         it blocks until the child finishes.
+
+        ``on_progress``, when given, is called as
+        ``on_progress(done, total, section_id)`` each time the child starts a
+        section, so the caller can show which section is running and how many
+        are left.
         """
         import shutil
         import tempfile
@@ -499,8 +519,13 @@ class ElastixWorker:
                     self._reset()
                     crashed = True
                     break
-                if line.strip() == _WORKER_DONE:
+                stripped = line.strip()
+                if stripped == _WORKER_DONE:
                     break
+                if on_progress is not None and stripped.startswith(_WORKER_PROGRESS):
+                    with contextlib.suppress(Exception):
+                        p = json.loads(stripped[len(_WORKER_PROGRESS) :])
+                        on_progress(int(p["done"]), int(p["total"]), str(p["id"]))
             if crashed:
                 _log.warning("elastix worker died mid-batch; returning partial results")
             return self._read_result(tmp, crashed)
