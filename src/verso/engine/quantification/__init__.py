@@ -38,6 +38,8 @@ from verso.engine.quantification.region_map import region_map
 from verso.engine.quantification.tables import dots_region_rows, intensity_rows
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from verso.engine.atlas import AtlasVolume
     from verso.engine.model.annotation import PointSeries
     from verso.engine.model.project import Project, Section
@@ -209,6 +211,28 @@ def _aggregator(atlas: AtlasVolume, options: QuantifyOptions) -> RegionAggregato
     return RegionAggregator(atlas) if options.aggregate else None
 
 
+def _make_ticker(
+    on_progress: Callable[[int, int, str], None] | None, total: int
+) -> Callable[[Section], None] | None:
+    """Wrap ``on_progress`` as a per-section callback counting across the run.
+
+    The pooled and per-slice paths both funnel every section through one of the
+    ``_*_unit`` helpers, so a single counter here covers both. The returned
+    callback reports ``(sections done, total, image name)`` *before* each
+    section is processed; ``None`` in gives ``None`` out (no bookkeeping).
+    """
+    if on_progress is None:
+        return None
+    done = 0
+
+    def tick(section: Section) -> None:
+        nonlocal done
+        on_progress(done, total, Path(section.original_path).name)
+        done += 1
+
+    return tick
+
+
 # ---------------------------------------------------------------------------
 # Output writing
 # ---------------------------------------------------------------------------
@@ -249,12 +273,15 @@ def _pixel_unit(
     agg: RegionAggregator | None,
     scope_fn,
     file_prefix: str,
+    tick: Callable[[Section], None] | None = None,
 ) -> tuple[dict, dict]:
     """Accumulate intensity for ``sections`` and build (return_dict, file_tables)."""
     from verso.engine.io.image_io import load_full_res_raw
 
     acc = IntensityAccumulator(len(idxs))
     for section in sections:
+        if tick is not None:
+            tick(section)
         labels, slice_sc, hemi = region_map(
             reg, atlas, section, split_hemispheres=options.split_hemispheres
         )
@@ -275,7 +302,9 @@ def _pixel_unit(
     return ret, files
 
 
-def _run_pixel_analysis(project, project_dir, atlas, options, scope_factory, file_prefix) -> dict:
+def _run_pixel_analysis(
+    project, project_dir, atlas, options, scope_factory, file_prefix, on_progress=None
+) -> dict:
     """Shared driver for intensity/area (``scope_factory`` builds the per-section scope)."""
     reg, proj, atl, pdir = _prepare(project, project_dir, atlas)
     _check_preconditions(proj, pdir, options)
@@ -283,6 +312,7 @@ def _run_pixel_analysis(project, project_dir, atlas, options, scope_factory, fil
     idxs, names = _channel_plan(proj, options.channels, sample)
     agg = _aggregator(atl, options)
     scope_fn = scope_factory(proj, pdir)
+    tick = _make_ticker(on_progress, len(proj.sections))
 
     if options.per_slice:
         from verso.engine.io.quant_export import slug_for_section
@@ -292,7 +322,7 @@ def _run_pixel_analysis(project, project_dir, atlas, options, scope_factory, fil
         used: set[str] = set()
         for section in proj.sections:
             ret, files = _pixel_unit(
-                reg, atl, [section], pdir, options, idxs, names, agg, scope_fn, file_prefix
+                reg, atl, [section], pdir, options, idxs, names, agg, scope_fn, file_prefix, tick
             )
             slug = slug_for_section(section, used)
             result[slug] = ret
@@ -301,7 +331,7 @@ def _run_pixel_analysis(project, project_dir, atlas, options, scope_factory, fil
         return result
 
     ret, files = _pixel_unit(
-        reg, atl, proj.sections, pdir, options, idxs, names, agg, scope_fn, file_prefix
+        reg, atl, proj.sections, pdir, options, idxs, names, agg, scope_fn, file_prefix, tick
     )
     _write_pooled(options, files)
     return ret
@@ -313,6 +343,7 @@ def quantify_intensity(
     project_dir: str | Path | None = None,
     atlas: AtlasVolume | None = None,
     options: QuantifyOptions | None = None,
+    on_progress: Callable[[int, int, str], None] | None = None,
 ) -> dict:
     """Per-region, per-channel intensity (mean + total) within the slice mask.
 
@@ -322,6 +353,8 @@ def quantify_intensity(
             :class:`Project` (defaults to the JSON's parent otherwise).
         atlas: Pre-loaded :class:`AtlasVolume` to reuse (else built from the project).
         options: :class:`QuantifyOptions`.
+        on_progress: Called as ``(done, total, image_name)`` before each section,
+            for driving a progress bar. Optional.
 
     Returns:
         Pooled: ``{"regions": [...], "regions_mid": [...], "regions_coarse": [...]}``
@@ -333,7 +366,9 @@ def quantify_intensity(
     def scope_factory(_proj, _pdir):
         return lambda _section, slice_sc: slice_sc
 
-    return _run_pixel_analysis(project, project_dir, atlas, options, scope_factory, "intensity")
+    return _run_pixel_analysis(
+        project, project_dir, atlas, options, scope_factory, "intensity", on_progress
+    )
 
 
 def quantify_area(
@@ -343,6 +378,7 @@ def quantify_area(
     project_dir: str | Path | None = None,
     atlas: AtlasVolume | None = None,
     options: QuantifyOptions | None = None,
+    on_progress: Callable[[int, int, str], None] | None = None,
 ) -> dict:
     """Per-region intensity restricted to an area annotation (``slice ∧ area``).
 
@@ -363,7 +399,9 @@ def quantify_area(
 
         return scope_fn
 
-    return _run_pixel_analysis(project, project_dir, atlas, options, scope_factory, "area")
+    return _run_pixel_analysis(
+        project, project_dir, atlas, options, scope_factory, "area", on_progress
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -396,6 +434,7 @@ def _dots_unit(
     intensity_idxs: list[int],
     all_names: list[str],
     dot_diameter_px: float,
+    tick: Callable[[Section], None] | None = None,
 ) -> tuple[dict, dict]:
     """Quantify dots for ``sections`` and build (return_dict, file_tables)."""
     from verso.engine.io.image_io import load_full_res_raw
@@ -405,6 +444,8 @@ def _dots_unit(
     per_dot: list[dict] = []
 
     for section in sections:
+        if tick is not None:
+            tick(section)
         labels, scope, hemi = region_map(
             reg, atlas, section, split_hemispheres=options.split_hemispheres
         )
@@ -460,6 +501,7 @@ def quantify_dots(
     project_dir: str | Path | None = None,
     atlas: AtlasVolume | None = None,
     options: QuantifyOptions | None = None,
+    on_progress: Callable[[int, int, str], None] | None = None,
 ) -> dict:
     """Quantify a point series: per-dot atlas table + per-region counts/density.
 
@@ -490,6 +532,7 @@ def quantify_dots(
         intensity_idxs = []
     _, all_names = _channel_plan(proj, None, sample)
     agg = _aggregator(atl, options)
+    tick = _make_ticker(on_progress, len(proj.sections))
 
     if options.per_slice:
         from verso.engine.io.quant_export import slug_for_section
@@ -510,6 +553,7 @@ def quantify_dots(
                 intensity_idxs,
                 all_names,
                 dot_diameter_px,
+                tick,
             )
             slug = slug_for_section(section, used)
             result[slug] = ret
@@ -529,6 +573,7 @@ def quantify_dots(
         intensity_idxs,
         all_names,
         dot_diameter_px,
+        tick,
     )
     _write_pooled(options, files)
     return ret

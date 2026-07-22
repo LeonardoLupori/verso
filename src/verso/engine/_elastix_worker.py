@@ -31,7 +31,7 @@ import json
 import sys
 from pathlib import Path
 
-from verso.engine.elastix import _WORKER_DONE, _WORKER_QUIT, _WORKER_READY
+from verso.engine.elastix import _WORKER_DONE, _WORKER_PROGRESS, _WORKER_QUIT, _WORKER_READY
 
 
 def _prewarm() -> None:
@@ -75,9 +75,15 @@ def _process_job(job_dir: Path) -> None:
         (job_dir / "result.json").write_text(json.dumps(out))
 
     flush()
-    for sec in job["sections"]:
+    total = len(job["sections"])
+    for done, sec in enumerate(job["sections"]):
         i = sec["index"]
         name = sec["id"]
+        # Tell the parent which section is starting so it can show progress.
+        sys.stdout.write(
+            _WORKER_PROGRESS + json.dumps({"done": done, "total": total, "id": name}) + "\n"
+        )
+        sys.stdout.flush()
         try:
             section = np.load(job_dir / f"section_{i}.npy")
             template = np.load(job_dir / f"template_{i}.npy")

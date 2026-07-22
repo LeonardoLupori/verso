@@ -385,6 +385,28 @@ def test_quantify_intensity_writes_csv(tmp_path):
     assert (folders[0] / "intensity.csv").exists()
 
 
+def test_quantify_reports_progress_per_section(tmp_path):
+    """``on_progress`` counts across the whole run, pooled and per-slice alike."""
+    project, pdir, atlas = _make_project(tmp_path)
+
+    pooled: list[tuple[int, int, str]] = []
+    quantify_intensity(
+        project, project_dir=pdir, atlas=atlas, on_progress=lambda *a: pooled.append(a)
+    )
+    assert [(d, t) for d, t, _ in pooled] == [(0, 2), (1, 2)]
+    assert len({name for *_, name in pooled}) == 2
+
+    per: list[tuple[int, int, str]] = []
+    quantify_intensity(
+        project,
+        project_dir=pdir,
+        atlas=atlas,
+        options=QuantifyOptions(per_slice=True),
+        on_progress=lambda *a: per.append(a),
+    )
+    assert [(d, t) for d, t, _ in per] == [(0, 2), (1, 2)]
+
+
 def test_per_slice_sums_match_pooled(tmp_path):
     project, pdir, atlas = _make_project(tmp_path)
     pooled = quantify_intensity(project, project_dir=pdir, atlas=atlas)["regions"]

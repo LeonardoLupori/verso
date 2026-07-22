@@ -335,6 +335,12 @@ quantify_dots("…/project-verso.json", annotation="cells_ch1",
               intensity_channels=["cfos"], dot_diameter_px=3, options=…)
 ```
 
+All three entry points also take an optional `on_progress` callback, invoked as
+`on_progress(done, total, image_name)` before each section is processed (counted
+across the whole run, pooled or `per_slice`). The GUI passes the quantify job's
+progress signal so the dialog can show a real bar naming the current section;
+scripting callers can ignore it.
+
 `out_dir=None` returns records only (pipeline use); a path writes CSVs **and**
 returns them. With `per_slice=True` the return value is keyed by the **slugified
 unique image name** (each value the same shape as the pooled result), and CSVs are

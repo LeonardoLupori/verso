@@ -87,6 +87,8 @@ class AnnotationLoadWorker(QObject):
 
 class BatchMaskWorker(QObject):
     done = pyqtSignal(int, list)
+    # (sections finished, sections total, name of the section now being processed)
+    progress = pyqtSignal(int, int, str)
 
     def __init__(self, sections: list, working_scale: float) -> None:
         super().__init__()
@@ -104,7 +106,9 @@ class BatchMaskWorker(QObject):
         from verso.engine.io.image_io import ensure_working_copy
         from verso.engine.preprocessing import detect_foreground
 
-        for section in self._sections:
+        total = len(self._sections)
+        for done, section in enumerate(self._sections):
+            self.progress.emit(done, total, Path(section.original_path).name)
             try:
                 image = ensure_working_copy(section, self._working_scale)
                 if image is None:
@@ -114,6 +118,7 @@ class BatchMaskWorker(QObject):
                 completed += 1
             except Exception as exc:
                 errors.append(f"{Path(section.original_path).name}: {exc}")
+        self.progress.emit(total, total, "")
         self.done.emit(completed, errors)
 
 
@@ -128,6 +133,8 @@ class AutoCPWorker(QObject):
     """
 
     done = pyqtSignal(int, list)
+    # (sections finished, sections total, name of the section now being processed)
+    progress = pyqtSignal(int, int, str)
 
     def __init__(
         self,
@@ -149,14 +156,29 @@ class AutoCPWorker(QObject):
     def run(self) -> None:
         from verso.engine.elastix import prepare_registration_inputs
 
+        total = len(self._sections)
+        names = {s.id: Path(s.original_path).name for s in self._sections}
+
+        def on_prepare(done: int, section) -> None:
+            # Loading images + slicing the atlas is a visible share of the run,
+            # so it gets its own pass over the same 0..total range.
+            self.progress.emit(done, total, f"{Path(section.original_path).name} (loading)")
+
+        def on_register(done: int, n: int, section_id: str) -> None:
+            self.progress.emit(done, n, names.get(section_id, section_id))
+
         try:
             inputs, errors = prepare_registration_inputs(
-                self._sections, self._atlas, self._working_scale
+                self._sections, self._atlas, self._working_scale, on_progress=on_prepare
             )
             if inputs:
-                results, gen_errors = self._worker.generate(inputs, self._atlas.shape, self._params)
+                self.progress.emit(0, len(inputs), names.get(inputs[0]["id"], ""))
+                results, gen_errors = self._worker.generate(
+                    inputs, self._atlas.shape, self._params, on_progress=on_register
+                )
                 self.results = results
                 errors = errors + gen_errors
+            self.progress.emit(total, total, "")
             self.done.emit(len(self.results), errors)
         except Exception as exc:
             self.done.emit(0, [str(exc)])
@@ -165,22 +187,25 @@ class AutoCPWorker(QObject):
 class QuantifyWorker(QObject):
     """Runs a quantification call off the UI thread.
 
-    Takes a zero-argument ``run_fn`` (a closure over the chosen
-    ``quantify_*`` function and its arguments). Emits the result on ``done`` or the
-    error message on ``error`` (precondition failures raise ``QuantificationError``,
+    Takes a ``run_fn`` (a closure over the chosen ``quantify_*`` function and its
+    arguments) that accepts one argument: a ``(done, total, name)`` progress
+    callback to hand the engine. Emits the result on ``done`` or the error
+    message on ``error`` (precondition failures raise ``QuantificationError``,
     whose message is user-facing).
     """
 
     done = pyqtSignal(object)  # result dict
     error = pyqtSignal(str)
+    # (sections finished, sections total, name of the section now being processed)
+    progress = pyqtSignal(int, int, str)
 
-    def __init__(self, run_fn: Callable[[], object]) -> None:
+    def __init__(self, run_fn: Callable[[Callable[[int, int, str], None]], object]) -> None:
         super().__init__()
         self._run_fn = run_fn
 
     def run(self) -> None:
         try:
-            self.done.emit(self._run_fn())
+            self.done.emit(self._run_fn(self.progress.emit))
         except Exception as exc:  # QuantificationError + any I/O failure
             self.error.emit(str(exc))
 
@@ -189,8 +214,8 @@ class JobWorker(Protocol):
     """Structural type for workers driven by :class:`BackgroundJob`.
 
     Satisfied by any ``QObject`` exposing a ``done`` signal and a ``run`` slot
-    (the three workers above). An optional ``error`` signal is discovered at
-    runtime via ``getattr``, so it is not part of the protocol.
+    (the three workers above). Optional ``error`` and ``progress`` signals are
+    discovered at runtime via ``getattr``, so they are not part of the protocol.
 
     ``done`` is declared as a read-only property returning ``pyqtSignal`` —
     the *declared* type of each concrete worker's ``done = pyqtSignal(...)``
@@ -220,6 +245,11 @@ class BackgroundJob[W: JobWorker]:
     dialog teardown. The worker must expose a ``done`` signal; an optional
     ``error`` signal is routed to quit (and to ``on_error`` if given) too.
 
+    A worker may also expose an optional ``progress(done, total, name)`` signal
+    (see :class:`BatchMaskWorker`). When it does, the dialog switches from the
+    indeterminate busy bar to a real 0..total bar and its label names the section
+    currently being worked on.
+
     Pass ``silent=True`` for a job with no progress dialog — used when the work
     should run without the user noticing (e.g. loading annotations on project
     open); ``title``/``message``/``modal``/``min_width`` are then ignored.
@@ -240,6 +270,7 @@ class BackgroundJob[W: JobWorker]:
         self._thread = QThread(parent)
         worker.moveToThread(self._thread)
 
+        self._message = message
         self._progress: QProgressDialog | None = None
         if not silent:
             progress = QProgressDialog(message, "", 0, 0, parent)
@@ -273,6 +304,9 @@ class BackgroundJob[W: JobWorker]:
         done = cast(pyqtBoundSignal, worker.done)
         done.connect(on_done)
         done.connect(thread.quit)
+        progress = getattr(worker, "progress", None)
+        if progress is not None and self._progress is not None:
+            progress.connect(self._on_progress)
         error = getattr(worker, "error", None)
         if error is not None:
             if on_error is not None:
@@ -292,6 +326,26 @@ class BackgroundJob[W: JobWorker]:
         """Quit the worker thread and block until it has finished."""
         self._thread.quit()
         self._thread.wait()
+
+    def _on_progress(self, done: int, total: int, name: str) -> None:
+        """Show ``done``/``total`` and the current section in the dialog.
+
+        Queued from the worker thread, so this runs on the UI thread. ``name``
+        is empty on the final tick (nothing left to name).
+        """
+        dialog = self._progress
+        if dialog is None or total <= 0:
+            return
+        if dialog.maximum() != total:
+            dialog.setMaximum(total)
+        dialog.setValue(min(done, total))
+        if total == 1:
+            # Single-section run: naming the section adds nothing over the message.
+            return
+        # The bar itself carries "how far along"; the label only names the
+        # section currently being worked on.
+        if name:
+            dialog.setLabelText(f"{self._message}\n{name}" if self._message else name)
 
     def _teardown(self) -> None:
         if self._progress is not None:
