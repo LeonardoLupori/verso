@@ -66,6 +66,7 @@ def composite_channels(
 
     For each visible :class:`~verso.engine.model.project.ChannelSpec`:
       * apply an ``imadjust([0, scale], [0, 1])`` brightness boost,
+      * apply a ``gamma`` correction (``out = 255·(in/255)**gamma``; 1 = linear),
       * tint the resulting plane by the spec's RGB color,
       * max-blend into the output (matches Fiji "Composite" mode and avoids
         over-saturation).
@@ -101,6 +102,9 @@ def composite_channels(
             continue
         plane = image[:, :, i].astype(np.float32) / min(scale, 1.0)
         np.clip(plane, 0, 255, out=plane)
+        gamma = float(getattr(spec, "gamma", 1.0))
+        if gamma > 0 and gamma != 1.0:
+            plane = 255.0 * np.power(plane / 255.0, gamma)
         for k in range(3):
             tinted = plane * (spec.color[k] / 255.0)
             np.maximum(out[:, :, k], tinted, out=out[:, :, k])
@@ -111,8 +115,8 @@ def composite_channels(
 def channel_lut(spec) -> np.ndarray:
     """Return a ``(256, 4)`` uint8 RGBA lookup table for a channel spec.
 
-    Encodes the same ``clip(plane / scale, 0, 255) × (color / 255)`` transform
-    that ``composite_channels`` applies per pixel, but precomputed for every
+    Encodes the same ``gamma(clip(plane / scale, 0, 255)) × (color / 255)``
+    transform that ``composite_channels`` applies per pixel, but precomputed for every
     possible uint8 input value. Used by the GUI canvas to feed pyqtgraph's
     ``ImageItem.setLookupTable``, so brightness/color changes become a
     1 KB table swap instead of a full image recomposite.
@@ -120,6 +124,9 @@ def channel_lut(spec) -> np.ndarray:
     scale = max(float(spec.scale), 1e-6)
     intensities = np.arange(256, dtype=np.float32)
     luminance = np.clip(intensities / min(scale, 1.0), 0.0, 255.0)
+    gamma = float(getattr(spec, "gamma", 1.0))
+    if gamma > 0 and gamma != 1.0:
+        luminance = 255.0 * np.power(luminance / 255.0, gamma)
     color = np.asarray(spec.color, dtype=np.float32) / 255.0
     rgb = np.clip(luminance[:, None] * color[None, :], 0.0, 255.0).astype(np.uint8)
     alpha = np.full((256, 1), 255, dtype=np.uint8)

@@ -35,10 +35,11 @@ class BrightnessDialog(QDialog):
             Qt.WindowType.Tool | Qt.WindowType.WindowCloseButtonHint | Qt.WindowType.WindowTitleHint
         )
         self.setModal(False)
-        self.setMinimumWidth(320)
+        self.setMinimumWidth(380)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(8)
 
         self._controls = BrightnessControls(self)
         self._controls.channels_changed.connect(self.channels_changed)

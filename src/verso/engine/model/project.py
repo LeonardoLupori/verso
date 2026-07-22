@@ -64,6 +64,7 @@ class ChannelSpec:
     name: str
     color: tuple[int, int, int] = (255, 255, 255)
     scale: float = 1.0
+    gamma: float = 1.0
     visible: bool = True
 
     def to_dict(self) -> dict[str, Any]:
@@ -76,6 +77,7 @@ class ChannelSpec:
             name=d["name"],
             color=(int(color[0]), int(color[1]), int(color[2])),
             scale=float(d.get("scale", 1.0)),
+            gamma=float(d.get("gamma", 1.0)),
             visible=bool(d.get("visible", True)),
         )
 

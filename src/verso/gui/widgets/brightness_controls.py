@@ -13,6 +13,7 @@ from PyQt6.QtCore import QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QIcon, QKeyEvent, QMouseEvent, QPixmap
 from PyQt6.QtWidgets import (
     QColorDialog,
+    QDoubleSpinBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -26,6 +27,14 @@ from PyQt6.QtWidgets import (
 from verso.engine.model.project import ChannelSpec
 
 _ICONS_DIR = Path(__file__).parent.parent / "icons"
+
+# Fixed column widths so the header labels line up over the row controls even
+# though every row is its own independent HBox (not a shared grid).
+_EYE_W = 22
+_NAME_W = 104
+_COLOR_W = 20
+_GAMMA_W = 62
+_ROW_SPACING = 6
 
 # Inline name editor styled after the overview table's slice-index chip
 # (see ``_SliceIndexDelegate`` in views/overview_view.py): a faint outline at
@@ -50,6 +59,9 @@ QLineEdit:focus {
     color: #ffffff;
 }
 """
+
+# Muted column titles above the channel rows.
+_HEADER_QSS = "color: #8a8a8a; font-size: 10px; font-weight: 600;"
 
 
 def _eye_icon(visible: bool) -> QIcon:
@@ -80,8 +92,7 @@ class _EditableName(QLineEdit):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip(f"{name}\nDouble-click to rename")
         self.setStyleSheet(_NAME_EDIT_QSS)
-        self.setMinimumWidth(60)
-        self.setMaximumWidth(120)
+        self.setFixedWidth(_NAME_W)
         self.editingFinished.connect(self._finish_edit)
 
     def set_name(self, name: str) -> None:
@@ -161,17 +172,18 @@ class _ChannelRow(QWidget):
             name=spec.name,
             color=spec.color,
             scale=spec.scale,
+            gamma=spec.gamma,
             visible=spec.visible,
         )
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
+        layout.setSpacing(_ROW_SPACING)
 
         self._visible_btn = QToolButton()
         self._visible_btn.setCheckable(True)
         self._visible_btn.setChecked(self._spec.visible)
-        self._visible_btn.setFixedSize(22, 22)
+        self._visible_btn.setFixedSize(_EYE_W, _EYE_W)
         self._visible_btn.setIconSize(QSize(16, 16))
         self._visible_btn.setToolTip("Toggle channel visibility")
         self._visible_btn.toggled.connect(self._on_visible)
@@ -183,7 +195,11 @@ class _ChannelRow(QWidget):
         layout.addWidget(self._name_edit)
 
         self._color_btn = QPushButton()
-        self._color_btn.setFixedSize(20, 20)
+        self._color_btn.setFixedSize(_COLOR_W, _COLOR_W)
+        # Not a dialog default button: otherwise Return from the name field or
+        # the gamma spin-box would pop the colour picker.
+        self._color_btn.setAutoDefault(False)
+        self._color_btn.setDefault(False)
         self._color_btn.setToolTip("Pick channel color")
         self._color_btn.clicked.connect(self._on_color)
         self._refresh_color_btn()
@@ -196,11 +212,23 @@ class _ChannelRow(QWidget):
         self._slider.sliderReleased.connect(self._on_slider_released)
         layout.addWidget(self._slider, stretch=1)
 
+        self._gamma_spin = QDoubleSpinBox()
+        self._gamma_spin.setRange(0.1, 5.0)
+        self._gamma_spin.setSingleStep(0.1)
+        self._gamma_spin.setDecimals(2)
+        self._gamma_spin.setFixedWidth(_GAMMA_W)
+        self._gamma_spin.setKeyboardTracking(False)
+        self._gamma_spin.setValue(self._spec.gamma)
+        self._gamma_spin.setToolTip("Gamma (1 = linear; <1 brightens shadows, >1 darkens)")
+        self._gamma_spin.valueChanged.connect(self._on_gamma)
+        layout.addWidget(self._gamma_spin)
+
     def spec(self) -> ChannelSpec:
         return ChannelSpec(
             name=self._spec.name,
             color=self._spec.color,
             scale=self._spec.scale,
+            gamma=self._spec.gamma,
             visible=self._spec.visible,
         )
 
@@ -214,6 +242,7 @@ class _ChannelRow(QWidget):
             name=spec.name,
             color=spec.color,
             scale=spec.scale,
+            gamma=spec.gamma,
             visible=spec.visible,
         )
         target = round(max(1.0, min(100.0, self._spec.scale * 100.0)))
@@ -221,6 +250,10 @@ class _ChannelRow(QWidget):
             self._slider.blockSignals(True)
             self._slider.setValue(target)
             self._slider.blockSignals(False)
+        if self._gamma_spin.value() != self._spec.gamma:
+            self._gamma_spin.blockSignals(True)
+            self._gamma_spin.setValue(self._spec.gamma)
+            self._gamma_spin.blockSignals(False)
         if self._visible_btn.isChecked() != self._spec.visible:
             self._visible_btn.blockSignals(True)
             self._visible_btn.setChecked(self._spec.visible)
@@ -274,6 +307,12 @@ class _ChannelRow(QWidget):
     def _on_slider_released(self) -> None:
         self.committed.emit(self._index, self.spec())
 
+    def _on_gamma(self, value: float) -> None:
+        self._spec.gamma = float(value)
+        spec = self.spec()
+        self.changed.emit(self._index, spec)
+        self.committed.emit(self._index, spec)
+
     def _on_name_committed(self, proposed: str) -> None:
         # Defer to the parent, which sees all channels and can deduplicate.
         self.rename_requested.emit(self._index, proposed)
@@ -297,11 +336,40 @@ class BrightnessControls(QWidget):
 
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
-        self._layout.setSpacing(2)
+        self._layout.setSpacing(6)
+
+        self._header = self._build_header()
+        self._header.setVisible(False)
+        self._layout.addWidget(self._header)
 
         self._empty_label = QLabel("No channels")
         self._empty_label.setStyleSheet("color: #888; font-style: italic;")
         self._layout.addWidget(self._empty_label)
+
+    def _build_header(self) -> QWidget:
+        """Column-title strip whose fixed widths line up over the row controls."""
+        header = QWidget()
+        hl = QHBoxLayout(header)
+        hl.setContentsMargins(0, 0, 0, 0)
+        hl.setSpacing(_ROW_SPACING)
+
+        spacer = QWidget()
+        spacer.setFixedWidth(_EYE_W + _NAME_W + _COLOR_W + 2 * _ROW_SPACING)
+        hl.addWidget(spacer)
+
+        brightness = QLabel("Brightness")
+        brightness.setStyleSheet(_HEADER_QSS)
+        brightness.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        hl.addWidget(brightness, stretch=1)
+
+        gamma = QLabel("Gamma")
+        gamma.setStyleSheet(_HEADER_QSS)
+        gamma.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        gamma.setFixedWidth(_GAMMA_W)
+        gamma.setToolTip("Gamma (1 = linear; <1 brightens shadows, >1 darkens)")
+        hl.addWidget(gamma)
+
+        return header
 
     def set_channels(self, channels: list[ChannelSpec]) -> None:
         new_specs = [
@@ -309,6 +377,7 @@ class BrightnessControls(QWidget):
                 name=c.name,
                 color=c.color,
                 scale=c.scale,
+                gamma=c.gamma,
                 visible=c.visible,
             )
             for c in channels
@@ -335,6 +404,7 @@ class BrightnessControls(QWidget):
         self._rows.clear()
 
         self._empty_label.setVisible(not self._channels)
+        self._header.setVisible(bool(self._channels))
         for i, spec in enumerate(self._channels):
             row = _ChannelRow(i, spec)
             row.changed.connect(self._on_row_changed)
@@ -349,6 +419,7 @@ class BrightnessControls(QWidget):
                 name=c.name,
                 color=c.color,
                 scale=c.scale,
+                gamma=c.gamma,
                 visible=c.visible,
             )
             for c in self._channels

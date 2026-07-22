@@ -196,7 +196,7 @@ def _make_project() -> Project:
 
 
 def test_channel_spec_round_trip():
-    c = ChannelSpec(name="DAPI", color=(0, 100, 255), scale=0.6, visible=False)
+    c = ChannelSpec(name="DAPI", color=(0, 100, 255), scale=0.6, gamma=1.8, visible=False)
     assert ChannelSpec.from_dict(c.to_dict()) == c
 
 
@@ -204,7 +204,14 @@ def test_channel_spec_defaults():
     c = ChannelSpec(name="GFP")
     assert c.color == (255, 255, 255)
     assert c.scale == 1.0
+    assert c.gamma == 1.0
     assert c.visible is True
+
+
+def test_channel_spec_gamma_default_on_legacy_dict():
+    # A project saved before gamma existed omits the key; it should default to 1.
+    c = ChannelSpec.from_dict({"name": "DAPI", "color": [0, 0, 255], "scale": 0.5})
+    assert c.gamma == 1.0
 
 
 def test_project_round_trip_in_memory():

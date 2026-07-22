@@ -216,6 +216,26 @@ def test_channel_lut_tints_to_color() -> None:
     np.testing.assert_array_equal(lut[:, 0], np.arange(256, dtype=np.uint8))
 
 
+def test_channel_lut_gamma_curves_midtones() -> None:
+    # gamma > 1 darkens midtones, gamma < 1 brightens them; endpoints stay fixed.
+    dark = channel_lut(ChannelSpec(name="ch0", color=(255, 255, 255), scale=1.0, gamma=2.0))
+    bright = channel_lut(ChannelSpec(name="ch0", color=(255, 255, 255), scale=1.0, gamma=0.5))
+    assert dark[0, 0] == 0 and dark[255, 0] == 255
+    assert bright[0, 0] == 0 and bright[255, 0] == 255
+    assert dark[128, 0] < 128 < bright[128, 0]
+    # gamma=2.0: out = 255 * (128/255)**2 ≈ 64
+    assert dark[128, 0] == round(255.0 * (128.0 / 255.0) ** 2.0)
+
+
+def test_channel_lut_gamma_matches_composite_channels() -> None:
+    plane = np.arange(256, dtype=np.uint8).reshape(16, 16)
+    image = plane[..., np.newaxis]
+    spec = ChannelSpec(name="ch0", color=(0, 200, 100), scale=0.6, gamma=1.7)
+    expected = composite_channels(image, [spec])
+    via_lut = channel_lut(spec)[plane][..., :3]
+    np.testing.assert_array_equal(via_lut, expected)
+
+
 def test_channel_lut_matches_composite_channels_for_single_channel() -> None:
     # The LUT path must produce the same RGB image as composite_channels does
     # for a single-channel input — that is the property the GUI relies on.
