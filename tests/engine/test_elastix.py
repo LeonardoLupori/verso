@@ -269,3 +269,36 @@ def test_empty_mask_is_not_passed_to_elastix(monkeypatch):
     tissue_mask[40:60, 50:70] = True
     elastix.auto_control_points(section, template, _CORONAL_25UM, _SHAPE_25UM, mask=tissue_mask)
     assert captured and "fixed_mask" in captured[-1]
+
+
+# ---------------------------------------------------------------------------
+# Batch progress reporting
+# ---------------------------------------------------------------------------
+
+
+def test_prepare_registration_inputs_reports_progress_per_section():
+    """``on_progress`` fires once per section, in order, even when one fails."""
+    from types import SimpleNamespace
+
+    sections = [
+        SimpleNamespace(
+            id=f"s{i}",
+            original_path=f"/tmp/slice_{i}.tif",
+            # Unanchored: prepare records an error and skips the image load, so
+            # this exercises the progress callback without touching the disk.
+            alignment=SimpleNamespace(is_anchored=False, current_anchoring=[0.0] * 9),
+        )
+        for i in range(3)
+    ]
+
+    seen: list[tuple[int, str]] = []
+    inputs, errors = elastix.prepare_registration_inputs(
+        sections,
+        atlas=None,
+        working_scale=1.0,
+        on_progress=lambda done, section: seen.append((done, section.id)),
+    )
+
+    assert seen == [(0, "s0"), (1, "s1"), (2, "s2")]
+    assert inputs == []
+    assert len(errors) == 3

@@ -33,11 +33,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from verso.engine.anchoring import is_anchored
 from verso.engine.model.alignment import Alignment, AlignmentStatus, ControlPoint, WarpState
 from verso.engine.model.project import AtlasRef, Project, Section
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 # ---------------------------------------------------------------------------
 # Atlas name mapping: brainglobe → VisuAlign target identifiers
@@ -355,7 +358,11 @@ def _export_image_filename(section) -> str:
     return f"thumbnails/{p.name}-thumb.png"
 
 
-def write_section_pngs(project: Project, output_dir: Path) -> None:
+def write_section_pngs(
+    project: Project,
+    output_dir: Path,
+    on_progress: Callable[[int, int, str], None] | None = None,
+) -> None:
     """Write RGB PNG copies of each section's working image into *output_dir*.
 
     Only sections whose PNG is not already present are written.  Uses the
@@ -364,6 +371,9 @@ def write_section_pngs(project: Project, output_dir: Path) -> None:
     Args:
         project: VERSO project whose sections will be exported.
         output_dir: Folder that will receive the PNG files.
+        on_progress: Called as ``(done, total, image_name)`` before each section
+            (including ones skipped as already present), for driving a progress
+            bar. Optional.
     """
     import numpy as np
     from PIL import Image
@@ -373,8 +383,11 @@ def write_section_pngs(project: Project, output_dir: Path) -> None:
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    for section in project.sections:
+    total = len(project.sections)
+    for done, section in enumerate(project.sections):
         png_path = output_dir / _export_image_filename(section)
+        if on_progress is not None:
+            on_progress(done, total, png_path.name)
         png_path.parent.mkdir(parents=True, exist_ok=True)
         if png_path.exists():
             continue
