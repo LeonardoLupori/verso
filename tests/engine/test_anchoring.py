@@ -11,6 +11,7 @@ from verso.engine.anchoring import (
     clamp_inplane_rotation,
     clamp_rotation_to_max_tilt,
     flip_anchoring_horizontal,
+    infer_interpolation_axis,
     initialize_default_anchorings,
     interpolate_anchorings,
     make_atlas_sample_grid,
@@ -64,6 +65,21 @@ def test_anchoring_round_trip():
 def test_anchoring_to_vectors_wrong_length():
     with pytest.raises(ValueError):
         anchoring_to_vectors([1.0] * 8)
+
+
+def test_infer_interpolation_axis_recovers_plane():
+    # u/v span the in-plane axes; the slicing axis is the perpendicular one.
+    coronal = [10, 10, 10, 5, 0, 0, 0, 0, 5]  # u=ML, v=DV → normal AP (1)
+    sagittal = [10, 10, 10, 0, 5, 0, 0, 0, 5]  # u=AP, v=DV → normal ML (0)
+    horizontal = [10, 10, 10, 5, 0, 0, 0, 5, 0]  # u=ML, v=AP → normal DV (2)
+    assert infer_interpolation_axis([coronal]) == 1
+    assert infer_interpolation_axis([sagittal]) == 0
+    assert infer_interpolation_axis([horizontal]) == 2
+    # A whole series votes together; unanchored/degenerate planes are ignored.
+    assert infer_interpolation_axis([sagittal, sagittal, [0.0] * 9]) == 0
+    # Nothing usable → the default (coronal / AP).
+    assert infer_interpolation_axis([[0.0] * 9]) == 1
+    assert infer_interpolation_axis([], default=2) == 2
 
 
 # ---------------------------------------------------------------------------

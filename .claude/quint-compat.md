@@ -85,6 +85,19 @@ BrainGlobe annotation with AP/DV *array-reversed* (`annotation[::-1, ::-1, :]`, 
 voxel (verified 100% vs the stock `.cutlas` with `N−1`, ~93.5% with `N`). The function
 is self-inverse so it also converts QuickNII → BrainGlobe.
 
+### Slicing plane is not stored — it is inferred
+
+QuickNII/VisuAlign JSON has **no field for the cutting plane** (coronal / sagittal /
+horizontal). The plane is implicit in the anchoring: the `u`/`v` vectors span the two
+in-plane atlas axes, so the slicing axis is the third — the direction of the plane
+normal `u × v`. On load, `load_quicknii()` recovers it via
+`infer_interpolation_axis()` (dominant axis of the summed unit normals across the
+series) and sets `Project.interpolation_axis`, so an imported project is complete
+(right orientation + interpolation axis) instead of always defaulting to coronal/AP.
+The inference is convention-independent: the BrainGlobe↔QuickNII AP/DV sign flip
+negates normal components without changing which axis dominates. The Import dialog
+presets its editable "Slicing orientation" combo from this and can override it.
+
 ### QuickNII interpolation (internal)
 
 QuickNII converts anchorings to an **unpacked 11-component** format for interpolation:

@@ -17,6 +17,7 @@ SCHEMA_VERSION = "1.0"
 # Anchoring voxel space ordering is (LR=0, AP=1, DV=2); "ML" is the storage name
 # for the mediolateral / LR axis.
 AXIS_NAME_TO_INDEX: dict[str, int] = {"AP": 1, "ML": 0, "DV": 2}
+AXIS_INDEX_TO_NAME: dict[int, str] = {v: k for k, v in AXIS_NAME_TO_INDEX.items()}
 # Slicing orientation used in the New Project dialog. Each orientation declares
 # which atlas axis the cutting series runs along (= which axis interpolation
 # should target).
@@ -24,6 +25,10 @@ SLICING_ORIENTATION_TO_AXIS: dict[str, str] = {
     "coronal": "AP",
     "sagittal": "ML",
     "horizontal": "DV",
+}
+# Reverse of the above: atlas axis name → slicing-orientation label.
+AXIS_TO_SLICING_ORIENTATION: dict[str, str] = {
+    v: k for k, v in SLICING_ORIENTATION_TO_AXIS.items()
 }
 
 

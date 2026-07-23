@@ -7,7 +7,7 @@ vector-format spec.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 
 import numpy as np
 
@@ -49,6 +49,48 @@ def anchoring_to_vectors(
 def vectors_to_anchoring(o: np.ndarray, u: np.ndarray, v: np.ndarray) -> list[float]:
     """Pack origin and direction vectors back into a 9-element anchoring list."""
     return np.concatenate([o, u, v]).tolist()
+
+
+def infer_interpolation_axis(
+    anchorings: Iterable[Sequence[float] | None],
+    default: int = 1,
+) -> int:
+    """Infer the atlas voxel axis a section series is sliced along.
+
+    The slicing axis is the atlas axis perpendicular to the section planes — the
+    one the anchoring ``u``/``v`` vectors do *not* span. For each anchored section
+    the plane normal ``u × v`` points along that axis; the axis with the largest
+    absolute normal component, accumulated as unit normals across the series, wins.
+    Returned in anchoring order: ``0`` = ML (sagittal), ``1`` = AP (coronal),
+    ``2`` = DV (horizontal).
+
+    QuickNII/VisuAlign do not record the cutting plane explicitly, so this recovers
+    it from the anchoring geometry. It is convention-independent: the
+    BrainGlobe↔QuickNII AP/DV sign flip negates normal components without changing
+    which axis dominates (see :func:`~verso.engine.io.quint_io._to_quicknii_convention`).
+
+    Args:
+        anchorings: 9-element anchoring vectors. Unanchored (all-zero) or
+            degenerate (zero-area) planes are ignored.
+        default: Axis index returned when no usable plane is found (``1`` = AP,
+            i.e. coronal — VERSO's default orientation).
+
+    Returns:
+        The slicing axis index ``0``, ``1``, or ``2``.
+    """
+    accum = np.zeros(3, dtype=np.float64)
+    for anchoring in anchorings:
+        if not is_anchored(anchoring):
+            continue
+        _o, u, v = anchoring_to_vectors(list(anchoring))
+        normal = np.cross(u, v)
+        length = float(np.linalg.norm(normal))
+        if length < 1e-9:
+            continue
+        accum += np.abs(normal) / length
+    if not accum.any():
+        return default
+    return int(np.argmax(accum))
 
 
 # ---------------------------------------------------------------------------

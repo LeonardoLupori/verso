@@ -5,7 +5,12 @@ from pathlib import Path
 
 from PIL import Image
 
-from verso.engine.io.quint_import import build_quint_project, match_registration_images
+from verso.engine.io.quint_import import (
+    build_quint_project,
+    filenames_are_thumbnails,
+    match_originals_by_similarity,
+    match_registration_images,
+)
 from verso.engine.model.alignment import AlignmentStatus
 from verso.engine.model.project import Project
 
@@ -57,6 +62,44 @@ def test_match_is_extension_tolerant_and_reports_unmatched(tmp_path: Path):
     assert set(matched) == {0}
     assert matched[0].name == "IMG_0001.tif"
     assert unmatched == [(1, "IMG_0002.png")]
+
+
+def test_filenames_are_thumbnails_detects_quint_convention():
+    assert filenames_are_thumbnails(["thumbnails/IMG_0001-thumb.png", "thumbnails/IMG_2-thumb.png"])
+    assert filenames_are_thumbnails(["IMG_0001-thumb.png"])  # -thumb stem, no folder
+    assert not filenames_are_thumbnails(["IMG_0001.png", "IMG_0002.png"])  # bare QuickNII
+    assert not filenames_are_thumbnails(["/abs/path/IMG_0001.png"])  # DeepSlice absolute
+    assert not filenames_are_thumbnails([])
+
+
+def test_match_originals_by_similarity_pairs_thumbnails_to_originals():
+    """Thumbnail reference names map to their most similar original, one-to-one."""
+    refs = ["thumbnails/AL1A_002-thumb.png", "thumbnails/AL1A_004-thumb.png"]
+    # Deliberately shuffled and differently-typed originals with matching stems.
+    candidates = [Path("scans/AL1A_004.tif"), Path("scans/AL1A_002.tif")]
+
+    matched = match_originals_by_similarity(refs, candidates)
+
+    assert matched[0].name == "AL1A_002.tif"  # -thumb stripped, stems align
+    assert matched[1].name == "AL1A_004.tif"
+
+
+def test_match_originals_by_similarity_is_unique_and_thresholded():
+    refs = ["S1-thumb.png", "S2-thumb.png", "S3-thumb.png"]
+    # Two clearly-related files and one unrelated: S3 stays unassigned, no reuse.
+    candidates = [Path("S1.tif"), Path("S2.tif"), Path("totally_unrelated_xyz.tif")]
+
+    matched = match_originals_by_similarity(refs, candidates)
+
+    assert matched[0].name == "S1.tif"
+    assert matched[1].name == "S2.tif"
+    assert 2 not in matched  # no candidate above the similarity floor
+    assert len({str(p) for p in matched.values()}) == len(matched)  # unique files
+
+
+def test_match_originals_by_similarity_empty_inputs():
+    assert match_originals_by_similarity([], [Path("a.tif")]) == {}
+    assert match_originals_by_similarity(["a-thumb.png"], []) == {}
 
 
 def test_match_searches_subfolders_and_strips_thumb_suffix(tmp_path: Path):
@@ -171,6 +214,25 @@ def test_build_resolves_cutlas_target(tmp_path: Path):
     first = project.sections[0].alignment
     assert first.status == AlignmentStatus.COMPLETE
     assert any(first.current_anchoring)  # convention conversion ran → non-zero plane
+
+
+def test_build_sets_and_overrides_interpolation_axis(tmp_path: Path):
+    """The imported project carries a slicing axis: inferred by default, overridable."""
+    json_path, matched = _matched(tmp_path)
+
+    inferred = build_quint_project(json_path, tmp_path / "p1", registration_paths=matched)
+    assert inferred.interpolation_axis in ("AP", "ML", "DV")
+
+    forced = build_quint_project(
+        json_path, tmp_path / "p2", registration_paths=matched, interpolation_axis="ML"
+    )
+    assert forced.interpolation_axis == "ML"
+
+    # An unknown override is ignored, keeping the inferred axis.
+    ignored = build_quint_project(
+        json_path, tmp_path / "p3", registration_paths=matched, interpolation_axis="nonsense"
+    )
+    assert ignored.interpolation_axis == inferred.interpolation_axis
 
 
 def test_build_saves_and_reloads(tmp_path: Path):

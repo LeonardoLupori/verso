@@ -25,13 +25,15 @@ load for backward compatibility but is never written.
 
 from __future__ import annotations
 
+import contextlib
 import json
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from verso.engine.anchoring import is_anchored
+from verso.engine.anchoring import infer_interpolation_axis, is_anchored
 from verso.engine.model.alignment import Alignment, AlignmentStatus, ControlPoint, WarpState
-from verso.engine.model.project import AtlasRef, Project, Section
+from verso.engine.model.project import AXIS_INDEX_TO_NAME, AtlasRef, Project, Section
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -177,6 +179,74 @@ def _control_points_to_markers(
 
 
 # ---------------------------------------------------------------------------
+# Document reading (JSON + QuickNII XML)
+# ---------------------------------------------------------------------------
+
+_ANCHORING_KEYS = ("ox", "oy", "oz", "ux", "uy", "uz", "vx", "vy", "vz")
+
+
+def _parse_anchoring_query(text: str) -> list[float]:
+    """Parse a QuickNII XML anchoring string (``ox=..&oy=..&...``) into 9 floats.
+
+    Components missing or unparseable default to ``0.0`` so a bare/partial
+    anchoring degrades to "unaligned" rather than raising.
+    """
+    values: dict[str, float] = {}
+    for pair in text.split("&"):
+        key, _, val = pair.partition("=")
+        key = key.strip()
+        if key in _ANCHORING_KEYS and val.strip():
+            with contextlib.suppress(ValueError):
+                values[key] = float(val)
+    return [values.get(k, 0.0) for k in _ANCHORING_KEYS]
+
+
+def parse_quicknii_xml(path: Path) -> dict[str, Any]:
+    """Parse a QuickNII native ``.xml`` alignment into the JSON document shape.
+
+    QuickNII stores one ``<slice>`` per section under a ``<series>`` root, with the
+    9-component plane packed into the ``anchoring`` attribute as an
+    ``ox=..&oy=..&...`` query string (bare ``<slice>`` entries are unaligned; the
+    XML entity ``&amp;`` is decoded by the parser). Returns
+    ``{"name", "target", "slices": [...]}`` with each slice carrying
+    ``filename``/``nr``/``width``/``height``/``anchoring`` (a 9-float list) — i.e.
+    exactly what :func:`load_quicknii` consumes, so XML and JSON share one path.
+    QuickNII XML has no warp-marker equivalent, so no ``markers`` are produced.
+    """
+    root = ET.fromstring(Path(path).read_text(encoding="utf-8"))
+    slices: list[dict[str, Any]] = []
+    for el in root.findall("slice"):
+        entry: dict[str, Any] = {
+            "filename": el.get("filename", ""),
+            "nr": int(el.get("nr") or 0),
+            "width": int(el.get("width") or 0),
+            "height": int(el.get("height") or 0),
+        }
+        anchoring = el.get("anchoring")
+        if anchoring:
+            entry["anchoring"] = _parse_anchoring_query(anchoring)
+        slices.append(entry)
+    return {
+        "name": root.get("name", Path(path).stem),
+        "target": root.get("target", ""),
+        "slices": slices,
+    }
+
+
+def read_quint_document(path: Path) -> dict[str, Any]:
+    """Read a QuickNII/VisuAlign/DeepSlice alignment file as a document dict.
+
+    Dispatches on extension: ``.xml`` → :func:`parse_quicknii_xml`, anything else
+    → JSON. This is the single entry point every loader uses so QuickNII XML and
+    the JSON variants are accepted uniformly.
+    """
+    path = Path(path)
+    if path.suffix.lower() == ".xml":
+        return parse_quicknii_xml(path)
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+# ---------------------------------------------------------------------------
 # Public load functions
 # ---------------------------------------------------------------------------
 
@@ -203,7 +273,7 @@ def load_quicknii(path: Path, atlas_name: str = "allen_mouse_25um") -> Project:
     Returns:
         A :class:`Project` with one :class:`Section` per entry in the JSON.
     """
-    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    data = read_quint_document(Path(path))
     atlas_name = _resolve_atlas_name(data.get("target", atlas_name))
     project_name = data.get("name", Path(path).stem)
 
@@ -216,11 +286,13 @@ def load_quicknii(path: Path, atlas_name: str = "allen_mouse_25um") -> Project:
     bg_shape = _BG_ATLAS_SHAPE.get(atlas_name)
 
     sections: list[Section] = []
+    anchorings: list[list[float]] = []
     for i, raw in enumerate(raw_sections):
         parsed = _parse_section_quicknii(raw)
         anchoring = parsed["anchoring"]
         if bg_shape is not None and any(anchoring):
             anchoring = _to_quicknii_convention(anchoring, bg_shape)
+        anchorings.append(anchoring)
         status = AlignmentStatus.COMPLETE if any(anchoring) else AlignmentStatus.NOT_STARTED
         # A COMPLETE import is a saved plane; __post_init__ mirrors it into
         # stored_anchoring (the persisted source of truth).
@@ -237,10 +309,16 @@ def load_quicknii(path: Path, atlas_name: str = "allen_mouse_25um") -> Project:
         )
         sections.append(section)
 
+    # QuickNII/VisuAlign do not record the cutting plane, but the anchoring
+    # geometry does — recover it so the imported project has the right slicing
+    # orientation (and interpolation axis) instead of always defaulting to coronal.
+    interpolation_axis = AXIS_INDEX_TO_NAME[infer_interpolation_axis(anchorings)]
+
     return Project(
         name=project_name,
         atlas=AtlasRef(name=atlas_name),
         sections=sections,
+        interpolation_axis=interpolation_axis,
     )
 
 
@@ -264,7 +342,7 @@ def load_visualign(
     """
     project = load_quicknii(path, atlas_name=atlas_name)
 
-    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    data = read_quint_document(Path(path))
     raw_sections = data.get("slices") or data.get("sections", [])
     for section, raw in zip(project.sections, raw_sections, strict=False):
         markers = raw.get("markers", [])

@@ -13,11 +13,11 @@ calls the shared folder/thumbnail machinery.
 
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -39,15 +39,26 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from verso.engine.anchoring import infer_interpolation_axis
 from verso.engine.io.image_io import (
     SUPPORTED_IMAGE_EXTENSIONS,
     image_dimensions,
     probe_channels,
 )
 from verso.engine.io.project_metadata import AtlasUnavailableError, populate_metadata
-from verso.engine.io.quint_import import build_quint_project, match_registration_images
-from verso.engine.io.quint_io import _BG_ATLAS_SHAPE, _resolve_atlas_name
-from verso.engine.model.project import Project
+from verso.engine.io.quint_import import (
+    build_quint_project,
+    filenames_are_thumbnails,
+    match_originals_by_similarity,
+    match_registration_images,
+)
+from verso.engine.io.quint_io import _BG_ATLAS_SHAPE, _resolve_atlas_name, read_quint_document
+from verso.engine.model.project import (
+    AXIS_INDEX_TO_NAME,
+    AXIS_TO_SLICING_ORIENTATION,
+    SLICING_ORIENTATION_TO_AXIS,
+    Project,
+)
 from verso.gui.dialogs.new_project import (
     _KNOWN_ATLASES,
     _TABLE_STYLE,
@@ -68,6 +79,13 @@ _COL_REG = 2
 _COL_ORIG = 3
 
 _LOCATE_HINT = "⚠  double-click to locate…"
+# Full-res column placeholders. "Not chosen yet" is deliberately calm (no warning
+# icon, muted colour) since it is the expected initial state; once the user has
+# started adding originals, a still-open section gets a gentle amber prompt.
+_ORIG_UNSET_HINT = "—"
+_ORIG_ASSIGN_HINT = "double-click to assign…"
+_AMBER = "#d9a441"
+_MUTED = "#888"
 
 
 class ImportQuintDialog(QDialog):
@@ -86,7 +104,12 @@ class ImportQuintDialog(QDialog):
         self._filenames: list[str] = []
         self._nrs: list[int] = []
         self._reg: dict[int, Path] = {}
+        # Full-resolution originals: a pool of user-added files (``_orig_files``),
+        # fuzzy-assigned to sections (``_orig``); ``_orig_manual`` marks sections
+        # the user pinned by hand so re-assignment leaves them alone.
         self._orig: dict[int, Path] = {}
+        self._orig_files: list[Path] = []
+        self._orig_manual: set[int] = set()
         self._atlas_known = False
 
         self._build_ui()
@@ -133,6 +156,15 @@ class ImportQuintDialog(QDialog):
         self._atlas_combo.setEnabled(False)
         form.addRow("Atlas:", self._atlas_combo)
 
+        # Slicing orientation is inferred from the alignment's anchoring geometry
+        # on load (QuickNII/VisuAlign do not store it), but stays editable so the
+        # user can correct a mis-inference — as in New Project.
+        self._orientation_combo = QComboBox()
+        self._orientation_combo.addItem("Coronal", "coronal")
+        self._orientation_combo.addItem("Sagittal", "sagittal")
+        self._orientation_combo.addItem("Horizontal", "horizontal")
+        form.addRow("Slicing orientation:", self._orientation_combo)
+
         layout.addWidget(info_box)
 
         # ── Alignment file ────────────────────────────────────────────
@@ -143,7 +175,9 @@ class ImportQuintDialog(QDialog):
         jh.setContentsMargins(0, 0, 0, 0)
         self._json_edit = QLineEdit()
         self._json_edit.setReadOnly(True)
-        self._json_edit.setPlaceholderText("Choose a QuickNII / VisuAlign / DeepSlice .json file…")
+        self._json_edit.setPlaceholderText(
+            "Choose a QuickNII / VisuAlign / DeepSlice .json or QuickNII .xml file…"
+        )
         json_btn = QPushButton("Browse…")
         json_btn.setFixedWidth(80)
         json_btn.clicked.connect(self._browse_json)
@@ -186,10 +220,10 @@ class ImportQuintDialog(QDialog):
         oh.addWidget(QLabel("Full-resolution images:"))
         self._orig_edit = QLineEdit()
         self._orig_edit.setReadOnly(True)
-        self._orig_edit.setPlaceholderText("Folder with the full-resolution originals…")
-        orig_btn = QPushButton("Browse…")
-        orig_btn.setFixedWidth(80)
-        orig_btn.clicked.connect(self._browse_originals)
+        self._orig_edit.setPlaceholderText("Add one original image file per section…")
+        orig_btn = QPushButton("Add images…")
+        orig_btn.setFixedWidth(96)
+        orig_btn.clicked.connect(self._add_originals)
         oh.addWidget(self._orig_edit)
         oh.addWidget(orig_btn)
         self._orig_row.setVisible(False)
@@ -251,16 +285,22 @@ class ImportQuintDialog(QDialog):
 
     def _browse_json(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
-            self, "Choose alignment file", "", "JSON files (*.json);;All files (*)"
+            self,
+            "Choose alignment file",
+            "",
+            "Alignment files (*.json *.xml);;JSON files (*.json);;"
+            "QuickNII XML (*.xml);;All files (*)",
         )
         if path:
             self._load_json(Path(path))
 
     def _load_json(self, path: Path) -> None:
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = read_quint_document(path)
         except Exception as exc:
-            QMessageBox.critical(self, "Cannot read file", f"Could not parse the JSON:\n\n{exc}")
+            QMessageBox.critical(
+                self, "Cannot read file", f"Could not parse the alignment file:\n\n{exc}"
+            )
             return
         raw_sections = data.get("slices")
         if raw_sections is None:
@@ -277,12 +317,37 @@ class ImportQuintDialog(QDialog):
         self._nrs = [int(s.get("nr", i + 1)) for i, s in enumerate(raw_sections)]
         self._reg.clear()
         self._orig.clear()
+        self._orig_files.clear()
+        self._orig_manual.clear()
         self._reg_edit.clear()
         self._orig_edit.clear()
+
+        # QuickNII/VisuAlign names images by paths relative to the JSON's own
+        # folder (e.g. "thumbnails/IMG-thumb.png"), so the registered images
+        # almost always sit right beside it. Auto-resolve them from the JSON's
+        # directory so the registration column fills itself in.
+        auto_reg, _ = match_registration_images(path, path.parent)
+        if auto_reg:
+            self._reg = dict(auto_reg)
+            self._reg_edit.setText(str(path.parent))
+            # When those registered images are QUINT working *thumbnails*, they are
+            # not the full-resolution originals — untick reuse so the Full-resolution
+            # row is revealed and the user is prompted to point at their hi-res
+            # images (they can re-tick reuse to import with the thumbnails instead).
+            if filenames_are_thumbnails(self._filenames):
+                self._reuse_check.setChecked(False)
 
         name = data.get("name")
         if name:
             self._name_edit.setText(str(name))
+
+        # Recover the slicing orientation from the anchoring geometry and preset
+        # the (editable) combo, so the imported project is complete by default.
+        axis_index = infer_interpolation_axis([s.get("anchoring") for s in raw_sections])
+        orientation = AXIS_TO_SLICING_ORIENTATION[AXIS_INDEX_TO_NAME[axis_index]]
+        combo_index = self._orientation_combo.findData(orientation)
+        if combo_index >= 0:
+            self._orientation_combo.setCurrentIndex(combo_index)
 
         raw_target = str(data.get("target", ""))
         resolved = _resolve_atlas_name(raw_target) if raw_target else ""
@@ -314,15 +379,57 @@ class ImportQuintDialog(QDialog):
         self._rebuild_table()
         self._update_ok_enabled()
 
-    def _browse_originals(self) -> None:
-        folder = self._pick_image_folder("Choose full-resolution images folder")
-        if not folder or self._json_path is None:
+    def _add_originals(self) -> None:
+        """Add original image files and auto-assign them to sections by name similarity.
+
+        Mirrors New Project's file picker — one original file per section. Added
+        files join a pool that is fuzzy-matched to the still-unassigned sections,
+        leaving any manual per-row assignments intact. Users fine-tune from the
+        table by double-clicking a Full-res cell.
+        """
+        if self._json_path is None:
             return
-        matched, _unmatched = match_registration_images(self._json_path, folder)
-        self._orig = dict(matched)
-        self._orig_edit.setText(folder)
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "Add full-resolution images", "", _IMAGE_FILTER
+        )
+        if not paths:
+            return
+        known = {str(p) for p in self._orig_files}
+        for p in paths:
+            if p not in known:
+                self._orig_files.append(Path(p))
+                known.add(p)
+        self._reassign_originals()
         self._rebuild_table()
         self._update_ok_enabled()
+
+    def _reassign_originals(self) -> None:
+        """Fuzzy-assign the pooled original files to sections, one file per section.
+
+        Sections the user pinned by hand (``_orig_manual``) keep their file and
+        reserve it; every other section is (re)matched by filename similarity over
+        the remaining pool, so the overall assignment stays unique.
+        """
+        manual = {i: self._orig[i] for i in self._orig_manual if i in self._orig}
+        reserved = {str(p) for p in manual.values()}
+        free = [p for p in self._orig_files if str(p) not in reserved]
+        open_indices = [i for i in range(len(self._filenames)) if i not in manual]
+        sub_names = [self._filenames[i] for i in open_indices]
+        auto = match_originals_by_similarity(sub_names, free)
+        result = dict(manual)
+        for sub_i, path in auto.items():
+            result[open_indices[sub_i]] = path
+        self._orig = result
+        self._update_orig_summary()
+
+    def _update_orig_summary(self) -> None:
+        n = len(self._filenames)
+        if not self._orig_files:
+            self._orig_edit.clear()
+            return
+        self._orig_edit.setText(
+            f"{len(self._orig)}/{n} matched from {len(self._orig_files)} file(s)"
+        )
 
     def _pick_image_folder(self, title: str) -> str:
         return QFileDialog.getExistingDirectory(self, title, str(Path.home()))
@@ -331,27 +438,39 @@ class ImportQuintDialog(QDialog):
         self._orig_row.setVisible(not checked)
         if checked:
             self._orig.clear()
+            self._orig_files.clear()
+            self._orig_manual.clear()
             self._orig_edit.clear()
         self._rebuild_table()
         self._update_ok_enabled()
 
     def _on_cell_double_clicked(self, row: int, col: int) -> None:
-        """Manually assign a single image to the slice on *row*."""
+        """Manually assign a single image to the slice on *row* (fine-tuning)."""
         if row < 0 or row >= len(self._filenames):
             return
         if col == _COL_REG:
-            target = self._reg
-            title = "Locate registration image"
+            path, _ = QFileDialog.getOpenFileName(
+                self, "Locate registration image", "", _IMAGE_FILTER
+            )
+            if path:
+                self._reg[row] = Path(path)
+                self._rebuild_table()
+                self._update_ok_enabled()
         elif col == _COL_ORIG and not self._reuse_check.isChecked():
-            target = self._orig
-            title = "Locate full-resolution image"
-        else:
-            return
-        path, _ = QFileDialog.getOpenFileName(self, title, "", _IMAGE_FILTER)
-        if path:
-            target[row] = Path(path)
-            self._rebuild_table()
-            self._update_ok_enabled()
+            path, _ = QFileDialog.getOpenFileName(
+                self, "Locate full-resolution image", "", _IMAGE_FILTER
+            )
+            if path:
+                # Pin this file to this section; reserve it and re-match the rest so
+                # the assignment stays unique (one original file per section).
+                p = Path(path)
+                if p not in self._orig_files:
+                    self._orig_files.append(p)
+                self._orig_manual.add(row)
+                self._orig[row] = p
+                self._reassign_originals()
+                self._rebuild_table()
+                self._update_ok_enabled()
 
     # ------------------------------------------------------------------
     # Table / validation
@@ -371,7 +490,7 @@ class ImportQuintDialog(QDialog):
                 orig_item = QTableWidgetItem("= registration")
                 orig_item.setForeground(Qt.GlobalColor.gray)
             else:
-                orig_item = self._image_item(self._orig.get(i))
+                orig_item = self._orig_item(self._orig.get(i), started=bool(self._orig_files))
             for item in (nr_item, json_item, reg_item, orig_item):
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self._table.setItem(i, _COL_NR, nr_item)
@@ -386,6 +505,23 @@ class ImportQuintDialog(QDialog):
             return item
         item = QTableWidgetItem(path.name)
         item.setToolTip(str(path))
+        return item
+
+    def _orig_item(self, path: Path | None, *, started: bool) -> QTableWidgetItem:
+        """Full-res cell: a filename, a calm placeholder, or a gentle assign prompt."""
+        if path is not None:
+            item = QTableWidgetItem(path.name)
+            item.setToolTip(str(path))
+            return item
+        if not started:
+            # No originals chosen yet — the expected initial state, not an error.
+            item = QTableWidgetItem(_ORIG_UNSET_HINT)
+            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            item.setForeground(Qt.GlobalColor.gray)
+            return item
+        # Originals are being assigned but this section is still open.
+        item = QTableWidgetItem(_ORIG_ASSIGN_HINT)
+        item.setForeground(QColor(_AMBER))
         return item
 
     def _missing_counts(self) -> tuple[int, int]:
@@ -414,18 +550,33 @@ class ImportQuintDialog(QDialog):
         ok_btn.setEnabled(ready)
 
         if self._json_path is None:
-            self._status_label.setText("Choose an alignment file to begin.")
-        elif missing_reg or missing_orig:
-            parts = []
-            if missing_reg:
-                parts.append(f"{missing_reg} registration image(s)")
-            if missing_orig:
-                parts.append(f"{missing_orig} full-resolution image(s)")
-            self._status_label.setText(
-                "Unmatched: " + ", ".join(parts) + " — double-click a red cell to locate it."
+            self._set_status("Choose an alignment file to begin.")
+        elif missing_reg:
+            # A registered image could not be resolved — a genuine gap to fix.
+            self._set_status(
+                f"{missing_reg} registration image(s) not found — "
+                "double-click a red cell to locate.",
+                warn=True,
+            )
+        elif missing_orig and not self._orig_files:
+            # Originals simply not chosen yet: invite the next step, do not warn.
+            self._set_status(
+                "Next, add the full-resolution images to match to each section — "
+                "or tick “Use these images as the full-resolution originals” above."
+            )
+        elif missing_orig:
+            self._set_status(
+                f"{missing_orig} section(s) still need a full-resolution image — "
+                "double-click to assign.",
+                warn=True,
             )
         else:
-            self._status_label.setText(f"All {n} sections matched. Ready to import.")
+            self._set_status(f"All {n} sections matched. Ready to import.")
+
+    def _set_status(self, text: str, *, warn: bool = False) -> None:
+        """Set the status line; ``warn`` tints it amber, otherwise it stays muted."""
+        self._status_label.setStyleSheet(f"color: {_AMBER if warn else _MUTED}; font-size: 11px;")
+        self._status_label.setText(text)
 
     # ------------------------------------------------------------------
     # Accept
@@ -462,6 +613,7 @@ class ImportQuintDialog(QDialog):
         (folder_path / "exports").mkdir(exist_ok=True)
         project_path = folder_path / f"{slug}_verso.json"
 
+        orientation = self._orientation_combo.currentData() or "coronal"
         try:
             project = build_quint_project(
                 self._json_path,
@@ -469,6 +621,7 @@ class ImportQuintDialog(QDialog):
                 registration_paths=dict(self._reg),
                 original_paths=original_paths,
                 atlas_name=self._atlas_combo.currentText().strip() or None,
+                interpolation_axis=SLICING_ORIENTATION_TO_AXIS.get(orientation),
             )
         except Exception as exc:
             QMessageBox.critical(self, "Could not import", f"Failed to build the project:\n\n{exc}")
@@ -521,7 +674,7 @@ class ImportQuintDialog(QDialog):
         if not original_paths or self._json_path is None:
             return True
         try:
-            data = json.loads(self._json_path.read_text(encoding="utf-8"))
+            data = read_quint_document(self._json_path)
         except Exception:
             return True
         raw = data.get("slices") or data.get("sections", [])

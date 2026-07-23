@@ -10,6 +10,8 @@ from verso.engine.io.quint_io import (
     load_deepslice,
     load_quicknii,
     load_visualign,
+    parse_quicknii_xml,
+    read_quint_document,
     save_quicknii,
     save_quicknii_xml,
     save_visualign,
@@ -151,6 +153,84 @@ def test_load_quicknii_atlas_name(tmp_path: Path):
 
     project = load_quicknii(p)
     assert project.atlas.name == "allen_mouse_25um"
+
+
+QUICKNII_XML = (
+    '<?xml version="1.0" encoding="UTF-8"?>\n'
+    '<series name="AL1A" target="ABA_Mouse_CCFv3_2017_25um.cutlas" '
+    'target_resolution="456 528 320">\n'
+    '    <slice filename="thumbnails/IMG_0001-thumb.png" nr="1" width="1000" height="800" '
+    'anchoring="ox=0&amp;oy=160&amp;oz=228&amp;ux=456&amp;uy=0&amp;uz=0&amp;'
+    'vx=0&amp;vy=0&amp;vz=320"/>\n'
+    '    <slice filename="thumbnails/IMG_0002-thumb.png" nr="2" width="1000" height="800"/>\n'
+    "</series>\n"
+)
+
+
+def test_parse_quicknii_xml(tmp_path: Path):
+    p = tmp_path / "qn.xml"
+    p.write_text(QUICKNII_XML)
+
+    doc = parse_quicknii_xml(p)
+
+    assert doc["name"] == "AL1A"
+    assert doc["target"] == "ABA_Mouse_CCFv3_2017_25um.cutlas"
+    assert len(doc["slices"]) == 2
+    s0 = doc["slices"][0]
+    assert s0["filename"] == "thumbnails/IMG_0001-thumb.png"
+    assert (s0["nr"], s0["width"], s0["height"]) == (1, 1000, 800)
+    assert s0["anchoring"] == [0.0, 160.0, 228.0, 456.0, 0.0, 0.0, 0.0, 0.0, 320.0]
+    assert "anchoring" not in doc["slices"][1]  # bare <slice> = unaligned
+
+
+def test_read_quint_document_dispatches_on_extension(tmp_path: Path):
+    xml = tmp_path / "a.xml"
+    xml.write_text(QUICKNII_XML)
+    js = tmp_path / "b.json"
+    js.write_text(json.dumps(QUICKNII_JSON))
+
+    assert len(read_quint_document(xml)["slices"]) == 2
+    assert len(read_quint_document(js)["slices"]) == 2
+
+
+def test_load_quicknii_from_xml(tmp_path: Path):
+    p = tmp_path / "qn.xml"
+    p.write_text(QUICKNII_XML)
+
+    project = load_quicknii(p)
+
+    assert project.atlas.name == "allen_mouse_25um"  # .cutlas target resolved
+    assert project.interpolation_axis == "AP"  # coronal geometry (u=LR, v=DV)
+    s0, s1 = project.sections
+    assert s0.alignment.status == AlignmentStatus.COMPLETE
+    assert any(s0.alignment.current_anchoring)  # convention conversion ran
+    assert s1.alignment.status == AlignmentStatus.NOT_STARTED  # no anchoring attr
+
+
+def _oriented_json(anchoring: list[float]) -> dict:
+    return {
+        "name": "s",
+        "target": "allen_mouse_25um",
+        "slices": [
+            {"filename": "a.png", "nr": 1, "width": 1000, "height": 800, "anchoring": anchoring},
+            {"filename": "b.png", "nr": 2, "width": 1000, "height": 800, "anchoring": anchoring},
+        ],
+    }
+
+
+def test_load_infers_slicing_orientation(tmp_path: Path):
+    """QuickNII/VisuAlign do not store the plane; it is recovered from anchoring."""
+    # Coronal: u along LR, v along DV → interpolation axis AP.
+    coronal = _oriented_json([0.0, 100.0, 100.0, 400.0, 0.0, 0.0, 0.0, 0.0, 300.0])
+    p = tmp_path / "cor.json"
+    p.write_text(json.dumps(coronal))
+    assert load_quicknii(p).interpolation_axis == "AP"
+
+    # Sagittal: u along AP, v along DV → interpolation axis ML.
+    sagittal = _oriented_json([0.0, 100.0, 100.0, 0.0, 300.0, 0.0, 0.0, 0.0, 300.0])
+    p = tmp_path / "sag.json"
+    p.write_text(json.dumps(sagittal))
+    assert load_visualign(p).interpolation_axis == "ML"
 
 
 def test_load_deepslice_marks_suggestions_in_progress(tmp_path: Path):

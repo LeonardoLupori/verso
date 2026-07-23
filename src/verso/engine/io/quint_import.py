@@ -30,7 +30,7 @@ working-resolution pixels ``(Ww, Hw) = round(original × working_scale)``.
 
 from __future__ import annotations
 
-import json
+import difflib
 import logging
 from pathlib import Path
 
@@ -39,20 +39,45 @@ from verso.engine.io.image_io import (
     image_dimensions,
     thumbnail_filename,
 )
-from verso.engine.io.quint_io import load_visualign
+from verso.engine.io.quint_io import load_visualign, read_quint_document
 from verso.engine.model.alignment import ControlPoint
-from verso.engine.model.project import AtlasRef, Project
+from verso.engine.model.project import AXIS_NAME_TO_INDEX, AtlasRef, Project
 
 _log = logging.getLogger(__name__)
 
+# Below this filename-similarity ratio an original is treated as unrelated to a
+# section rather than auto-assigned to it — the user assigns those by hand.
+_MIN_ORIGINAL_SIMILARITY = 0.2
+
 
 def _read_slice_entries(json_path: Path) -> list[dict]:
-    """Return the raw per-slice dicts from a QuickNII/VisuAlign JSON, in file order."""
-    data = json.loads(Path(json_path).read_text(encoding="utf-8"))
+    """Return the raw per-slice dicts from a QuickNII/VisuAlign JSON or XML, in file order."""
+    data = read_quint_document(Path(json_path))
     raw = data.get("slices")
     if raw is None:
         raw = data.get("sections", [])
     return list(raw)
+
+
+def filenames_are_thumbnails(filenames: list[str]) -> bool:
+    """True when the JSON image names are QUINT working thumbnails, not originals.
+
+    QuickNII/VisuAlign export working images as ``{stem}-thumb.png`` inside a
+    ``thumbnails/`` folder and reference them by that relative path. When most of
+    the names follow that convention the full-resolution originals live elsewhere,
+    so an importer should ask for them separately instead of reusing the
+    thumbnails. Bare names (plain QuickNII) or absolute paths (DeepSlice) are not
+    thumbnails and return ``False``.
+    """
+    if not filenames:
+        return False
+    hits = 0
+    for f in filenames:
+        norm = f.replace("\\", "/").lower()
+        parent_dirs = norm.split("/")[:-1]
+        if "thumbnails" in parent_dirs or Path(norm).stem.endswith("-thumb"):
+            hits += 1
+    return hits >= len(filenames) / 2
 
 
 def _match_keys(filename: str) -> list[str]:
@@ -98,6 +123,68 @@ def _index_folder(folder: Path) -> tuple[dict[str, Path], dict[str, Path]]:
     return by_name, by_stem
 
 
+def _normalize_for_match(name: str) -> str:
+    """Basename stem of *name*, lowercased and with any ``-thumb`` suffix removed.
+
+    Puts a working-thumbnail name (``AL1A_002-thumb.png``) and its full-resolution
+    original (``AL1A_002.tif``) into the same normalised space so filename
+    similarity reflects the underlying section, not the export decoration.
+    """
+    stem = Path(str(name).replace("\\", "/")).stem.lower()
+    if stem.endswith("-thumb"):
+        stem = stem[: -len("-thumb")]
+    return stem
+
+
+def match_originals_by_similarity(
+    reference_names: list[str],
+    candidates: list[Path],
+) -> dict[int, Path]:
+    """Assign each section its most filename-similar original, one file per section.
+
+    Used to attach full-resolution originals to sections whose reference name is a
+    prestored thumbnail: the originals are picked as individual files (as in New
+    Project) and may not share the thumbnails' exact names, so matching is by
+    filename similarity rather than exact basename.
+
+    Args:
+        reference_names: Per-section reference filename (the JSON ``filename`` /
+            thumbnail name), index-aligned with the sections.
+        candidates: Available full-resolution image files to assign from.
+
+    Returns:
+        ``{section_index: path}`` for the sections that found a candidate above a
+        small similarity floor. Assignment is greedy by descending similarity with
+        each candidate used at most once, so the mapping is a partial one-to-one
+        (unique) matching; sections left out are for the user to assign manually.
+    """
+    if not reference_names or not candidates:
+        return {}
+    refs = [_normalize_for_match(n) for n in reference_names]
+    cands = [_normalize_for_match(p.name) for p in candidates]
+
+    scored: list[tuple[float, int, int]] = []
+    matcher = difflib.SequenceMatcher()
+    for j, cn in enumerate(cands):
+        matcher.set_seq2(cn)
+        for i, rn in enumerate(refs):
+            matcher.set_seq1(rn)
+            scored.append((matcher.ratio(), i, j))
+    # Highest similarity first; stable so ties fall to lower section/candidate index.
+    scored.sort(key=lambda t: t[0], reverse=True)
+
+    matched: dict[int, Path] = {}
+    used_candidates: set[int] = set()
+    for score, i, j in scored:
+        if score < _MIN_ORIGINAL_SIMILARITY:
+            break
+        if i in matched or j in used_candidates:
+            continue
+        matched[i] = candidates[j]
+        used_candidates.add(j)
+    return matched
+
+
 def match_registration_images(
     json_path: str | Path,
     folder: str | Path,
@@ -106,7 +193,9 @@ def match_registration_images(
 
     Matching is by basename, case-insensitive and extension-tolerant (a ``.png``
     named in the JSON may be a ``.tif`` on disk), searching *folder* and one level
-    of subfolders. This is the same matcher used for the full-resolution originals.
+    of subfolders. Used to resolve the registered images (the prestored
+    thumbnails); full-resolution originals are attached separately by
+    :func:`match_originals_by_similarity`.
 
     Args:
         json_path: Path to the QuickNII/VisuAlign ``*.json`` file.
@@ -158,6 +247,7 @@ def build_quint_project(
     registration_paths: dict[int, Path],
     original_paths: dict[int, Path] | None = None,
     atlas_name: str | None = None,
+    interpolation_axis: str | None = None,
 ) -> Project:
     """Build a self-contained VERSO :class:`Project` from a QuickNII/VisuAlign JSON.
 
@@ -179,6 +269,10 @@ def build_quint_project(
         atlas_name: Optional BrainGlobe atlas name to force. When ``None`` the
             atlas comes from the JSON ``target`` (already resolved to a BrainGlobe
             name by ``load_visualign``).
+        interpolation_axis: Optional slicing/interpolation axis name (``"AP"`` /
+            ``"ML"`` / ``"DV"``) to force. When ``None`` the axis inferred from the
+            anchoring geometry by ``load_visualign`` is kept. An unknown value is
+            ignored.
 
     Returns:
         A :class:`Project` with sections carrying real ``original_path`` /
@@ -197,6 +291,8 @@ def build_quint_project(
     project = load_visualign(json_path)
     if atlas_name:
         project.atlas = AtlasRef(name=atlas_name)
+    if interpolation_axis in AXIS_NAME_TO_INDEX:
+        project.interpolation_axis = interpolation_axis
 
     n = len(project.sections)
     working_sources = [
