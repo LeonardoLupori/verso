@@ -82,10 +82,20 @@ def _thumbnail_json(tmp_path: Path) -> Path:
         "name": "imported",
         "target": "allen_mouse_25um",
         "slices": [
-            {"filename": "thumbnails/IMG_0001-thumb.png", "nr": 1, "width": 1000,
-             "height": 800, "anchoring": [0.0] * 9},
-            {"filename": "thumbnails/IMG_0002-thumb.png", "nr": 2, "width": 1000,
-             "height": 800, "anchoring": [0.0] * 9},
+            {
+                "filename": "thumbnails/IMG_0001-thumb.png",
+                "nr": 1,
+                "width": 1000,
+                "height": 800,
+                "anchoring": [0.0] * 9,
+            },
+            {
+                "filename": "thumbnails/IMG_0002-thumb.png",
+                "nr": 2,
+                "width": 1000,
+                "height": 800,
+                "anchoring": [0.0] * 9,
+            },
         ],
     }
     json_path = align / "va.json"
@@ -199,8 +209,13 @@ def test_load_json_presets_slicing_orientation(_qapp, tmp_path: Path):
         "name": "s",
         "target": "allen_mouse_25um",
         "slices": [
-            {"filename": "IMG_0001.png", "nr": 1, "width": 1000, "height": 800,
-             "anchoring": [0.0, 100.0, 100.0, 0.0, 300.0, 0.0, 0.0, 0.0, 300.0]},
+            {
+                "filename": "IMG_0001.png",
+                "nr": 1,
+                "width": 1000,
+                "height": 800,
+                "anchoring": [0.0, 100.0, 100.0, 0.0, 300.0, 0.0, 0.0, 0.0, 300.0],
+            },
         ],
     }
     json_path = tmp_path / "sag.json"

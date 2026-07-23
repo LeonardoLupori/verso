@@ -556,7 +556,5 @@ class AnnotationController:
             return
         images = annotation_images(ann)
         color = "#{:02x}{:02x}{:02x}".format(*ann.color)
-        colors = [
-            color if s.image_key.lower() in images else None for s in project.sections
-        ]
+        colors = [color if s.image_key.lower() in images else None for s in project.sections]
         filmstrip.set_statuses(colors, shape="square")

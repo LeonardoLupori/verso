@@ -27,9 +27,7 @@ SLICING_ORIENTATION_TO_AXIS: dict[str, str] = {
     "horizontal": "DV",
 }
 # Reverse of the above: atlas axis name → slicing-orientation label.
-AXIS_TO_SLICING_ORIENTATION: dict[str, str] = {
-    v: k for k, v in SLICING_ORIENTATION_TO_AXIS.items()
-}
+AXIS_TO_SLICING_ORIENTATION: dict[str, str] = {v: k for k, v in SLICING_ORIENTATION_TO_AXIS.items()}
 
 
 @dataclass
