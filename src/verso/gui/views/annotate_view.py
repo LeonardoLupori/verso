@@ -285,7 +285,7 @@ class AnnotateView(QWidget):
         project = self._state.project
         if self._raw_image is None or section is None or project is None:
             return None
-        filename = os.path.basename(section.original_path).lower()
+        filename = section.image_key.lower()
         h, w = self._raw_image.shape[:2]
         return (
             filename,
@@ -600,7 +600,7 @@ class AnnotateView(QWidget):
         if not isinstance(area, AreaAnnotation) or self._raw_image is None or self._section is None:
             return None
         shape = self._raw_image.shape[:2]
-        key = os.path.basename(self._section.original_path)
+        key = self._section.image_key
         mask = area.masks.get(key)
         if mask is None or mask.shape != shape:
             return np.zeros(shape, dtype=bool)
@@ -609,7 +609,7 @@ class AnnotateView(QWidget):
     def _store_area_mask(self, mask: np.ndarray) -> None:
         area = self._active_annotation()
         if isinstance(area, AreaAnnotation) and self._section is not None:
-            area.masks[os.path.basename(self._section.original_path)] = mask
+            area.masks[self._section.image_key] = mask
 
     def _stroke_to_mask_coords(self, points: list[tuple[float, float]]) -> np.ndarray:
         """Display coords → working-res mask coords (clamp, then undo flips)."""

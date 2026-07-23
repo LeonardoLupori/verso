@@ -259,7 +259,7 @@ class AnnotationController:
                 return
             x_col, y_col, image_col = dlg.result_columns()
 
-        default_image = self._current_filename()
+        default_image = self._current_image_key()
         try:
             points = load_points_csv(path, x_col, y_col, image_col, default_image)
         except (OSError, KeyError) as exc:
@@ -355,7 +355,7 @@ class AnnotationController:
         if not isinstance(ann, PointSeries) or section is None:
             return
         self._push_points_undo(ann)
-        image = os.path.basename(section.original_path)
+        image = section.image_key
         ann.points.append(AnnotationPoint(x=x, y=y, image=image))
         self._mark_dirty()
         # Render the new point now (cheap: the view folds it into its cache), but
@@ -374,7 +374,7 @@ class AnnotationController:
         section = self._state.current_section
         if not isinstance(ann, PointSeries) or section is None or len(polygon) < 3:
             return
-        image = os.path.basename(section.original_path).lower()
+        image = section.image_key.lower()
         # Find the current section's points (and their coords) in a single pass.
         # A point's basename is normalised once per *distinct* image string, not
         # once per point: a series can hold hundreds of thousands of points that
@@ -419,7 +419,7 @@ class AnnotationController:
         section = self._state.current_section
         if area is None or section is None:
             return
-        image = os.path.basename(section.original_path)
+        image = section.image_key
         had = image in area.masks
         old = area.masks.get(image)
         old_copy = old.copy() if old is not None else None
@@ -499,9 +499,9 @@ class AnnotationController:
     # Helpers
     # ------------------------------------------------------------------
 
-    def _current_filename(self) -> str:
+    def _current_image_key(self) -> str:
         section = self._state.current_section
-        return os.path.basename(section.original_path) if section is not None else ""
+        return section.image_key if section is not None else ""
 
     def _unique_title(self, base: str, exclude: int = -1) -> str:
         existing = {a.title for i, a in enumerate(self._annotations) if i != exclude}
@@ -557,7 +557,6 @@ class AnnotationController:
         images = annotation_images(ann)
         color = "#{:02x}{:02x}{:02x}".format(*ann.color)
         colors = [
-            color if os.path.basename(s.original_path).lower() in images else None
-            for s in project.sections
+            color if s.image_key.lower() in images else None for s in project.sections
         ]
         filmstrip.set_statuses(colors, shape="square")

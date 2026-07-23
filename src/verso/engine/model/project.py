@@ -131,6 +131,23 @@ class Section:
     alignment: Alignment = field(default_factory=Alignment)
     warp: WarpState = field(default_factory=WarpState)
 
+    @property
+    def image_key(self) -> str:
+        """Canonical per-section identity for annotations (masks, points).
+
+        Annotations key their masks and points by this string rather than the raw
+        image basename: a multi-scene container (CZI) yields several sections that
+        share ``original_path``, so the basename alone is not unique and would make
+        every scene's annotations collide onto one another. Scene ``0`` keeps the
+        plain filename — backward compatible with single-image projects and with
+        externally-produced point CSVs that reference images by name — while each
+        further scene gets a ``-scene{NN}`` suffix on the stem to stay distinct.
+        """
+        name = Path(self.original_path).name
+        if self.scene_index:
+            return f"{Path(name).stem}-scene{self.scene_index:02d}"
+        return name
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,

@@ -14,7 +14,19 @@ from PyQt6.QtWidgets import QMessageBox
 
 from verso.engine.io.annotation_io import load_annotations
 from verso.engine.model.annotation import AnnotationPoint, AreaAnnotation, PointSeries
+from verso.engine.model.project import Section
 from verso.gui.controllers.annotation_controller import AnnotationController
+
+
+def _section(path: str, scene_index: int = 0) -> Section:
+    """A real Section so ``image_key`` (used for annotation identity) is genuine."""
+    return Section(
+        id=f"s{scene_index:03d}",
+        slice_index=scene_index,
+        original_path=path,
+        thumbnail_path=path,
+        scene_index=scene_index,
+    )
 
 
 class _FakePage:
@@ -61,7 +73,7 @@ def _make_controller(
 ) -> AnnotationController:
     section = None
     if section_name is not None:
-        section = SimpleNamespace(original_path=str(tmp_path / section_name))
+        section = _section(str(tmp_path / section_name))
     state = SimpleNamespace(
         project=object() if project is None else project,
         project_path=tmp_path / "project-verso.json",
@@ -245,6 +257,22 @@ def test_remove_in_polygon_removes_enclosed(tmp_path: Path):
     assert [(p.x, p.y) for p in pts] == [(50.0, 50.0)]
 
 
+def test_multiscene_container_points_do_not_collide(tmp_path: Path):
+    # Two sections from one CZI share original_path and differ only by
+    # scene_index. Points added on one scene must not appear on the other
+    # (regression: identity was the shared basename, so every scene collided).
+    czi = str(tmp_path / "stack.czi")
+    ctrl = _make_controller(tmp_path)
+    ctrl._state.current_section = _section(czi, scene_index=0)  # type: ignore[attr-defined]
+    ctrl.new_point_series()
+    ctrl.add_point(1.0, 1.0)  # lands on scene 0
+    ctrl._state.current_section = _section(czi, scene_index=1)  # type: ignore[attr-defined]
+    ctrl.add_point(2.0, 2.0)  # lands on scene 1
+
+    images = {p.image for p in ctrl._annotations[0].points}
+    assert images == {"stack.czi", "stack-scene01"}
+
+
 def test_remove_only_affects_current_section(tmp_path: Path):
     ctrl = _make_controller(tmp_path, "sec.tif")
     ctrl.new_point_series()
@@ -320,9 +348,9 @@ def test_begin_area_edit_noop_for_point_series(tmp_path: Path):
 def test_filmstrip_markers_flag_sections_with_active_annotation(tmp_path: Path):
     project = SimpleNamespace(
         sections=[
-            SimpleNamespace(original_path=str(tmp_path / "a.tif")),
-            SimpleNamespace(original_path=str(tmp_path / "b.tif")),
-            SimpleNamespace(original_path=str(tmp_path / "c.tif")),
+            _section(str(tmp_path / "a.tif")),
+            _section(str(tmp_path / "b.tif")),
+            _section(str(tmp_path / "c.tif")),
         ]
     )
     ctrl = _make_controller(tmp_path, mode="annotate", project=project)
@@ -353,7 +381,7 @@ def test_cosmetic_edits_do_not_repaint_filmstrip_markers(tmp_path: Path):
     # Point-size slider drags (and, for areas, opacity) fire on every tick; they
     # change neither coverage nor colour, so they must not repaint (and rescan)
     # the markers. set_opacity here is also a no-op on a point series.
-    project = SimpleNamespace(sections=[SimpleNamespace(original_path=str(tmp_path / "a.tif"))])
+    project = SimpleNamespace(sections=[_section(str(tmp_path / "a.tif"))])
     ctrl = _make_controller(tmp_path, mode="annotate", project=project)
     ctrl.new_point_series()  # structural change → one marker repaint
     fs = ctrl._window._filmstrip  # type: ignore[attr-defined]

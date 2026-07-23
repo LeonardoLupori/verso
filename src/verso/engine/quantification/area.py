@@ -37,9 +37,7 @@ def area_scope(
     Returns:
         ``(H, W)`` bool intersected scope.
     """
-    from pathlib import Path
-
-    key = Path(section.original_path).name.lower()
+    key = section.image_key.lower()
     mask = None
     for name, m in area.masks.items():
         if name.lower() == key:

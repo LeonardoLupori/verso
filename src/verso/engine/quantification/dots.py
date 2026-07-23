@@ -8,7 +8,6 @@ re-ordered to the Allen convention (``x=AP, y=DV, z=LR`` microns).
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -85,7 +84,7 @@ def process_section_dots(
     if pts.size == 0:
         return records, n_dots
 
-    image = Path(section.original_path).name
+    image = section.image_key
     h, w = labels.shape
     ccf = reg.coord_image_to_atlas(section.id, pts, space="full", units="um")  # (N,3) LR,AP,DV
     ic = intensity_channels or []

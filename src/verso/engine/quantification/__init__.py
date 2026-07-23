@@ -455,7 +455,7 @@ def _dots_unit(
             labels, scope, hemi = match_to_raw(labels, scope, raw.shape[:2], hemi)
         add_region_counts(counts, labels, scope, hemi)
 
-        key = Path(section.original_path).name.lower()
+        key = section.image_key.lower()
         pts = coords_by_image.get(key)
         if pts is None:
             continue
