@@ -520,7 +520,7 @@ class JobController:
                 if section is None:
                     continue
                 # Snapshot the last-saved warp before mutating so "Clear edits" /
-                # "Discard all" can revert to the genuine baseline - this should work 
+                # "Discard all" can revert to the genuine baseline - this should work
                 # as with the DeepSlice/batch worflows
                 self._state.set_baseline(sid, "warp", copy.deepcopy(section.warp))
                 manual = [cpy for cpy in section.warp.control_points if not cpy.auto]
