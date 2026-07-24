@@ -1,4 +1,9 @@
-"""Shared helpers for the properties panel sections."""
+"""Shared helpers for the properties panel sections.
+
+Also used by the channel-settings dialog's controls
+(:mod:`verso.gui.widgets.brightness_controls`) so its eye toggle and colour
+swatch match the ones in the panel.
+"""
 
 from __future__ import annotations
 

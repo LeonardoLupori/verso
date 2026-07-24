@@ -7,33 +7,35 @@ live updates of the canvas overlay.
 
 from __future__ import annotations
 
-from pathlib import Path
-
-from PyQt6.QtCore import QSize, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QIcon, QKeyEvent, QMouseEvent, QPixmap
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QKeyEvent, QMouseEvent
 from PyQt6.QtWidgets import (
     QColorDialog,
     QDoubleSpinBox,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
     QSlider,
-    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from verso.engine.model.project import ChannelSpec
-
-_ICONS_DIR = Path(__file__).parent.parent / "icons"
+from verso.gui.widgets.properties._common import (
+    color_swatch_style,
+    eye_icon,
+    make_eye_btn,
+)
 
 # Fixed column widths so the header labels line up over the row controls even
 # though every row is its own independent HBox (not a shared grid).
-_EYE_W = 22
+_EYE_W = 24
 _NAME_W = 104
 _COLOR_W = 20
-_GAMMA_W = 62
+_VALUE_W = 38
+_GAMMA_W = 68
 _ROW_SPACING = 6
 
 # Inline name editor styled after the overview table's slice-index chip
@@ -60,16 +62,11 @@ QLineEdit:focus {
 }
 """
 
-# Muted column titles above the channel rows.
-_HEADER_QSS = "color: #8a8a8a; font-size: 10px; font-weight: 600;"
+# Muted column titles above the channel rows, matching the panel hint labels.
+_HEADER_QSS = "color: #888; font-size: 11px; font-weight: 600;"
 
-
-def _eye_icon(visible: bool) -> QIcon:
-    name = "eye.svg" if visible else "eye-off.svg"
-    svg = (_ICONS_DIR / name).read_text(encoding="utf-8").replace("currentColor", "#ffffff")
-    pixmap = QPixmap()
-    pixmap.loadFromData(svg.encode())
-    return QIcon(pixmap)
+# Numeric slider readout, as in the mask/annotation sections' slider rows.
+_VALUE_QSS = "color: #aaa; font-size: 11px;"
 
 
 class _EditableName(QLineEdit):
@@ -180,11 +177,10 @@ class _ChannelRow(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(_ROW_SPACING)
 
-        self._visible_btn = QToolButton()
-        self._visible_btn.setCheckable(True)
-        self._visible_btn.setChecked(self._spec.visible)
+        # Flat eye toggle, identical to the mask/annotation section toggles.
+        self._visible_btn = make_eye_btn()
         self._visible_btn.setFixedSize(_EYE_W, _EYE_W)
-        self._visible_btn.setIconSize(QSize(16, 16))
+        self._visible_btn.setChecked(self._spec.visible)
         self._visible_btn.setToolTip("Toggle channel visibility")
         self._visible_btn.toggled.connect(self._on_visible)
         self._refresh_visible_btn()
@@ -211,6 +207,13 @@ class _ChannelRow(QWidget):
         self._slider.valueChanged.connect(self._on_slider)
         self._slider.sliderReleased.connect(self._on_slider_released)
         layout.addWidget(self._slider, stretch=1)
+
+        self._value_label = QLabel()
+        self._value_label.setFixedWidth(_VALUE_W)
+        self._value_label.setStyleSheet(_VALUE_QSS)
+        self._value_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self._refresh_value_label()
+        layout.addWidget(self._value_label)
 
         self._gamma_spin = QDoubleSpinBox()
         self._gamma_spin.setRange(0.1, 5.0)
@@ -263,6 +266,7 @@ class _ChannelRow(QWidget):
             self._name_edit.set_name(self._spec.name)
         self._refresh_visible_btn()
         self._refresh_color_btn()
+        self._refresh_value_label()
 
     def set_name(self, name: str) -> None:
         """Apply a (possibly deduplicated) name pushed back by the parent."""
@@ -270,13 +274,13 @@ class _ChannelRow(QWidget):
         self._name_edit.set_name(name)
 
     def _refresh_visible_btn(self) -> None:
-        self._visible_btn.setIcon(_eye_icon(self._spec.visible))
+        self._visible_btn.setIcon(eye_icon(self._spec.visible))
 
     def _refresh_color_btn(self) -> None:
-        r, g, b = self._spec.color
-        self._color_btn.setStyleSheet(
-            f"background-color: rgb({r}, {g}, {b}); border: 1px solid #555; border-radius: 2px;"
-        )
+        self._color_btn.setStyleSheet(color_swatch_style(self._spec.color))
+
+    def _refresh_value_label(self) -> None:
+        self._value_label.setText(f"{round(self._spec.scale * 100.0)}%")
 
     def _on_visible(self, checked: bool) -> None:
         self._spec.visible = bool(checked)
@@ -297,6 +301,7 @@ class _ChannelRow(QWidget):
 
     def _on_slider(self, value: int) -> None:
         self._spec.scale = value / 100.0
+        self._refresh_value_label()
         spec = self.spec()
         self.changed.emit(self._index, spec)
         # Keyboard / programmatic changes don't go through sliderReleased,
@@ -347,27 +352,66 @@ class BrightnessControls(QWidget):
         self._layout.addWidget(self._empty_label)
 
     def _build_header(self) -> QWidget:
-        """Column-title strip whose fixed widths line up over the row controls."""
-        header = QWidget()
-        hl = QHBoxLayout(header)
-        hl.setContentsMargins(0, 0, 0, 0)
-        hl.setSpacing(_ROW_SPACING)
+        """Column-title strip whose fixed widths line up over the row controls.
 
-        spacer = QWidget()
-        spacer.setFixedWidth(_EYE_W + _NAME_W + _COLOR_W + 2 * _ROW_SPACING)
-        hl.addWidget(spacer)
+        Titles + rule read as a table header, so the rows below scan as columns
+        rather than as three unrelated control clusters.
+        """
+        header = QWidget()
+        vl = QVBoxLayout(header)
+        vl.setContentsMargins(0, 0, 0, 0)
+        vl.setSpacing(3)
+
+        titles = QHBoxLayout()
+        titles.setContentsMargins(0, 0, 0, 0)
+        titles.setSpacing(_ROW_SPACING)
+
+        # Skip the eye column — it needs no title — so "Name" starts over the
+        # name field rather than over the visibility toggle.
+        eye_spacer = QWidget()
+        eye_spacer.setFixedWidth(_EYE_W)
+        titles.addWidget(eye_spacer)
+
+        name = QLabel("Name")
+        name.setStyleSheet(_HEADER_QSS)
+        name.setFixedWidth(_NAME_W)
+        # Matches the name field's 1px border + 4px padding, so the title sits
+        # directly over the text inside it rather than over the field's edge.
+        name.setIndent(5)
+        titles.addWidget(name)
+
+        # The colour swatch is self-evident and needs no title.
+        color_spacer = QWidget()
+        color_spacer.setFixedWidth(_COLOR_W)
+        titles.addWidget(color_spacer)
 
         brightness = QLabel("Brightness")
         brightness.setStyleSheet(_HEADER_QSS)
         brightness.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        hl.addWidget(brightness, stretch=1)
+        titles.addWidget(brightness, stretch=1)
+
+        # Sits over the per-row percentage readout, which has no title of its own.
+        value_spacer = QWidget()
+        value_spacer.setFixedWidth(_VALUE_W)
+        titles.addWidget(value_spacer)
 
         gamma = QLabel("Gamma")
         gamma.setStyleSheet(_HEADER_QSS)
         gamma.setAlignment(Qt.AlignmentFlag.AlignCenter)
         gamma.setFixedWidth(_GAMMA_W)
         gamma.setToolTip("Gamma (1 = linear; <1 brightens shadows, >1 darkens)")
-        hl.addWidget(gamma)
+        titles.addWidget(gamma)
+
+        vl.addLayout(titles)
+
+        rule = QFrame()
+        rule.setFrameShape(QFrame.Shape.HLine)
+        # Plain shadow draws a flat 1px line in the stylesheet's ``color``;
+        # the default Sunken shadow would give it a 3D bevel.
+        rule.setFrameShadow(QFrame.Shadow.Plain)
+        rule.setFixedHeight(1)
+        rule.setStyleSheet("color: #4d4d4d;")
+        vl.addWidget(rule)
 
         return header
 
