@@ -77,6 +77,7 @@ class ExportController:
             return
         atlas_shape = self._state.atlas.shape if self._state.atlas else None
         save_fn(project, Path(path), atlas_shape=atlas_shape)
+        _log.info("%s: wrote %d section(s) to %s", title, len(project.sections), path)
         self._maybe_create_pngs(path)
 
     def _maybe_create_pngs(self, export_path: str) -> None:
@@ -146,6 +147,7 @@ class ExportController:
         timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
         out_dir = project_path.parent / "exports" / f"images_with_overlay_{timestamp}"
         out_dir.mkdir(parents=True, exist_ok=True)
+        _log.info("Exporting %d section(s) with overlay → %s", len(sections), out_dir)
 
         progress = self._make_progress(
             "Exporting images...",
@@ -178,6 +180,7 @@ class ExportController:
                 f"Wrote some images to:\n{out_dir}\n\nErrors:",
             )
         else:
+            _log.info("Overlay export finished: %d section(s) → %s", len(sections), out_dir)
             self._show_export_done(out_dir, f"Wrote {len(sections)} sections to:\n{out_dir}")
 
     def export_aligned_stack(self) -> None:
@@ -478,6 +481,7 @@ class ExportController:
     def _launch_quantify(self, run_fn, out_base: Path, kind: str) -> None:
         from verso.gui.jobs import BackgroundJob, QuantifyWorker
 
+        _log.info("Starting %s quantification → %s", kind, out_base)
         self._quant_job = BackgroundJob(
             self._window,
             QuantifyWorker(run_fn),
@@ -502,6 +506,7 @@ class ExportController:
         self._quant_job = None
 
     def _on_quantify_error(self, message: str) -> None:
+        _log.error("Quantification could not run: %s", message)
         QMessageBox.warning(self._window, "Quantification could not run", message)
 
     @staticmethod

@@ -15,6 +15,7 @@ dialogs, so this controller no longer reaches into window widgets.
 from __future__ import annotations
 
 import contextlib
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -25,6 +26,8 @@ from verso.engine.model.alignment import AlignmentStatus
 from verso.engine.model.elastix import ElastixParams
 from verso.gui.jobs import AutoCPWorker, BackgroundJob, BatchMaskWorker, DeepSliceWorker
 from verso.gui.utils import warn_errors, warn_if_missing_dimensions
+
+_log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from verso.gui.main_window import MainWindow
@@ -109,6 +112,7 @@ class JobController:
         if not self._window.confirm_discard_active_draft():
             return
 
+        _log.info("Starting batch mask autodetect on %d section(s)", len(project.sections))
         self._batch_mask_job = BackgroundJob(
             self._window,
             BatchMaskWorker(list(project.sections), project.working_scale),
@@ -178,6 +182,12 @@ class JobController:
 
         self._state.deepslice_running_changed.emit(True)
         self._state.show_status("Running DeepSlice suggestions...")
+        _log.info(
+            "Starting DeepSlice on %d section(s) (reverse=%s, excluded=%d)",
+            len(project.sections),
+            self._deepslice_reverse_axis,
+            len(bad_ids),
+        )
 
         self._deepslice_job = BackgroundJob(
             self._window,
@@ -233,6 +243,7 @@ class JobController:
         self._state.show_status(f"Applied {len(touched)} DeepSlice suggestions")
 
     def _on_deepslice_error(self, message: str) -> None:
+        _log.error("DeepSlice failed: %s", message)
         QMessageBox.warning(self._window, "DeepSlice failed", message)
         self._state.show_status("DeepSlice failed")
 

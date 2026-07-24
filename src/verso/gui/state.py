@@ -83,6 +83,13 @@ class AppState(QObject):
         return self._project_path
 
     def load_project(self, project: Project, path: Path | None = None) -> None:
+        _log.info(
+            "Project loaded: %s (%d section(s), atlas=%s, working_scale=%.4f)",
+            path,
+            len(project.sections),
+            project.atlas.name,
+            project.working_scale,
+        )
         self._project = project
         self._project_path = path
         self._section_index = 0

@@ -100,6 +100,7 @@ class ProjectController:
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             project.save(path)
+            _log.info("Project saved: %s (%d section(s))", path, len(project.sections))
             self._state.show_status(f"Saved project to {path}")
         except Exception as exc:
             _log.exception("Cannot save project to %s", path)
@@ -230,7 +231,9 @@ class ProjectController:
 
         # 2. Persist every remaining dirty (section, step).  Snapshot the list up
         #    front since we mutate the registry inside the loop.
-        for section, steps in self._state.dirty_sections():
+        pending = self._state.dirty_sections()
+        _log.info("Save all: flushing %d dirty section(s)", len(pending))
+        for section, steps in pending:
             if "prep" in steps:
                 # Flip invalidation already happened at toggle time, so this only
                 # writes the mask (None when only flips changed) — it won't
