@@ -60,7 +60,17 @@ def _resolve_level(level: int | str | None) -> int:
         return logging.INFO
     if isinstance(level, int):
         return level
-    return logging.getLevelNamesMapping().get(level.strip().upper(), logging.INFO)
+    name = level.strip().upper()
+    # Numeric strings round-trip the env var for levels with no registered name.
+    if name.isdigit():
+        return int(name)
+    return logging.getLevelNamesMapping().get(name, logging.INFO)
+
+
+def _level_token(level: int) -> str:
+    """Render ``level`` as something :func:`_resolve_level` maps back exactly."""
+    name = logging.getLevelName(level)
+    return str(level) if name.startswith("Level ") else name
 
 
 def configure_logging(
@@ -78,7 +88,9 @@ def configure_logging(
             the same file (concurrent ``RotatingFileHandler``s on one path
             corrupt rotation).
         level: Log level (int or name). Falls back to ``VERSO_LOG_LEVEL`` then
-            ``INFO``.
+            ``INFO``. The resolved level is written back to ``VERSO_LOG_LEVEL``
+            so child processes — which configure their own handlers from scratch
+            and inherit the environment — run at the same verbosity.
         console: When true, also stream to ``sys.stderr``. Never ``stdout`` —
             the elastix child uses stdout as its READY/DONE IPC channel.
         log_dir: Override the log directory (defaults to :func:`default_log_dir`).
@@ -96,9 +108,16 @@ def configure_logging(
     log_file = directory / f"verso-{process_tag}.log"
 
     logger = logging.getLogger(ROOT_LOGGER_NAME)
-    logger.setLevel(_resolve_level(level))
+    resolved = _resolve_level(level)
+    logger.setLevel(resolved)
     # Own handlers only; do not double up through the root logger.
     logger.propagate = False
+
+    # Publish the level so spawned children match it. The elastix worker calls
+    # configure_logging() itself with no level, so without this ``verso -v``
+    # would give DEBUG in verso-app.log but INFO in verso-elastix.log — exactly
+    # the file you want detail in when debugging registration.
+    os.environ["VERSO_LOG_LEVEL"] = _level_token(resolved)
 
     formatter = logging.Formatter(_LOG_FORMAT)
 

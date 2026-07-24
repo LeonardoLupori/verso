@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 
 from verso.engine import logconf
@@ -61,3 +62,27 @@ def test_no_stdout_handler_even_with_console(tmp_path):
 def test_level_from_argument(tmp_path):
     configure_logging(process_tag="app", log_dir=tmp_path, level="DEBUG", console=False)
     assert logging.getLogger("verso").level == logging.DEBUG
+
+
+def test_level_is_published_to_the_environment(tmp_path):
+    # The elastix child configures itself with no explicit level, so it can only
+    # learn `verso -v` through the environment Popen hands it.
+    configure_logging(process_tag="app", log_dir=tmp_path, level="DEBUG", console=False)
+    assert os.environ["VERSO_LOG_LEVEL"] == "DEBUG"
+
+    # Simulate the child: fresh process state, no level argument.
+    logconf._configured = False
+    logconf._log_file_path = None
+    configure_logging(process_tag="elastix", log_dir=tmp_path, console=False)
+    assert logging.getLogger("verso").level == logging.DEBUG
+
+
+def test_numeric_level_round_trips_through_the_environment(tmp_path):
+    # A level with no registered name must survive as digits, not "Level 15".
+    configure_logging(process_tag="app", log_dir=tmp_path, level=15, console=False)
+    assert os.environ["VERSO_LOG_LEVEL"] == "15"
+
+    logconf._configured = False
+    logconf._log_file_path = None
+    configure_logging(process_tag="elastix", log_dir=tmp_path, console=False)
+    assert logging.getLogger("verso").level == 15

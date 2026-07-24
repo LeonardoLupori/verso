@@ -3,7 +3,8 @@
 The autouse fixture below keeps logging hermetic: every test writes to a
 throwaway ``VERSO_LOG_DIR`` and the ``verso`` logger's handlers/level are
 snapshotted and restored, so a test that calls ``configure_logging`` never
-leaks handlers into another test or writes to the real per-user log directory.
+leaks handlers, an environment level, or writes to the real per-user log
+directory.
 Importing engine modules does not configure logging on its own — only
 ``configure_logging`` does — so tests that never touch it are unaffected.
 """
@@ -20,6 +21,10 @@ from verso.engine import logconf
 @pytest.fixture(autouse=True)
 def _isolate_logging(tmp_path, monkeypatch):
     monkeypatch.setenv("VERSO_LOG_DIR", str(tmp_path / "logs"))
+    # configure_logging() writes the resolved level back to VERSO_LOG_LEVEL for
+    # child processes; clearing it through monkeypatch makes that write revert
+    # on teardown instead of leaking one test's verbosity into the next.
+    monkeypatch.delenv("VERSO_LOG_LEVEL", raising=False)
 
     verso_logger = logging.getLogger("verso")
     saved_handlers = verso_logger.handlers[:]
