@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import numpy as np
@@ -9,6 +10,8 @@ from PyQt6.QtCore import QByteArray, Qt
 from PyQt6.QtGui import QImage, QPainter, QPixmap
 from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtWidgets import QMessageBox, QWidget
+
+_log = logging.getLogger(__name__)
 
 _ICONS_DIR = Path(__file__).parent / "icons"
 
@@ -78,6 +81,7 @@ def warn_errors(parent: QWidget, title: str, errors: list[str], lead: str) -> No
     """
     if not errors:
         return
+    _log.warning("%s — %d error(s): %s", title, len(errors), "; ".join(errors))
     preview = "\n".join(errors[:8])
     suffix = "" if len(errors) <= 8 else f"\n...and {len(errors) - 8} more"
     QMessageBox.warning(parent, title, f"{lead}\n\n{preview}{suffix}")
@@ -96,6 +100,11 @@ def warn_if_missing_dimensions(parent: QWidget, sections: list) -> bool:
     missing = [s for s in sections if min(s.resolution_thumbnail_wh) <= 0]
     if not missing:
         return True
+    _log.error(
+        "Missing resolution_thumbnail_wh on %d section(s): %s",
+        len(missing),
+        [s.id for s in missing],
+    )
     listed = "\n".join(f"  •  slice {s.slice_index}  (id {s.id})" for s in missing[:8])
     tail = "" if len(missing) <= 8 else f"\n  …and {len(missing) - 8} more"
     QMessageBox.critical(

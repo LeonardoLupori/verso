@@ -8,12 +8,15 @@ draft-discard prompt through the owning :class:`MainWindow`.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PyQt6.QtWidgets import QFileDialog, QMessageBox, QProgressDialog
 
 from verso.gui.utils import warn_errors
+
+_log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -160,6 +163,7 @@ class ExportController:
             try:
                 export_section(section, project, atlas, options, out_dir)
             except Exception as exc:
+                _log.exception("Overlay export failed for %s", section.original_path)
                 errors.append(f"{Path(section.original_path).name}: {exc}")
             progress.setValue(idx + 1)
             QApplication.processEvents()
@@ -242,6 +246,7 @@ class ExportController:
                     page, valid = result
                     entries.append((section.slice_index, page, valid))
             except Exception as exc:
+                _log.exception("Aligned-stack resample failed for %s", section.original_path)
                 errors.append(f"{Path(section.original_path).name}: {exc}")
             progress.setValue(idx + 1)
             QApplication.processEvents()
@@ -258,6 +263,7 @@ class ExportController:
                 ]
                 write_aligned_stack(pages, channel_names, out_path)
             except Exception as exc:
+                _log.exception("Cannot write aligned stack to %s", out_path)
                 errors.append(f"writing stack: {exc}")
 
         progress.close()

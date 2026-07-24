@@ -13,6 +13,7 @@ is currently active, so zoom/pan and channel cache survive mode switches.
 from __future__ import annotations
 
 import contextlib
+import logging
 import os
 from collections.abc import Callable
 from typing import TYPE_CHECKING
@@ -29,6 +30,8 @@ from verso.engine.io.image_io import WORKING_SCALE
 from verso.engine.model.project import Section
 from verso.gui.widgets.canvas import ImageCanvas
 from verso.gui.widgets.channel_display import push_channel_display
+
+_log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from verso.engine.atlas import AtlasVolume
@@ -237,6 +240,7 @@ class SectionCanvasPanel(QWidget):
             self._raw_image = ensure_working_copy(section, self._working_scale)
             self._planes_version += 1
         except RuntimeError as exc:
+            _log.exception("Cannot load working image for %s", section.original_path)
             QMessageBox.warning(self, "Cannot load image", str(exc))
             self.section_loaded.emit(section)
             return

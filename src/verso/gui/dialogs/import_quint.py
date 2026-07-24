@@ -13,6 +13,7 @@ calls the shared folder/thumbnail machinery.
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 
@@ -67,6 +68,8 @@ from verso.gui.dialogs.new_project import (
     generate_thumbnails,
 )
 from verso.gui.utils import require
+
+_log = logging.getLogger(__name__)
 
 _IMAGE_FILTER = (
     "Images (" + " ".join(f"*{ext}" for ext in SUPPORTED_IMAGE_EXTENSIONS) + ");;All files (*)"
@@ -298,6 +301,7 @@ class ImportQuintDialog(QDialog):
         try:
             data = read_quint_document(path)
         except Exception as exc:
+            _log.exception("Cannot parse alignment file %s", path)
             QMessageBox.critical(
                 self, "Cannot read file", f"Could not parse the alignment file:\n\n{exc}"
             )
@@ -624,6 +628,7 @@ class ImportQuintDialog(QDialog):
                 interpolation_axis=SLICING_ORIENTATION_TO_AXIS.get(orientation),
             )
         except Exception as exc:
+            _log.exception("QuickNII import failed to build project from %s", self._json_path)
             QMessageBox.critical(self, "Could not import", f"Failed to build the project:\n\n{exc}")
             return
 
@@ -635,6 +640,7 @@ class ImportQuintDialog(QDialog):
         try:
             populate_metadata(project, folder_path)
         except AtlasUnavailableError as exc:
+            _log.exception("Atlas unavailable while populating metadata for %s", folder_path)
             QMessageBox.critical(
                 self,
                 "Atlas download failed",
@@ -643,6 +649,7 @@ class ImportQuintDialog(QDialog):
             )
             return
         except Exception as exc:
+            _log.exception("Cannot read image metadata for %s", folder_path)
             QMessageBox.critical(
                 self, "Could not import", f"Failed to read image metadata:\n\n{exc}"
             )

@@ -13,6 +13,7 @@ plumbing in that base does not apply here.
 
 from __future__ import annotations
 
+import logging
 import os
 import weakref
 from typing import TYPE_CHECKING
@@ -29,6 +30,8 @@ from verso.gui.utils import require
 from verso.gui.widgets.canvas import ImageCanvas
 from verso.gui.widgets.channel_display import push_channel_display
 from verso.gui.widgets.view_chrome import make_view_status_bar
+
+_log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from verso.engine.model.annotation import Annotation
@@ -219,6 +222,7 @@ class AnnotateView(QWidget):
             )
             self._planes_version += 1
         except RuntimeError as exc:
+            _log.exception("Cannot load working image for %s", section.original_path)
             QMessageBox.warning(self, "Cannot load image", str(exc))
             return
 

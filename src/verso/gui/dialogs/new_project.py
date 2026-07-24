@@ -12,6 +12,7 @@ On accept, call result() to get the configured Project object.
 from __future__ import annotations
 
 import contextlib
+import logging
 import os
 from pathlib import Path
 
@@ -58,6 +59,8 @@ from verso.engine.model.project import (
     Section,
 )
 from verso.gui.utils import require
+
+_log = logging.getLogger(__name__)
 
 # Default per-channel pseudo-color palettes used when seeding Project.channels
 # at project creation time.
@@ -621,6 +624,7 @@ class NewProjectDialog(QDialog):
         try:
             populate_metadata(self._project, folder_path)
         except AtlasUnavailableError as exc:
+            _log.exception("Atlas unavailable while populating metadata for %s", folder_path)
             QMessageBox.critical(
                 self,
                 "Atlas download failed",
@@ -630,6 +634,7 @@ class NewProjectDialog(QDialog):
             )
             return
         except Exception as exc:
+            _log.exception("Cannot read image metadata for %s", folder_path)
             QMessageBox.critical(
                 self,
                 "Could not create project",

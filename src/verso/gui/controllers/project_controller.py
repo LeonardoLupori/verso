@@ -15,6 +15,7 @@ window re-renders. The window reference is kept only to parent modal dialogs.
 from __future__ import annotations
 
 import contextlib
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -24,6 +25,8 @@ from verso.engine.model.alignment import AlignmentStatus
 from verso.engine.model.project import DEFAULT_PROJECT_FILENAME, Project
 from verso.gui.dialogs.new_project import NewProjectDialog
 from verso.gui.utils import warn_if_missing_dimensions
+
+_log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     import numpy as np
@@ -99,6 +102,7 @@ class ProjectController:
             project.save(path)
             self._state.show_status(f"Saved project to {path}")
         except Exception as exc:
+            _log.exception("Cannot save project to %s", path)
             QMessageBox.critical(self._window, "Cannot save project", str(exc))
 
     def import_settings_from_project(self) -> None:
@@ -124,6 +128,7 @@ class ProjectController:
         try:
             source = Project.load(Path(path))
         except Exception as exc:
+            _log.exception("Cannot read project %s for settings import", path)
             QMessageBox.critical(self._window, "Cannot read project", str(exc))
             return
 
@@ -166,6 +171,7 @@ class ProjectController:
             project = Project.load(project_path)
             self._state.load_project(project, project_path)
         except Exception as exc:
+            _log.exception("Cannot open project %s", project_path)
             QMessageBox.critical(self._window, "Cannot open project", str(exc))
 
     def new_project(self) -> None:

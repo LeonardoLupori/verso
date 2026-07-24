@@ -15,6 +15,7 @@ folder is synced on save.
 from __future__ import annotations
 
 import csv
+import logging
 import os
 from collections.abc import Callable
 from pathlib import Path
@@ -37,6 +38,8 @@ from verso.engine.model.annotation import (
     AreaAnnotation,
     PointSeries,
 )
+
+_log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from verso.gui.jobs import BackgroundJob
@@ -246,6 +249,7 @@ class AnnotationController:
             with open(path, newline="", encoding="utf-8") as fh:
                 headers = next(csv.reader(fh), [])
         except OSError as exc:
+            _log.exception("Cannot read points CSV %s", path)
             QMessageBox.critical(self._window, "Cannot read CSV", str(exc))
             return
 
@@ -263,6 +267,7 @@ class AnnotationController:
         try:
             points = load_points_csv(path, x_col, y_col, image_col, default_image)
         except (OSError, KeyError) as exc:
+            _log.exception("Cannot import points from %s", path)
             QMessageBox.critical(self._window, "Cannot import points", str(exc))
             return
 
@@ -488,6 +493,7 @@ class AnnotationController:
         try:
             save_annotations(path.parent, self._annotations)
         except OSError as exc:
+            _log.exception("Cannot save annotations to %s", path.parent)
             QMessageBox.critical(self._window, "Cannot save annotations", str(exc))
             return False
         self._dirty = False

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -32,6 +33,8 @@ from verso.gui.views.base_canvas_view import BaseCanvasView
 from verso.gui.widgets.canvas import ImageCanvas
 from verso.gui.widgets.channel_display import push_channel_display
 from verso.gui.widgets.view_chrome import make_view_status_bar
+
+_log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from verso.gui.state import AppState
@@ -184,6 +187,7 @@ class PrepView(BaseCanvasView):
             )
             self._planes_version += 1
         except RuntimeError as exc:
+            _log.exception("Cannot load working image for %s", section.original_path)
             QMessageBox.warning(self, "Cannot load image", str(exc))
             return
 
