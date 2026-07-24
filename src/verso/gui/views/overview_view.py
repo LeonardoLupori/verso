@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QPoint, QRectF, Qt, pyqtSignal
 from PyQt6.QtGui import (
+    QBrush,
     QColor,
     QDragEnterEvent,
     QDragLeaveEvent,
@@ -18,6 +19,7 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QHeaderView,
     QLabel,
     QMenu,
@@ -45,8 +47,8 @@ _STEPS = ("Flip", "Slice mask", "Align", "Warp")
 
 # Every step renders the same dot; the colour carries the meaning, matching the
 # filmstrip convention (gray = not started, yellow = unsaved edits, green =
-# saved).  See verso.engine.model.status.STATUS_COLOR.
-_DOT = "●"
+# saved).  The cell holds only the colour (ForegroundRole) — _StatusDotDelegate
+# paints the circle.  See verso.engine.model.status.STATUS_COLOR.
 
 _COL_SERIAL = 0
 _COL_FILE = 1
@@ -164,6 +166,41 @@ class _SliceIndexDelegate(QStyledItemDelegate):
 
         painter.setPen(self._TEXT_HOVER if hovered else self._TEXT)
         painter.drawText(option.rect, Qt.AlignmentFlag.AlignCenter, index.data() or "")
+        painter.restore()
+
+
+class _StatusDotDelegate(QStyledItemDelegate):
+    """Paints the per-step status as a filled circle.
+
+    Drawn rather than rendered as a text glyph: the ``::item:selected`` rule in
+    ``_TABLE_STYLE`` recolours item text white, which would wipe out the status
+    colour on the selected row.  Painting the dot ourselves keeps the colour
+    under every state and sizes it independently of the table font.
+    """
+
+    _DIAMETER = 9.0
+
+    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index) -> None:
+        # Let the style paint the cell chrome (alternating band / selection
+        # highlight) but suppress its text, since we draw the dot ourselves.
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        opt.text = ""
+        style = opt.widget.style() if opt.widget is not None else QApplication.style()
+        style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, opt.widget)
+
+        brush = index.data(Qt.ItemDataRole.ForegroundRole)
+        if brush is None:
+            return
+        color = brush.color() if isinstance(brush, QBrush) else QColor(brush)
+
+        r = self._DIAMETER / 2.0
+        center = QRectF(option.rect).center()
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(color)
+        painter.drawEllipse(center, r, r)
         painter.restore()
 
 
@@ -300,6 +337,12 @@ class OverviewView(QWidget):
         # (with a hover affordance) so users see it can be changed.
         t.setMouseTracking(True)
         t.setItemDelegateForColumn(_COL_SERIAL, _SliceIndexDelegate(t))
+
+        # Slice mask / Align / Warp are status dots — painted, not text, so the
+        # selection highlight can't recolour them (see _StatusDotDelegate).
+        dot_delegate = _StatusDotDelegate(t)
+        for col in range(_COL_STEPS_START + 1, _COL_STEPS_START + len(_STEPS)):
+            t.setItemDelegateForColumn(col, dot_delegate)
 
         t.cellDoubleClicked.connect(self._on_double_click)
         t.currentCellChanged.connect(self._on_selection_changed)
@@ -583,7 +626,7 @@ class OverviewView(QWidget):
             warp_status,
         ]
         for i, status in enumerate(dot_statuses):
-            item = self._make_cell(_DOT)
+            item = self._make_cell("")
             item.setForeground(QColor(_STATUS_COLOR[status]))
             t.setItem(row, _COL_STEPS_START + 1 + i, item)
 
