@@ -508,6 +508,8 @@ class JobController:
         )
 
     def _on_batch_auto_cp_done(self, completed: int, errors: list[str]) -> None:
+        import copy
+
         worker = self._auto_cp_job.worker if self._auto_cp_job is not None else None
         project = self._state.project
         total = 0
@@ -517,17 +519,20 @@ class JobController:
                 section = by_id.get(sid)
                 if section is None:
                     continue
-                manual = [cp for cp in section.warp.control_points if not cp.auto]
+                # Snapshot the last-saved warp before mutating so "Clear edits" /
+                # "Discard all" can revert to the genuine baseline - this should work
+                # as with the DeepSlice/batch worflows
+                self._state.set_baseline(sid, "warp", copy.deepcopy(section.warp))
+                manual = [cpy for cpy in section.warp.control_points if not cpy.auto]
                 section.warp.control_points = manual + list(cps)
-                if not section.warp.control_points:
-                    section.warp.status = AlignmentStatus.NOT_STARTED
-                elif manual:
-                    section.warp.status = AlignmentStatus.COMPLETE
-                else:
-                    # Auto-only warp: a proposal awaiting review → yellow.
-                    section.warp.status = AlignmentStatus.IN_PROGRESS
                 total += len(cps)
-        self._project.write_project()
+                # Batch-generated control points are unsaved edits: flag each
+                # section dirty again - same behaviour as batch wflows
+                if section.warp.control_points:
+                    self._state.mark_dirty(sid, "warp")
+                else:
+                    # No points at all: not a draft — drop the baseline we stashed.
+                    self._state.pop_baseline(sid, "warp")
         self._state.notify_sections_changed()
         self._state.show_status(f"Generated {total} control points across {completed} sections")
         warn_errors(
