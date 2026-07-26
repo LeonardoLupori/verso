@@ -143,8 +143,3 @@ def configure_logging(
         "Logging configured: file=%s level=%s", log_file, logging.getLevelName(logger.level)
     )
     return log_file
-
-
-def log_file_path() -> Path | None:
-    """Return the active log file path, or ``None`` if not yet configured."""
-    return _log_file_path

@@ -41,7 +41,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from verso.engine.atlas import AtlasVolume
-    from verso.engine.model.annotation import PointSeries
     from verso.engine.model.project import Project, Section
     from verso.engine.registration import VersoRegistration
 
@@ -428,7 +427,6 @@ def _dots_unit(
     sections: list[Section],
     project_dir: Path,
     options: QuantifyOptions,
-    series: PointSeries,
     coords_by_image: dict,
     agg: RegionAggregator | None,
     intensity_idxs: list[int],
@@ -547,7 +545,6 @@ def quantify_dots(
                 [section],
                 pdir,
                 options,
-                series,
                 coords_by_image,
                 agg,
                 intensity_idxs,
@@ -567,7 +564,6 @@ def quantify_dots(
         proj.sections,
         pdir,
         options,
-        series,
         coords_by_image,
         agg,
         intensity_idxs,
