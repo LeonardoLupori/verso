@@ -185,10 +185,6 @@ class DialogPrefs:
     """
 
     show_align_deletion: bool = True
-    show_overview_tutorial: bool = True
-    show_preprocessing_tutorial: bool = True
-    show_align_tutorial: bool = True
-    show_warp_tutorial: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
