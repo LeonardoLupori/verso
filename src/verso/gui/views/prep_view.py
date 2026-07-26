@@ -295,10 +295,20 @@ class PrepView(BaseCanvasView):
         self._update_mask_overlay()
 
     def mark_flip_changed(self) -> None:
-        """Called by MainWindow after toggling a flip flag on the section."""
+        """Called by MainWindow after toggling a flip flag on the section.
+
+        Recomputes the step's dirty flag instead of latching it True: toggling a
+        flip twice puts the image back in its last-saved orientation, so with no
+        pending mask edit there is nothing left to save and the slice goes clean
+        again (matching the Overview table, which already compares to the
+        baseline).  With no baseline yet the flip counts as an edit.
+        """
         if self._section is None:
             return
-        self._set_dirty(True)
+        if self._saved_state() is None:
+            self._set_dirty(True)
+            return
+        self._set_dirty(self._flip_is_dirty() or self._state.has_working(self._section.id, "prep"))
 
     def has_persisted_state(self) -> bool:
         """Whether Clear has anything to wipe in the project for this slice."""
