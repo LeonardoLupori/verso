@@ -180,10 +180,6 @@ class SectionCanvasPanel(QWidget):
     def channels(self) -> list:
         return self._channels
 
-    @property
-    def overlay_mode(self) -> str:
-        return self._overlay_mode
-
     # ------------------------------------------------------------------
     # State mutators
     # ------------------------------------------------------------------
