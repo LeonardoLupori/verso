@@ -378,18 +378,6 @@ def load_deepslice(path: Path, atlas_name: str = "allen_mouse_25um") -> Project:
 # ---------------------------------------------------------------------------
 
 
-def _flip_anchoring(anchoring: list[float]) -> list[float]:
-    """Convert anchoring from horizontally-flipped display space to original image space.
-
-    When the section is displayed flipped, the user aligns against s_display = 1 - s_original.
-    The equivalent anchoring for the unflipped image is:
-        o' = o + u,  u' = -u,  v' = v
-    """
-    from verso.engine.anchoring import flip_anchoring_horizontal
-
-    return flip_anchoring_horizontal(anchoring)
-
-
 def _to_quicknii_convention(
     anchoring: list[float],
     atlas_shape: tuple[int, int, int],
