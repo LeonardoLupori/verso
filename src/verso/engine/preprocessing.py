@@ -12,7 +12,6 @@ import numpy as np
 
 from verso.engine.model.project import Preprocessing
 
-_FOREGROUND_SENSITIVITY = 0.25
 _MAX_HOLE_SIZE = 3500
 _EROSION_AMOUNT = 3
 
