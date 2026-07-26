@@ -317,6 +317,7 @@ class MainWindow(QMainWindow):
         self._update_slicing_position()
         self._refresh_reset_enabled()
         self._refresh_filmstrip_dots()
+        self._refresh_filmstrip_flips()
         if self._current_mode == "annotate":
             self._annotations.refresh_filmstrip_markers()
         self._update_deepslice_enabled()
@@ -371,6 +372,20 @@ class MainWindow(QMainWindow):
     def _refresh_filmstrip_dots(self) -> None:
         """Recompute all filmstrip status dots for the active view's step."""
         self._filmstrip_status.refresh_all(self._current_mode)
+
+    def _refresh_filmstrip_flips(self) -> None:
+        """Mirror every filmstrip tile to match its section's Prep flips.
+
+        Keeps the strip showing the same orientation as the canvas. Tiles whose
+        flips are unchanged are left alone, and the update is a pixmap transform
+        (no disk I/O), so this is cheap enough to run on every model change.
+        """
+        project = self._state.project
+        if project is None:
+            return
+        for i, section in enumerate(project.sections):
+            prep = section.preprocessing
+            self._filmstrip.set_flip(i, prep.flip_horizontal, prep.flip_vertical)
 
     def _refresh_current_step_dot(self) -> None:
         """Refresh the current section's dot when its status changes without a
@@ -604,6 +619,7 @@ class MainWindow(QMainWindow):
         else:
             prep.flip_vertical = value
         self._prep.mark_flip_changed()
+        self._refresh_filmstrip_flips()
         if self._project.invalidate_alignment_for_flip(section):
             self._overview.refresh_row(self._state.section_index)
             self._refresh_filmstrip_dots()

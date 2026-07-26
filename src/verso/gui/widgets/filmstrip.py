@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from PyQt6.QtCore import QObject, Qt, QThread, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor, QPainter, QPen, QPixmap
+from PyQt6.QtGui import QColor, QPainter, QPen, QPixmap, QTransform
 from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -85,6 +85,9 @@ class _ThumbButton(QLabel):
         self._status_color: str | None = None
         self._status_shape: str = "dot"  # "dot" (step status) or "square" (annotation)
         self._thumbnail: QPixmap | None = None  # original (unscaled) loaded tile
+        self._oriented: QPixmap | None = None  # ``_thumbnail`` with flips applied
+        self._flip_h = False
+        self._flip_v = False
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFixedSize(_THUMB_SIZE + 2 * _BORDER_W, _THUMB_SIZE + 2 * _BORDER_W)
@@ -107,18 +110,41 @@ class _ThumbButton(QLabel):
 
     def set_thumbnail(self, pixmap: QPixmap) -> None:
         self._thumbnail = pixmap
-        scaled = pixmap.scaled(
-            _THUMB_SIZE,
-            _THUMB_SIZE,
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
+        self._render()
+
+    def set_flip(self, flip_h: bool, flip_v: bool) -> None:
+        """Mirror the tile to match the section's Prep flips (as the canvas does)."""
+        if (flip_h, flip_v) == (self._flip_h, self._flip_v):
+            return
+        self._flip_h = flip_h
+        self._flip_v = flip_v
+        if self._thumbnail is not None:
+            self._render()
+
+    def _render(self) -> None:
+        """Apply the current flips to the loaded tile and show it scaled to fit."""
+        if self._thumbnail is None:
+            return
+        oriented = self._thumbnail
+        if self._flip_h or self._flip_v:
+            oriented = oriented.transformed(
+                QTransform().scale(-1.0 if self._flip_h else 1.0, -1.0 if self._flip_v else 1.0)
+            )
+        self._oriented = oriented
+        self.setPixmap(
+            oriented.scaled(
+                _THUMB_SIZE,
+                _THUMB_SIZE,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
         )
-        self.setPixmap(scaled)
         self._apply_border()
 
     def thumbnail(self) -> QPixmap | None:
-        """Return the original loaded tile, or None if still a placeholder."""
-        return self._thumbnail
+        """Return the loaded tile as displayed (flips applied), or None if still
+        a placeholder."""
+        return self._oriented
 
     def set_selected(self, selected: bool) -> None:
         self._selected = selected
@@ -233,9 +259,12 @@ class Filmstrip(QWidget):
             return
 
         # Create all placeholder buttons immediately — no I/O.
-        for i in range(len(sections)):
+        for i, section in enumerate(sections):
             btn = _ThumbButton(i)
             btn.set_status_shape(self._status_shape)
+            prep = getattr(section, "preprocessing", None)
+            if prep is not None:
+                btn.set_flip(bool(prep.flip_horizontal), bool(prep.flip_vertical))
             btn.clicked.connect(self._on_thumb_clicked)
             self._row.insertWidget(self._row.count() - 1, btn)
             self._buttons.append(btn)
@@ -287,6 +316,15 @@ class Filmstrip(QWidget):
         if 0 <= index < len(self._buttons):
             return self._buttons[index].thumbnail()
         return None
+
+    def set_flip(self, index: int, flip_h: bool, flip_v: bool) -> None:
+        """Mirror one tile so it matches the canvas after a Prep flip toggle.
+
+        Purely a transform of the already-loaded pixmap — no disk I/O, so it is
+        safe to call on every toggle.
+        """
+        if 0 <= index < len(self._buttons):
+            self._buttons[index].set_flip(bool(flip_h), bool(flip_v))
 
     def set_current(self, index: int) -> None:
         self._highlight(index)
