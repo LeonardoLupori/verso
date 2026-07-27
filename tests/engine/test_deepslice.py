@@ -743,7 +743,7 @@ def test_true_color_source_is_passed_through_as_rgb(tmp_path: Path, monkeypatch)
     mode, arr = _stage_and_capture(project, monkeypatch)
 
     assert mode == "RGB"
-    assert arr.shape == (40, 50, 3)
+    assert arr.shape == (299, 299, 3)
 
 
 def test_run_deepslice_stages_working_resolution_png_with_display_flips(
@@ -773,7 +773,9 @@ def test_run_deepslice_stages_working_resolution_png_with_display_flips(
         copied = sorted(Path(payload["folder"]).glob("*.png"))
         assert len(copied) == 1
         with Image.open(copied[0]) as staged:
-            assert staged.size == (100, 80)
+            # Staged at DeepSlice's own network input size so its loader's
+            # nearest-neighbour resize becomes a no-op.
+            assert staged.size == (299, 299)
             assert staged.mode == "RGB"
             staged_arr = np.asarray(staged)
         assert staged_arr[-1, -1, 0] > staged_arr[0, 0, 0]

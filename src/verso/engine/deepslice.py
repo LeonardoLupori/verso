@@ -22,6 +22,20 @@ from verso.engine.model.project import Project, Section
 
 _log = logging.getLogger(__name__)
 
+# Side of the square input DeepSlice's Xception expects.  Its loader resizes
+# whatever it is given to exactly (299, 299) — ignoring aspect ratio, with
+# nearest-neighbour — but skips the resize entirely when the file already has
+# that size (keras ``load_img``: ``if img.size != width_height_tuple``).  Staging
+# at 299 therefore hands the network the exact array VERSO computed, and replaces
+# a nearest-neighbour point-sample of a ~2000 px image (which discards ~99.98% of
+# the pixels) with a proper area average.
+#
+# Verified against DeepSlice 1.2.8, which pyproject pins exactly.  If that pin is
+# ever loosened, re-check ``neural_network.load_images_from_path``: a change to
+# ``target_size`` would silently make this resize a lossy extra step rather than
+# a no-op.
+_DEEPSLICE_INPUT_SIDE = 299
+
 
 @dataclass
 class DeepSliceOptions:
@@ -376,6 +390,7 @@ def _copy_registration_images(
             gamma=gamma,
             true_color=_is_true_color_source(section),
         )
+        img = _resize_for_deepslice(img)
         deepslice_nr = _deepslice_section_number(
             section.slice_index, slice_indices, reverse_section_order
         )
@@ -411,6 +426,32 @@ def _deepslice_section_number(
     if not reverse_section_order or len(slice_indices) < 2:
         return slice_index
     return min(slice_indices) + max(slice_indices) - slice_index
+
+
+def _resize_for_deepslice(image):
+    """Area-resize a staged image to the square DeepSlice feeds its network.
+
+    Deliberately square and aspect-distorting: that is what DeepSlice's own
+    loader does (``target_size=(299, 299)`` with ``keep_aspect_ratio=False``),
+    and what its training images went through — *"All input images were
+    grayscaled and downsampled to 299 × 299 pixels"* (Carey et al., Nat Commun
+    2023).  Preserving the aspect ratio here would move the data *away* from the
+    training distribution, not toward it.
+
+    ``INTER_AREA`` is the one deviation: DeepSlice resizes with nearest, which at
+    these reduction factors is close to random point-sampling.  The paper does
+    not state the interpolation used at training time, so this is a considered
+    bet rather than a proven match — see :const:`_DEEPSLICE_INPUT_SIDE`.
+    """
+    import cv2
+    import numpy as np
+
+    side = _DEEPSLICE_INPUT_SIDE
+    arr = np.asarray(image)
+    if arr.shape[:2] == (side, side):
+        return arr
+    resized = cv2.resize(arr, (side, side), interpolation=cv2.INTER_AREA)
+    return np.ascontiguousarray(resized)
 
 
 def _is_true_color_source(section: Section) -> bool:
