@@ -173,7 +173,10 @@ class JobController:
         from verso.gui.dialogs.bad_sections import BadSectionsDialog
 
         dlg = BadSectionsDialog(
-            project.sections, reverse_order=self._deepslice_reverse_axis, parent=self._window
+            project.sections,
+            channels=project.channels,
+            reverse_order=self._deepslice_reverse_axis,
+            parent=self._window,
         )
         if dlg.exec() != BadSectionsDialog.DialogCode.Accepted:
             return

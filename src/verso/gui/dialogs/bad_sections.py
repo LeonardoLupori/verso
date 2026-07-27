@@ -20,8 +20,30 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from verso.engine.model.project import Section
+from verso.engine.model.project import ChannelSpec, Section
 from verso.gui.utils import require
+
+_CHANNEL_HINT_TOOLTIP = (
+    "DeepSlice converts whatever it receives to greyscale, so VERSO sends the "
+    "visible channels combined by a per-pixel maximum.\n\n"
+    "Channel colour and brightness are display-only and do not affect the "
+    "prediction — only visibility does.\n\n"
+    "Hiding sparse signal channels, so DeepSlice sees the anatomical channel "
+    "alone, usually gives the best alignment: most of DeepSlice's training data "
+    "was single-channel anatomy."
+)
+
+
+def _channel_hint_text(channels: list[ChannelSpec]) -> str:
+    """One-line summary of which channels this run will actually use."""
+    if not channels:
+        return "All channels will be combined to greyscale."
+    visible = [c.name for c in channels if c.visible]
+    if not visible:
+        return "No channels are visible — all channels will be used."
+    if len(visible) == 1:
+        return f"Using visible channel: {visible[0]} — converted to greyscale."
+    return f"Using visible channels: {', '.join(visible)} — combined to greyscale."
 
 
 class BadSectionsDialog(QDialog):
@@ -29,11 +51,16 @@ class BadSectionsDialog(QDialog):
 
     Lets the user mark bad sections (passed to ``DSModel.set_bad_sections()``)
     and declare whether section numbering runs posterior→anterior.
+
+    Also surfaces which channels the run will use: ``visible`` is a real input to
+    the alignment, not a display preference, so it should not be something the
+    user has to know from reading the engine.
     """
 
     def __init__(
         self,
         sections: list[Section],
+        channels: list[ChannelSpec] | None = None,
         reverse_order: bool = False,
         parent: QWidget | None = None,
     ) -> None:
@@ -45,6 +72,19 @@ class BadSectionsDialog(QDialog):
         self._checkboxes: list[tuple[str, QCheckBox]] = []  # (section_id, checkbox)
 
         layout = QVBoxLayout(self)
+
+        # --- channel hint ---
+        # Mildly highlighted, not a warning: this is context, not a problem.
+        # Palette roles rather than literal colours so it tracks light/dark themes.
+        self._channel_hint = QLabel(_channel_hint_text(list(channels or [])))
+        self._channel_hint.setWordWrap(True)
+        self._channel_hint.setToolTip(_CHANNEL_HINT_TOOLTIP)
+        self._channel_hint.setStyleSheet(
+            "QLabel { background: palette(alternate-base);"
+            " border: 1px solid palette(mid);"
+            " border-radius: 4px; padding: 6px; }"
+        )
+        layout.addWidget(self._channel_hint)
 
         # --- section order option ---
         # Unticked is VERSO's default direction (posterior → anterior as
