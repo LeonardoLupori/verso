@@ -350,10 +350,9 @@ def _copy_registration_images(
     copying an original-resolution source.  The ``_s{serial}`` suffix is what
     DeepSlice's ``number_sections`` regex parses to recover ``nr``.
 
-    When *channels* is supplied (the project's :class:`ChannelSpec` list), the
-    same composite the user sees in VERSO is sent to DeepSlice — important for
-    multi-channel fluorescence, where a raw ``max(channels)`` composite can
-    look nothing like the Nissl images DeepSlice was trained on.
+    When *channels* is supplied (the project's :class:`ChannelSpec` list), only
+    the ``visible`` flags are read — see :func:`_format_deepslice_image` for why
+    the rest of the display settings are deliberately ignored.
     """
     from PIL import Image
 
@@ -375,6 +374,7 @@ def _copy_registration_images(
             flip_vertical=section.preprocessing.flip_vertical,
             channels=channels,
             gamma=gamma,
+            true_color=_is_true_color_source(section),
         )
         deepslice_nr = _deepslice_section_number(
             section.slice_index, slice_indices, reverse_section_order
@@ -413,6 +413,17 @@ def _deepslice_section_number(
     return min(slice_indices) + max(slice_indices) - slice_index
 
 
+def _is_true_color_source(section: Section) -> bool:
+    """Whether a section's original is a consumer-format (true-colour) image.
+
+    Mirrors the rule ``_default_channel_specs`` uses to pick a palette: JPEG/PNG
+    sources are photographs whose planes really are R/G/B, everything else is
+    treated as scientific multi-channel data.  Derived from the file, never from
+    the display settings, so it cannot drift when the user recolours a channel.
+    """
+    return Path(section.original_path).suffix.lower() in (".jpg", ".jpeg", ".png")
+
+
 def _format_deepslice_image(
     image,
     *,
@@ -420,47 +431,88 @@ def _format_deepslice_image(
     flip_vertical: bool = False,
     channels=None,
     gamma: float = 1.0,
+    true_color: bool = False,
 ):
-    """Convert VERSO's working HWC image into an RGB uint8 PNG payload.
+    """Convert VERSO's working HWC image into a greyscale uint8 PNG payload.
 
-    With *channels* provided, uses the project's compositing (the same the user
-    sees in VERSO) so DeepSlice receives the user-chosen view of the data.
-    Without channels, falls back to a per-pixel max composite.
+    DeepSlice greyscales everything it is given before inference — its generator
+    applies ``skimage.color.rgb2gray`` (``0.2125·R + 0.7154·G + 0.0721·B``) and
+    feeds the result to Xception as three identical planes.  Training used the
+    same preprocessing: *"All input images were grayscaled and downsampled to
+    299 × 299 pixels"* (Carey et al., Nat Commun 2023).  Emitting greyscale here
+    is therefore lossless with respect to what the network can see, and — since
+    those three weights sum to 1.0 — makes ``rgb2gray`` an identity, so a channel's
+    display colour can no longer act as a hidden per-channel weight.
+
+    Only ``ChannelSpec.visible`` is honoured.  ``color``, ``scale`` and ``gamma``
+    are display-only: letting them through made the predicted alignment depend on
+    wherever the user last left a brightness slider.  Dropping ``scale`` costs no
+    contrast protection either, because :func:`~verso.engine.io.image_io.ensure_working_copy`
+    has already percentile-stretched every stored plane (1st–99.8th) and clipped
+    its outliers.
+
+    Visible planes are combined with a per-pixel ``max`` (Fiji-style, and what
+    ``load_filmstrip_thumbnail`` / ``detect_foreground`` already do).  Note that
+    the upstream stretch is *per channel*, so a sparse signal channel is scaled to
+    the same full range as a dense anatomical one and its dots will reach white.
+    That is in-distribution — the Allen Connectivity training images are bright
+    sparse reporter over dim autofluorescence — but hiding signal channels so
+    DeepSlice sees anatomy alone is closer still to the synthetic sections cut
+    from single scalar volumes that dominate the training set.
+
+    *true_color* marks a genuine RGB photograph (see :func:`_is_true_color_source`),
+    which is passed through as RGB so DeepSlice's own luminance conversion — the
+    correct reduction for a brightfield photo — does the work instead of ``max``.
 
     *gamma* < 1 lifts midtones and compresses highlights, which makes a few-hot-
     cells fluorescence image look more like a 2pst/Nissl autofluorescence frame
-    (closer to what DeepSlice was trained on).
+    (closer to what DeepSlice was trained on).  It survives DeepSlice's own
+    ``x /= std(x)`` normalisation, which cancels only linear scaling.
     """
     import numpy as np
 
     arr = np.asarray(image)
-    if arr.ndim == 3 and channels:
-        from verso.engine.preprocessing import composite_channels
-
-        rgb = composite_channels(arr, channels)
-    elif arr.ndim == 2:
-        rgb = np.stack([arr, arr, arr], axis=2)
+    if arr.ndim == 2:
+        out = arr
     elif arr.ndim == 3 and arr.shape[2] == 1:
-        rgb = np.repeat(arr, 3, axis=2)
-    elif arr.ndim == 3 and arr.shape[2] in (3, 4):
-        rgb = arr[:, :, :3]
+        out = arr[:, :, 0]
+    elif arr.ndim == 3 and true_color and arr.shape[2] in (3, 4):
+        out = arr[:, :, :3]
     elif arr.ndim == 3:
-        gray = arr.max(axis=2)
-        rgb = np.stack([gray, gray, gray], axis=2)
+        out = _visible_max_projection(arr, channels)
     else:
         raise DeepSliceError(f"Unsupported image shape for DeepSlice: {arr.shape}")
 
-    rgb = rgb.astype(np.uint8, copy=False)
+    out = out.astype(np.uint8, copy=False)
     if gamma is not None and gamma > 0 and gamma != 1.0:
         # Apply gamma in [0, 1] space, then map back to uint8.
-        normalized = rgb.astype(np.float32) / 255.0
-        rgb = (np.power(normalized, float(gamma)) * 255.0).clip(0, 255).astype(np.uint8)
+        normalized = out.astype(np.float32) / 255.0
+        out = (np.power(normalized, float(gamma)) * 255.0).clip(0, 255).astype(np.uint8)
 
     if flip_horizontal:
-        rgb = np.flip(rgb, axis=1)
+        out = np.flip(out, axis=1)
     if flip_vertical:
-        rgb = np.flip(rgb, axis=0)
-    return np.ascontiguousarray(rgb)
+        out = np.flip(out, axis=0)
+    return np.ascontiguousarray(out)
+
+
+def _visible_max_projection(arr, channels):
+    """Max-project the planes of ``arr`` whose :class:`ChannelSpec` is visible.
+
+    Falls back to projecting every plane when no specs are supplied or when the
+    user has hidden all of them — an all-hidden project used to stage pure black
+    PNGs and produce silently meaningless predictions.
+
+    Specs are matched to planes positionally, the same convention
+    :func:`~verso.engine.preprocessing.composite_channels` uses; surplus planes
+    and surplus specs are both ignored.
+    """
+    specs = list(channels or [])
+    n = min(arr.shape[2], len(specs))
+    keep = [i for i in range(n) if getattr(specs[i], "visible", True)]
+    if not keep:
+        return arr.max(axis=2)
+    return arr[:, :, keep].max(axis=2)
 
 
 def _runner_script() -> str:

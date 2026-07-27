@@ -13,6 +13,7 @@ from verso.engine.anchoring import (
     unpack_series_anchoring,
 )
 from verso.engine.deepslice import (
+    DeepSliceOptions,
     DeepSliceRunResult,
     DeepSliceSectionSuggestion,
     apply_deepslice_suggestions,
@@ -587,29 +588,37 @@ def test_run_deepslice_applies_gamma_to_staged_png(tmp_path: Path, monkeypatch):
     assert 175 <= captured["mean"] <= 185
 
 
-def test_run_deepslice_uses_channel_composite_for_multichannel(tmp_path: Path, monkeypatch):
-    """With ``project.channels`` set, the staged PNG should match the user's
-    on-screen composite rather than the raw ``max(channels)`` fallback."""
-    img_path = tmp_path / "s001.png"
-    Image.new("RGB", (50, 40)).save(img_path)
-    project = Project(
+def _make_multichannel_project(tmp_path: Path, planes: np.ndarray, channels) -> Project:
+    """Project whose single section has *planes* ``(H, W, C)`` as its working copy.
+
+    Written as an OME-TIFF so ``ensure_working_copy`` loads it verbatim — a
+    ``.png`` original would instead take the true-colour passthrough.
+    """
+    from verso.engine.io.image_io import _save_ome_tiff
+
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    original = tmp_path / "s001.tif"
+    thumb = tmp_path / "s001-thumb.ome.tif"
+    _save_ome_tiff(planes, thumb, channel_names=[f"Ch {i}" for i in range(planes.shape[2])])
+    _save_ome_tiff(planes, original, channel_names=[f"Ch {i}" for i in range(planes.shape[2])])
+    return Project(
         name="multich",
         atlas=AtlasRef(name="allen_mouse_25um"),
-        sections=[Section("s001", 1, str(img_path), str(img_path))],
-        channels=[
-            ChannelSpec(name="DAPI", color=(0, 0, 255)),
-            ChannelSpec(name="GFP", color=(0, 255, 0)),
-            ChannelSpec(name="Cy5", color=(255, 0, 0)),
-        ],
+        sections=[Section("s001", 1, str(original), str(thumb))],
+        channels=list(channels),
     )
 
-    captured: dict[str, tuple] = {}
+
+def _stage_and_capture(project: Project, monkeypatch) -> np.ndarray:
+    """Run DeepSlice with a stubbed subprocess and return the staged PNG array."""
+    captured: dict[str, object] = {}
 
     def fake_run(args, check, capture_output, text, **kwargs):
         payload = json.loads(args[3])
         copied = sorted(Path(payload["folder"]).glob("*.png"))
         with Image.open(copied[0]) as staged:
-            captured["info"] = (staged.mode, staged.size)
+            captured["mode"] = staged.mode
+            captured["array"] = np.asarray(staged).copy()
         output = Path(payload["output_base"]).with_suffix(".json")
         output.write_text(
             json.dumps(
@@ -623,10 +632,118 @@ def test_run_deepslice_uses_channel_composite_for_multichannel(tmp_path: Path, m
         return subprocess.CompletedProcess(args, 0, stdout="ok", stderr="")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
+    run_deepslice_suggestions(project, DeepSliceOptions(gamma=1.0))
+    return captured["mode"], captured["array"]
 
-    run_deepslice_suggestions(project)
 
-    assert captured["info"] == ("RGB", (50, 40))
+def _three_planes() -> np.ndarray:
+    """(20, 20, 3) uint8 with a distinct constant value per plane."""
+    planes = np.zeros((20, 20, 3), dtype=np.uint8)
+    planes[:, :, 0] = 40
+    planes[:, :, 1] = 90
+    planes[:, :, 2] = 200
+    return planes
+
+
+def test_staged_png_is_grayscale_max_of_visible_planes(tmp_path: Path, monkeypatch):
+    """Multichannel sections stage as mode-L max-projection, not an RGB composite."""
+    channels = [ChannelSpec(name=f"Ch {i}") for i in range(3)]
+    project = _make_multichannel_project(tmp_path, _three_planes(), channels)
+
+    mode, arr = _stage_and_capture(project, monkeypatch)
+
+    assert mode == "L"
+    assert arr.ndim == 2
+    assert np.all(arr == 200)  # max(40, 90, 200)
+
+
+def test_staged_png_ignores_channel_color(tmp_path: Path, monkeypatch):
+    """Recolouring a channel must not change a single byte DeepSlice sees.
+
+    Colour used to act as a hidden per-channel weight via ``rgb2gray``.
+    """
+    planes = _three_planes()
+    white = [ChannelSpec(name=f"Ch {i}") for i in range(3)]
+    tinted = [
+        ChannelSpec(name="Ch 0", color=(255, 0, 0)),
+        ChannelSpec(name="Ch 1", color=(0, 255, 0)),
+        ChannelSpec(name="Ch 2", color=(0, 0, 255)),
+    ]
+
+    _, baseline = _stage_and_capture(
+        _make_multichannel_project(tmp_path, planes, white), monkeypatch
+    )
+    _, recoloured = _stage_and_capture(
+        _make_multichannel_project(tmp_path / "b", planes, tinted), monkeypatch
+    )
+
+    assert np.array_equal(baseline, recoloured)
+
+
+def test_staged_png_ignores_channel_scale_and_gamma(tmp_path: Path, monkeypatch):
+    """Brightness/gamma sliders are display-only and must not move the prediction."""
+    planes = _three_planes()
+    plain = [ChannelSpec(name=f"Ch {i}") for i in range(3)]
+    adjusted = [ChannelSpec(name=f"Ch {i}", scale=0.2, gamma=2.5) for i in range(3)]
+
+    _, baseline = _stage_and_capture(
+        _make_multichannel_project(tmp_path, planes, plain), monkeypatch
+    )
+    _, tweaked = _stage_and_capture(
+        _make_multichannel_project(tmp_path / "b", planes, adjusted), monkeypatch
+    )
+
+    assert np.array_equal(baseline, tweaked)
+
+
+def test_hiding_a_channel_changes_the_staged_png(tmp_path: Path, monkeypatch):
+    """Visibility is the one display control that is *meant* to be an input."""
+    planes = _three_planes()
+    all_visible = [ChannelSpec(name=f"Ch {i}") for i in range(3)]
+    brightest_hidden = [
+        ChannelSpec(name="Ch 0"),
+        ChannelSpec(name="Ch 1"),
+        ChannelSpec(name="Ch 2", visible=False),
+    ]
+
+    _, everything = _stage_and_capture(
+        _make_multichannel_project(tmp_path, planes, all_visible), monkeypatch
+    )
+    _, reduced = _stage_and_capture(
+        _make_multichannel_project(tmp_path / "b", planes, brightest_hidden), monkeypatch
+    )
+
+    assert np.all(everything == 200)
+    assert np.all(reduced == 90)  # max(40, 90), the 200 plane excluded
+
+
+def test_all_channels_hidden_falls_back_to_every_plane(tmp_path: Path, monkeypatch):
+    """An all-hidden project used to stage pure black PNGs and predict nonsense."""
+    channels = [ChannelSpec(name=f"Ch {i}", visible=False) for i in range(3)]
+    project = _make_multichannel_project(tmp_path, _three_planes(), channels)
+
+    mode, arr = _stage_and_capture(project, monkeypatch)
+
+    assert mode == "L"
+    assert np.all(arr == 200)
+    assert arr.max() > 0
+
+
+def test_true_color_source_is_passed_through_as_rgb(tmp_path: Path, monkeypatch):
+    """JPEG/PNG originals are photographs: let DeepSlice's own luminance reduce them."""
+    img_path = tmp_path / "s001.png"
+    Image.new("RGB", (50, 40), color=(40, 90, 200)).save(img_path)
+    project = Project(
+        name="photo",
+        atlas=AtlasRef(name="allen_mouse_25um"),
+        sections=[Section("s001", 1, str(img_path), str(img_path))],
+        channels=[ChannelSpec(name=f"Ch {i}") for i in range(3)],
+    )
+
+    mode, arr = _stage_and_capture(project, monkeypatch)
+
+    assert mode == "RGB"
+    assert arr.shape == (40, 50, 3)
 
 
 def test_run_deepslice_stages_working_resolution_png_with_display_flips(
