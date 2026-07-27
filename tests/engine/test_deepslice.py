@@ -591,8 +591,7 @@ def test_run_deepslice_applies_gamma_to_staged_png(tmp_path: Path, monkeypatch):
 def _make_multichannel_project(tmp_path: Path, planes: np.ndarray, channels) -> Project:
     """Project whose single section has *planes* ``(H, W, C)`` as its working copy.
 
-    Written as an OME-TIFF so ``ensure_working_copy`` loads it verbatim — a
-    ``.png`` original would instead take the true-colour passthrough.
+    Written as an OME-TIFF so ``ensure_working_copy`` loads it verbatim.
     """
     from verso.engine.io.image_io import _save_ome_tiff
 
@@ -729,21 +728,56 @@ def test_all_channels_hidden_falls_back_to_every_plane(tmp_path: Path, monkeypat
     assert arr.max() > 0
 
 
-def test_true_color_source_is_passed_through_as_rgb(tmp_path: Path, monkeypatch):
-    """JPEG/PNG originals are photographs: let DeepSlice's own luminance reduce them."""
+def _png_source_project(tmp_path: Path, channels) -> Project:
+    """Single-section project whose original is a flat ``(40, 90, 200)`` PNG.
+
+    The flat colour survives ``_stretch_per_channel`` untouched (a zero-range
+    uint8 plane is returned verbatim), so each gun arrives at DeepSlice staging
+    as its literal value.
+    """
+    tmp_path.mkdir(parents=True, exist_ok=True)
     img_path = tmp_path / "s001.png"
     Image.new("RGB", (50, 40), color=(40, 90, 200)).save(img_path)
-    project = Project(
+    return Project(
         name="photo",
         atlas=AtlasRef(name="allen_mouse_25um"),
         sections=[Section("s001", 1, str(img_path), str(img_path))],
-        channels=[ChannelSpec(name=f"Ch {i}") for i in range(3)],
+        channels=list(channels),
     )
+
+
+def test_png_source_is_greyscaled_like_any_other_section(tmp_path: Path, monkeypatch):
+    """A JPEG/PNG import takes the same staging path as an OME-TIFF one.
+
+    Its planes were a photograph's R/G/B once, but ``ensure_working_copy``
+    percentile-stretches each of them *independently* at import, so there is no
+    photograph left to hand to DeepSlice's own luminance conversion.
+    """
+    project = _png_source_project(tmp_path, [ChannelSpec(name=f"Ch {i}") for i in range(3)])
 
     mode, arr = _stage_and_capture(project, monkeypatch)
 
-    assert mode == "RGB"
-    assert arr.shape == (299, 299, 3)
+    assert mode == "L"
+    assert arr.shape == (299, 299)
+    assert np.all(arr == 200)  # max(40, 90, 200)
+
+
+def test_hiding_a_channel_works_for_a_png_source(tmp_path: Path, monkeypatch):
+    """Visibility used to be inert for true-colour imports.
+
+    That was not a corner case: the QUINT import path produces ``-thumb.png``
+    working images, so the dialog's "Using visible channels…" hint was false for
+    every QuickNII/VisuAlign project.
+    """
+    channels = [
+        ChannelSpec(name="Ch 0"),
+        ChannelSpec(name="Ch 1"),
+        ChannelSpec(name="Ch 2", visible=False),
+    ]
+
+    _, arr = _stage_and_capture(_png_source_project(tmp_path, channels), monkeypatch)
+
+    assert np.all(arr == 90)  # max(40, 90), the 200 gun excluded
 
 
 def test_run_deepslice_stages_working_resolution_png_with_display_flips(
@@ -776,9 +810,9 @@ def test_run_deepslice_stages_working_resolution_png_with_display_flips(
             # Staged at DeepSlice's own network input size so its loader's
             # nearest-neighbour resize becomes a no-op.
             assert staged.size == (299, 299)
-            assert staged.mode == "RGB"
+            assert staged.mode == "L"
             staged_arr = np.asarray(staged)
-        assert staged_arr[-1, -1, 0] > staged_arr[0, 0, 0]
+        assert staged_arr[-1, -1] > staged_arr[0, 0]
         output = Path(payload["output_base"]).with_suffix(".json")
         output.write_text(
             json.dumps(

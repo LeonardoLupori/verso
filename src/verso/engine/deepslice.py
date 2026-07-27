@@ -388,7 +388,6 @@ def _copy_registration_images(
             flip_vertical=section.preprocessing.flip_vertical,
             channels=channels,
             gamma=gamma,
-            true_color=_is_true_color_source(section),
         )
         img = _resize_for_deepslice(img)
         deepslice_nr = _deepslice_section_number(
@@ -454,17 +453,6 @@ def _resize_for_deepslice(image):
     return np.ascontiguousarray(resized)
 
 
-def _is_true_color_source(section: Section) -> bool:
-    """Whether a section's original is a consumer-format (true-colour) image.
-
-    Mirrors the rule ``_default_channel_specs`` uses to pick a palette: JPEG/PNG
-    sources are photographs whose planes really are R/G/B, everything else is
-    treated as scientific multi-channel data.  Derived from the file, never from
-    the display settings, so it cannot drift when the user recolours a channel.
-    """
-    return Path(section.original_path).suffix.lower() in (".jpg", ".jpeg", ".png")
-
-
 def _format_deepslice_image(
     image,
     *,
@@ -472,7 +460,6 @@ def _format_deepslice_image(
     flip_vertical: bool = False,
     channels=None,
     gamma: float = 1.0,
-    true_color: bool = False,
 ):
     """Convert VERSO's working HWC image into a greyscale uint8 PNG payload.
 
@@ -501,9 +488,15 @@ def _format_deepslice_image(
     DeepSlice sees anatomy alone is closer still to the synthetic sections cut
     from single scalar volumes that dominate the training set.
 
-    *true_color* marks a genuine RGB photograph (see :func:`_is_true_color_source`),
-    which is passed through as RGB so DeepSlice's own luminance conversion — the
-    correct reduction for a brightfield photo — does the work instead of ``max``.
+    Every section takes this one path, including JPEG/PNG imports whose planes
+    were once a photograph's R/G/B.  There is no photograph left to preserve by
+    then: ``ensure_working_copy`` percentile-stretches each plane *independently*,
+    so the relationship between the guns is gone before this function ever sees
+    them, and a branch keyed on the original file's extension would be reading a
+    fact about a file VERSO stopped opening at import.  Reducing everything the
+    same way is also what makes ``visible`` mean the same thing everywhere — for
+    an RGB import, hiding two guns is a real (and for a saturated stain, useful)
+    lever rather than a no-op.
 
     *gamma* < 1 lifts midtones and compresses highlights, which makes a few-hot-
     cells fluorescence image look more like a 2pst/Nissl autofluorescence frame
@@ -517,8 +510,6 @@ def _format_deepslice_image(
         out = arr
     elif arr.ndim == 3 and arr.shape[2] == 1:
         out = arr[:, :, 0]
-    elif arr.ndim == 3 and true_color and arr.shape[2] in (3, 4):
-        out = arr[:, :, :3]
     elif arr.ndim == 3:
         out = _visible_max_projection(arr, channels)
     else:
