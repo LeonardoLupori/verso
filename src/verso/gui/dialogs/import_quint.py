@@ -611,10 +611,10 @@ class ImportQuintDialog(QDialog):
         if not self._confirm_aspect_ratios(original_paths):
             return
 
+        # Only the project folder itself is created here; thumbnails/, masks/ and
+        # exports/ are each made by whatever first writes into them (thumbnails/ by
+        # the generate_thumbnails call below), so no empty folders are left behind.
         folder_path.mkdir(parents=True, exist_ok=True)
-        (folder_path / "thumbnails").mkdir(exist_ok=True)
-        (folder_path / "masks").mkdir(exist_ok=True)
-        (folder_path / "exports").mkdir(exist_ok=True)
         project_path = folder_path / f"{slug}_verso.json"
 
         orientation = self._orientation_combo.currentData() or "coronal"

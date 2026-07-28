@@ -12,7 +12,7 @@ The JSON filename defaults to `project-verso.json`
 ```
 my_experiment/
     project-verso.json     # all project state, settings, metadata
-    thumbnails/            # working-resolution OME-TIFFs + filmstrip PNGs
+    thumbnails/            # working-resolution OME-TIFFs
     masks/                 # slice masks as 1-bit PNGs
     annotations/           # point series (points.csv) + area masks, one folder each
     exports/               # export outputs (images with overlays, aligned stacks, etc.)
@@ -20,6 +20,23 @@ my_experiment/
             intensity.csv / area.csv / dots.csv / dots_regions.csv   # pooled tables
             <image-slug>/  # only when "Separate output per slice" is on: same files per section
 ```
+
+**Subfolders are created lazily.** Project creation makes only the folder and the
+JSON; each subfolder appears when something first writes into it — `thumbnails/`
+via `ensure_working_copy` (`engine/io/image_io.py`), `masks/` via `save_mask`
+(`engine/preprocessing.py`), `annotations/` via `save_annotations`
+(`engine/io/annotation_io.py`), `exports/` via the export writers
+(`engine/io/export_stack.py`, `quant_export.py`, `export_images.py`). A new writer
+must `mkdir(parents=True, exist_ok=True)` its own parent, and every reader must
+tolerate the folder being absent (`.exists()` guard).
+
+In practice `thumbnails/` always exists once a project is successfully created:
+both the New Project and Import QUINT dialogs run `generate_thumbnails`, and the
+`populate_metadata` pass that follows regenerates any thumbnail still missing
+(including when the user hit Skip) because it needs `resolution_thumbnail_wh`.
+Skip therefore only forgoes the progress dialog, not the work. Missing thumbnails
+are never fatal regardless — every consumer goes through `ensure_working_copy`,
+which regenerates from the original on demand.
 
 Quantification CSVs are written by `engine/io/quant_export.py`; each run gets its
 own timestamped folder. Pooled runs write the tables at the top level; per-slice

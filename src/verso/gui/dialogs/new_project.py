@@ -546,8 +546,11 @@ class NewProjectDialog(QDialog):
             return
 
         # A project is a self-contained folder named after the project, created
-        # inside the location the user picked. The JSON and every subfolder live
-        # inside it; the user never names the file directly.
+        # inside the location the user picked. The JSON lives inside it and the
+        # user never names the file directly. Subfolders (thumbnails/, masks/,
+        # exports/, annotations/) are not scaffolded here: each is created by
+        # whatever writes the first file into it, so a project never carries an
+        # empty folder for a step the user has not reached.
         slug = _slugify_project_name(name)
         folder_path = Path(location) / slug
         if folder_path.exists() and any(folder_path.iterdir()):
@@ -560,9 +563,6 @@ class NewProjectDialog(QDialog):
             )
             return
         folder_path.mkdir(parents=True, exist_ok=True)
-        (folder_path / "thumbnails").mkdir(exist_ok=True)
-        (folder_path / "masks").mkdir(exist_ok=True)
-        (folder_path / "exports").mkdir(exist_ok=True)
 
         project_path = folder_path / f"{slug}_verso.json"
 

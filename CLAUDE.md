@@ -121,10 +121,13 @@ User projects are folders, not single files:
 ```
 my_experiment/
     project-verso.json   # all state, settings, metadata (DEFAULT_PROJECT_FILENAME)
-    thumbnails/          # working-resolution OME-TIFFs + filmstrip PNGs
+    thumbnails/          # working-resolution OME-TIFFs
     masks/               # slice masks (1-bit PNG)
+    annotations/         # point series + area masks, one folder each
     exports/             # export outputs (warped images, etc.)
 ```
+
+Only the project folder and its JSON are created up front. **Every subfolder is created on demand by whatever writes the first file into it** — `thumbnails/` by `ensure_working_copy`, `masks/` by `save_mask`, `annotations/` by `save_annotations`, `exports/` by the export writers. Never scaffold them eagerly: a project should not carry an empty folder for a step the user has not reached. Correspondingly, every reader must guard with `.exists()`.
 
 Original images are referenced by path in `section.original_path`, not copied. See [.claude/data-model.md](.claude/data-model.md) for the JSON schema.
 

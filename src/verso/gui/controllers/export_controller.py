@@ -535,7 +535,13 @@ class ExportController:
         return titles
 
     def _show_export_done(self, out_dir: Path, message: str) -> None:
-        """Completion box with an "Open folder" shortcut to the export dir."""
+        """Completion box with an "Open folder" shortcut to the export dir.
+
+        ``exports/`` is created by whichever writer produces the first file, so a
+        run that wrote nothing (cancelled, or a quantification with no tables)
+        leaves it absent. The button is offered only when the folder really
+        exists, rather than opening a path that is not there.
+        """
         from PyQt6.QtCore import QUrl
         from PyQt6.QtGui import QDesktopServices
 
@@ -543,8 +549,12 @@ class ExportController:
         box.setIcon(QMessageBox.Icon.Information)
         box.setWindowTitle("Export complete")
         box.setText(message)
-        open_btn = box.addButton("Open folder", QMessageBox.ButtonRole.ActionRole)
+        open_btn = (
+            box.addButton("Open folder", QMessageBox.ButtonRole.ActionRole)
+            if out_dir.exists()
+            else None
+        )
         box.addButton(QMessageBox.StandardButton.Ok)
         box.exec()
-        if box.clickedButton() is open_btn:
+        if open_btn is not None and box.clickedButton() is open_btn:
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(out_dir)))
