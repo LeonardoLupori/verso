@@ -180,6 +180,52 @@ def test_apply_deepslice_suggestions_converts_quicknii_convention(tmp_path: Path
     ]
 
 
+def test_apply_deepslice_suggestions_rescales_for_non_25um_atlas(tmp_path: Path):
+    """DeepSlice always predicts in the Allen 25 µm grid.
+
+    Applying it to a 10 µm project must rescale the voxel coordinates by the
+    per-axis extent ratio (×2.5) *before* the QuickNII→BrainGlobe convention
+    flip, or the plane lands 2.5× too small and at the wrong depth. Without the
+    rescale a 25 µm ``oz`` was flipped against the 10 µm ``dv_max``, placing the
+    section hundreds of voxels away from where it belongs.
+    """
+    project = _make_project(tmp_path)
+    project.atlas = AtlasRef(name="allen_mouse_10um")
+    # Raw DeepSlice (25 µm QuickNII) anchoring.
+    raw = [10.0, 400.0, 100.0, 20.0, -3.0, -4.0, 5.0, -6.0, -7.0]
+    result = DeepSliceRunResult(
+        run_id="run-1",
+        suggestions=[
+            DeepSliceSectionSuggestion(
+                filename="s001_s001.png",
+                slice_index=1,
+                anchoring=raw,
+            )
+        ],
+    )
+
+    # 10 µm atlas shape (AP, DV, LR) — exactly 2.5× the 25 µm reference.
+    apply_deepslice_suggestions_with_atlas(
+        project,
+        result,
+        atlas_shape=(1320, 800, 1140),
+    )
+
+    # rescale ×2.5 → [25, 1000, 250, 50, -7.5, -10, 12.5, -15, -17.5], then flip
+    # AP/DV about N-1: oy = 1319 - 1000 = 319, oz = 799 - 250 = 549.
+    assert project.sections[0].alignment.current_anchoring == [
+        25.0,
+        319.0,
+        549.0,
+        50.0,
+        7.5,
+        10.0,
+        12.5,
+        15.0,
+        17.5,
+    ]
+
+
 def test_apply_deepslice_suggestions_does_not_mirror_for_reversed_section_order(
     tmp_path: Path,
 ):

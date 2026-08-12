@@ -36,6 +36,15 @@ _log = logging.getLogger(__name__)
 # a no-op.
 _DEEPSLICE_INPUT_SIDE = 299
 
+# DeepSlice's mouse model always predicts in the Allen CCFv3 25 µm voxel grid,
+# regardless of which atlas the VERSO project targets.  This is the reference
+# volume shape (AP, DV, LR) those anchoring coordinates live in; on apply they
+# are rescaled from it into the project atlas's own grid (see
+# :func:`_rescale_anchoring_between_atlases`).  Skipping that rescale placed a
+# 25 µm plane straight into e.g. a 10 µm project, landing it at the wrong depth
+# and 2.5× too small.
+_DEEPSLICE_REFERENCE_SHAPE: tuple[int, int, int] = (528, 320, 456)
+
 
 @dataclass
 class DeepSliceOptions:
@@ -193,10 +202,14 @@ def apply_deepslice_suggestions_with_atlas(
     """Apply DeepSlice suggestions to project sections.
 
     Suggestions from :func:`run_deepslice_suggestions` carry anchorings in raw
-    QuickNII convention as written by DeepSlice.  ``_to_quicknii_convention``
-    (which is self-inverse) is applied here to convert them to the BrainGlobe
-    convention that VERSO uses internally.  Pass *atlas_shape* as
-    ``(AP, DV, LR)`` voxel dimensions; if ``None`` no conversion is applied.
+    QuickNII convention as written by DeepSlice, in the Allen 25 µm voxel grid
+    (:data:`_DEEPSLICE_REFERENCE_SHAPE`).  Two steps convert each to the
+    BrainGlobe convention VERSO uses internally at the project atlas's own
+    resolution: first :func:`_rescale_anchoring_between_atlases` scales the
+    voxel coordinates from the 25 µm grid into *atlas_shape*, then
+    ``_to_quicknii_convention`` (self-inverse) mirrors the AP/DV axes.  Pass
+    *atlas_shape* as ``(AP, DV, LR)`` voxel dimensions; if ``None`` neither step
+    is applied.
 
     DeepSlice ≥1.2.7 auto-detects the indexing direction from image content
     (``enforce_section_ordering``), so the staged-filename ``_s{nr}`` reflection
@@ -247,7 +260,13 @@ def apply_deepslice_suggestions_with_atlas(
             # and let the interpolation pass below fill it in.
             continue
         raw = list(suggestion.anchoring)
-        anchoring = _to_quicknii_convention(raw, atlas_shape) if atlas_shape is not None else raw
+        if atlas_shape is not None:
+            scaled = _rescale_anchoring_between_atlases(
+                raw, _DEEPSLICE_REFERENCE_SHAPE, atlas_shape
+            )
+            anchoring = _to_quicknii_convention(scaled, atlas_shape)
+        else:
+            anchoring = raw
         section.alignment.set_auto_proposal(anchoring, source="deepslice")
         section.warp.reset()
         applied_section_ids.add(section.id)
@@ -262,6 +281,37 @@ def apply_deepslice_suggestions_with_atlas(
         filled_ids = _interpolate_bad_sections(project, atlas_shape, applied_section_ids, bad_ids)
 
     return applied_section_ids | filled_ids
+
+
+def _rescale_anchoring_between_atlases(
+    anchoring: list[float],
+    src_shape: tuple[int, int, int],
+    dst_shape: tuple[int, int, int],
+) -> list[float]:
+    """Rescale a 9-float anchoring from one atlas voxel grid to another.
+
+    Anchoring components are atlas *voxel* coordinates, so moving to an atlas of
+    a different resolution multiplies every component by the per-axis ratio of
+    the two volumes' voxel extents (e.g. 25 µm → 10 µm is ×2.5 on every axis).
+    DeepSlice always predicts in the Allen 25 µm grid; a project on a finer or
+    coarser atlas needs this rescale *before* the QuickNII→BrainGlobe convention
+    flip, or the plane lands at the wrong depth and the wrong scale.
+
+    Component order is ``[x=LR, y=AP, z=DV]`` repeated for origin/u/v; both
+    shapes are BrainGlobe ``(AP, DV, LR)``.  A no-op when the shapes match.
+
+    Args:
+        anchoring: 9-element anchoring in *src_shape*'s voxel grid.
+        src_shape: Source atlas shape ``(AP, DV, LR)`` the anchoring lives in.
+        dst_shape: Destination atlas shape ``(AP, DV, LR)``.
+
+    Returns:
+        The anchoring rescaled into *dst_shape*'s voxel grid.
+    """
+    ap_s, dv_s, lr_s = src_shape
+    ap_d, dv_d, lr_d = dst_shape
+    factors = (lr_d / lr_s, ap_d / ap_s, dv_d / dv_s)  # x=LR, y=AP, z=DV
+    return [comp * factors[i % 3] for i, comp in enumerate(anchoring)]
 
 
 def _orient_series_to_convention(
