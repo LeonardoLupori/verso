@@ -23,7 +23,6 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
-    QFileDialog,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -58,6 +57,8 @@ from verso.engine.model.project import (
     Project,
     Section,
 )
+from verso.engine.settings import DIR_IMAGES, DIR_PROJECT
+from verso.gui import file_dialogs
 from verso.gui.utils import require
 
 _log = logging.getLogger(__name__)
@@ -400,10 +401,12 @@ class NewProjectDialog(QDialog):
 
     def _browse_location(self) -> None:
         current = self._location_edit.text().strip()
-        directory = QFileDialog.getExistingDirectory(
+        directory = file_dialogs.choose_dir(
             self,
             "Choose Project Location",
-            current or str(Path.home()),
+            kind=DIR_PROJECT,
+            fallback=str(Path.home()),
+            current=current,
         )
         if directory:
             self._location_edit.setText(directory)
@@ -449,7 +452,7 @@ class NewProjectDialog(QDialog):
         self._update_count()
 
     def _add_images(self) -> None:
-        paths, _ = QFileDialog.getOpenFileNames(self, "Add Section Images", "", _IMAGE_FILTER)
+        paths = file_dialogs.open_files(self, "Add Section Images", _IMAGE_FILTER, kind=DIR_IMAGES)
         if paths:
             self._add_paths(paths)
 
