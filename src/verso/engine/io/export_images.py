@@ -15,18 +15,21 @@ upscale would show.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import cv2
 import numpy as np
 
 from verso.engine.atlas import AtlasVolume
+from verso.engine.colormaps import NONE as COLORMAP_NONE
+from verso.engine.colormaps import apply_colormap
 from verso.engine.io.image_io import (
     _resize_multichannel,
     _stretch_per_channel,
     load_full_res_raw,
 )
+from verso.engine.levels import Levels, apply_levels
 from verso.engine.model.project import Project, Section
 from verso.engine.preprocessing import apply_flip, composite_channels
 from verso.engine.warping import build_backward_remap
@@ -63,6 +66,13 @@ class ExportOptions:
     # "filled"  — Allen-coloured semi-transparent regions.
     overlay_style: str = "outline"
     outline_thickness: int = 1
+    # Recolor the section image through a colormap (see engine/colormaps.py).
+    # ``"none"`` leaves the composited RGB untouched.
+    colormap: str = COLORMAP_NONE
+    colormap_invert: bool = False
+    # Black point / white point / gamma applied to the section image before the
+    # colormap. Defaults to the identity (see Levels.is_identity).
+    levels: Levels = field(default_factory=Levels)
 
 
 def _target_dims(orig_w: int, orig_h: int, long_side: int) -> tuple[int, int]:
@@ -76,12 +86,29 @@ def _target_dims(orig_w: int, orig_h: int, long_side: int) -> tuple[int, int]:
     return out_w, out_h
 
 
-def render_section_rgb(section: Section, project: Project, long_side: int) -> np.ndarray:
+def render_section_rgb(
+    section: Section,
+    project: Project,
+    long_side: int,
+    *,
+    colormap: str = COLORMAP_NONE,
+    colormap_invert: bool = False,
+    levels: Levels | None = None,
+) -> np.ndarray:
     """Composite the section's channels into a single RGB image at *long_side*.
 
     Loads the full-resolution original, applies the section's flip flags, then
     composites visible channels using the project's :class:`ChannelSpec` list
     so the output matches what the user sees in the GUI.
+
+    Args:
+        colormap: Name from :func:`~verso.engine.colormaps.colormap_names`. Any
+            value but ``"none"`` reduces the composite to luminance and recolors
+            it, replacing the per-channel tints.
+        colormap_invert: Reverse the colormap.
+        levels: Black/white point and gamma applied before the colormap, so the
+            two compose the way the export dialog previews them. ``None`` (or an
+            identity :class:`~verso.engine.levels.Levels`) is a no-op.
 
     Returns:
         uint8 ``(H, W, 3)`` array with longest side equal to *long_side*.
@@ -95,7 +122,9 @@ def render_section_rgb(section: Section, project: Project, long_side: int) -> np
     if (out_w, out_h) != (orig_w, orig_h):
         img = _resize_multichannel(img, (out_w, out_h))
 
-    return composite_channels(img, project.channels)
+    rgb = composite_channels(img, project.channels)
+    rgb = apply_levels(rgb, levels)
+    return apply_colormap(rgb, colormap, invert=colormap_invert)
 
 
 def _smooth_label_map(
@@ -352,7 +381,14 @@ def export_section(
         Path(section.original_path).name,
         long_side,
     )
-    rgb = render_section_rgb(section, project, long_side)
+    rgb = render_section_rgb(
+        section,
+        project,
+        long_side,
+        colormap=options.colormap,
+        colormap_invert=options.colormap_invert,
+        levels=options.levels,
+    )
     out_h, out_w = rgb.shape[:2]
     overlay = render_overlay_rgba(
         section,
