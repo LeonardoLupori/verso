@@ -135,6 +135,7 @@ class ExportController:
             n_selected=len(self._window._overview.selected_rows()),
             n_total=len(project.sections),
             parent=self._window,
+            preview_source=lambda: self._preview_section_rgb(project),
         )
         if dlg.exec() != dlg.DialogCode.Accepted:
             return
@@ -182,6 +183,24 @@ class ExportController:
         else:
             _log.info("Overlay export finished: %d section(s) → %s", len(sections), out_dir)
             self._show_export_done(out_dir, f"Wrote {len(sections)} sections to:\n{out_dir}")
+
+    #: Long side (px) of the colormap preview render. Small enough that a
+    #: full-resolution section loads in about a second, big enough to judge.
+    _PREVIEW_LONG_SIDE = 700
+
+    def _preview_section_rgb(self, project):
+        """Render one section as un-colormapped RGB, for the dialog's preview.
+
+        Uses the first section selected in the overview table, falling back to
+        the project's first section, so the preview shows something the user is
+        actually about to export.
+        """
+        from verso.engine.io.export_images import render_section_rgb
+
+        rows = self._window._overview.selected_rows()
+        section = project.sections[rows[0]] if rows else project.sections[0]
+        _log.debug("Rendering colormap preview from section %s", section.id)
+        return render_section_rgb(section, project, self._PREVIEW_LONG_SIDE)
 
     def export_aligned_stack(self) -> None:
         """Open the aligned-stack dialog and write the un-warped TIFF stack."""
