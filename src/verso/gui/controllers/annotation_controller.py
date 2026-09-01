@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 from PyQt6.QtCore import QTimer
-from PyQt6.QtWidgets import QFileDialog, QMessageBox
+from PyQt6.QtWidgets import QMessageBox
 
 from verso.engine.annotations import annotation_images, points_in_polygon
 from verso.engine.io.annotation_io import (
@@ -38,6 +38,8 @@ from verso.engine.model.annotation import (
     AreaAnnotation,
     PointSeries,
 )
+from verso.engine.settings import DIR_ANNOTATION
+from verso.gui import file_dialogs
 
 _log = logging.getLogger(__name__)
 
@@ -238,8 +240,11 @@ class AnnotationController:
     def import_csv(self) -> None:
         if self._state.project is None:
             return
-        path_str, _ = QFileDialog.getOpenFileName(
-            self._window, "Import points from CSV", "", "CSV files (*.csv);;All files (*)"
+        path_str = file_dialogs.open_file(
+            self._window,
+            "Import points from CSV",
+            "CSV files (*.csv);;All files (*)",
+            kind=DIR_ANNOTATION,
         )
         if not path_str:
             return

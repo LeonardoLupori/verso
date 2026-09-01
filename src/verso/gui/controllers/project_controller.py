@@ -19,10 +19,12 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from PyQt6.QtWidgets import QFileDialog, QMessageBox
+from PyQt6.QtWidgets import QMessageBox
 
 from verso.engine.model.alignment import AlignmentStatus
 from verso.engine.model.project import DEFAULT_PROJECT_FILENAME, Project
+from verso.engine.settings import DIR_IMAGES, DIR_PROJECT
+from verso.gui import file_dialogs
 from verso.gui.dialogs.new_project import NewProjectDialog
 from verso.gui.utils import warn_if_missing_dimensions
 
@@ -117,11 +119,11 @@ class ProjectController:
             )
             return
 
-        path, _ = QFileDialog.getOpenFileName(
+        path = file_dialogs.open_file(
             self._window,
             "Import settings from project",
-            "",
             "VERSO project (*.json);;JSON files (*.json);;All files (*)",
+            kind=DIR_PROJECT,
         )
         if not path:
             return
@@ -157,23 +159,29 @@ class ProjectController:
     def open_project(self) -> None:
         if not self._window.confirm_discard_active_draft():
             return
-        path, _ = QFileDialog.getOpenFileName(
+        path = file_dialogs.open_file(
             self._window,
             "Open VERSO Project",
-            "",
             "VERSO project (*.json);;JSON files (*.json);;All files (*)",
+            kind=DIR_PROJECT,
         )
         if path:
             self.open_project_path(Path(path))
 
     def open_project_path(self, project_path: Path) -> None:
         """Load a project from ``project_path`` (public; also used by drag-drop)."""
+        from verso.engine.settings import set_last_project_dir
+
         try:
             project = Project.load(project_path)
             self._state.load_project(project, project_path)
         except Exception as exc:
             _log.exception("Cannot open project %s", project_path)
             QMessageBox.critical(self._window, "Cannot open project", str(exc))
+            return
+        # Only remember folders a project actually loaded from, so a failed
+        # open cannot leave the next Open dialog pointing somewhere useless.
+        set_last_project_dir(project_path)
 
     def new_project(self) -> None:
         self._open_new_project_dialog()
@@ -279,8 +287,8 @@ class ProjectController:
             return
         current_path = self._state.project_path
         suggested = str(current_path) if current_path is not None else DEFAULT_PROJECT_FILENAME
-        path, _ = QFileDialog.getSaveFileName(
-            self._window, "Save Project As", suggested, "JSON files (*.json)"
+        path = file_dialogs.save_file(
+            self._window, "Save Project As", suggested, "JSON files (*.json)", kind=DIR_PROJECT
         )
         if path:
             project_path = Path(path)
@@ -496,8 +504,8 @@ class ProjectController:
         if project is None or project_path is None:
             return
 
-        paths, _ = QFileDialog.getOpenFileNames(
-            self._window, "Add Section Images", "", _IMAGE_FILTER
+        paths = file_dialogs.open_files(
+            self._window, "Add Section Images", _IMAGE_FILTER, kind=DIR_IMAGES
         )
         if not paths:
             return

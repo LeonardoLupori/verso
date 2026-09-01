@@ -25,7 +25,6 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
-    QFileDialog,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -60,6 +59,8 @@ from verso.engine.model.project import (
     SLICING_ORIENTATION_TO_AXIS,
     Project,
 )
+from verso.engine.settings import DIR_IMAGES, DIR_IMPORT, DIR_PROJECT
+from verso.gui import file_dialogs
 from verso.gui.dialogs.new_project import (
     _KNOWN_ATLASES,
     _TABLE_STYLE,
@@ -272,8 +273,12 @@ class ImportQuintDialog(QDialog):
 
     def _browse_location(self) -> None:
         current = self._location_edit.text().strip()
-        directory = QFileDialog.getExistingDirectory(
-            self, "Choose Project Location", current or str(Path.home())
+        directory = file_dialogs.choose_dir(
+            self,
+            "Choose Project Location",
+            kind=DIR_PROJECT,
+            fallback=str(Path.home()),
+            current=current,
         )
         if directory:
             self._location_edit.setText(directory)
@@ -287,12 +292,12 @@ class ImportQuintDialog(QDialog):
         self._path_preview.setText(f"Creates:  {Path(location) / slug}{os.sep}")
 
     def _browse_json(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
+        path = file_dialogs.open_file(
             self,
             "Choose alignment file",
-            "",
             "Alignment files (*.json *.xml);;JSON files (*.json);;"
             "QuickNII XML (*.xml);;All files (*)",
+            kind=DIR_IMPORT,
         )
         if path:
             self._load_json(Path(path))
@@ -393,8 +398,8 @@ class ImportQuintDialog(QDialog):
         """
         if self._json_path is None:
             return
-        paths, _ = QFileDialog.getOpenFileNames(
-            self, "Add full-resolution images", "", _IMAGE_FILTER
+        paths = file_dialogs.open_files(
+            self, "Add full-resolution images", _IMAGE_FILTER, kind=DIR_IMAGES
         )
         if not paths:
             return
@@ -436,7 +441,7 @@ class ImportQuintDialog(QDialog):
         )
 
     def _pick_image_folder(self, title: str) -> str:
-        return QFileDialog.getExistingDirectory(self, title, str(Path.home()))
+        return file_dialogs.choose_dir(self, title, kind=DIR_IMAGES, fallback=str(Path.home()))
 
     def _on_reuse_toggled(self, checked: bool) -> None:
         self._orig_row.setVisible(not checked)
@@ -453,16 +458,16 @@ class ImportQuintDialog(QDialog):
         if row < 0 or row >= len(self._filenames):
             return
         if col == _COL_REG:
-            path, _ = QFileDialog.getOpenFileName(
-                self, "Locate registration image", "", _IMAGE_FILTER
+            path = file_dialogs.open_file(
+                self, "Locate registration image", _IMAGE_FILTER, kind=DIR_IMAGES
             )
             if path:
                 self._reg[row] = Path(path)
                 self._rebuild_table()
                 self._update_ok_enabled()
         elif col == _COL_ORIG and not self._reuse_check.isChecked():
-            path, _ = QFileDialog.getOpenFileName(
-                self, "Locate full-resolution image", "", _IMAGE_FILTER
+            path = file_dialogs.open_file(
+                self, "Locate full-resolution image", _IMAGE_FILTER, kind=DIR_IMAGES
             )
             if path:
                 # Pin this file to this section; reserve it and re-match the rest so

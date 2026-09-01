@@ -12,8 +12,10 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PyQt6.QtWidgets import QFileDialog, QMessageBox, QProgressDialog
+from PyQt6.QtWidgets import QMessageBox, QProgressDialog
 
+from verso.engine.settings import DIR_EXPORT
+from verso.gui import file_dialogs
 from verso.gui.utils import warn_errors
 
 _log = logging.getLogger(__name__)
@@ -70,8 +72,12 @@ class ExportController:
         project = self._state.project
         if project is None:
             return
-        path, _ = QFileDialog.getSaveFileName(
-            self._window, title, f"{project.name}-{default_suffix}", file_filter
+        path = file_dialogs.save_file(
+            self._window,
+            title,
+            f"{project.name}-{default_suffix}",
+            file_filter,
+            kind=DIR_EXPORT,
         )
         if not path:
             return
